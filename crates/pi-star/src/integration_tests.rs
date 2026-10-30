@@ -954,3 +954,88 @@ async fn models_config_refuses_an_invalid_image_limit() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(reply["success"], true);
 }
+
+#[tokio::test]
+async fn manifest_is_json_and_skill_content_accepts_file_path() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/manifest.webmanifest")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["name"], "Pi Web");
+    assert_eq!(body["start_url"], "/");
+    assert_eq!(body["icons"].as_array().unwrap().len(), 2);
+
+    let skill_dir = fixture.agent_dir.join("skills").join("fixture");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    let skill = skill_dir.join("SKILL.md");
+    std::fs::write(&skill, "---\nname: Fixture\n---\n\n# Fixture skill\n").unwrap();
+    let reference = skill_dir.join("reference.md");
+    std::fs::write(&reference, "# Reference\n").unwrap();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/skills/content?cwd={}&filePath={}",
+                urlencoding(&fixture.cwd),
+                urlencoding(&skill)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["content"].as_str().unwrap().contains("Fixture skill"));
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/api/skills/content?cwd={}&filePath={}&document=reference.md",
+                urlencoding(&fixture.cwd),
+                urlencoding(&skill)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["content"], "# Reference\n");
+}
+
+#[tokio::test]
+async fn mcp_overview_has_the_codemode_shape_the_panel_reads() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/mcp")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["mcp"]["available"], true);
+    assert_eq!(body["codemode"]["sandbox"]["state"], "not-checked");
+    assert!(body["codemode"]["preference"].is_string());
+    assert!(body["codemode"]["mode"]["value"].is_string());
+    assert_eq!(
+        body["codemode"]["mode"]["settingsPath"],
+        fixture
+            .agent_dir
+            .join("settings.json")
+            .to_string_lossy()
+            .as_ref()
+    );
+    assert_eq!(body["codemode"]["inlineBudget"]["default"], 3000);
+    assert_eq!(body["codemode"]["inlineBudget"]["max"], 1_000_000);
+}

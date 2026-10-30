@@ -1076,9 +1076,37 @@ fn mcp_overview(state: &AppState, cwd: Option<&str>) -> Value {
         let project_path = PathBuf::from(cwd).join(".pi").join("mcp.json");
         collect_mcp_file(&project_path, "project", &mut files, &mut servers);
     }
+    // The panel renders Code mode even when the MCP section is not open: keep
+    // the shape complete (`sandbox` is read unconditionally).
+    let tools = settings::tools_settings(&state.config);
+    let settings_path = state.config.settings_path().to_string_lossy().into_owned();
+    let mut mode = json!({
+        "value": tools.codemode_mode.value,
+        "settingsPath": settings_path,
+    });
+    if let Some(invalid) = tools.codemode_mode.invalid {
+        mode["invalid"] = Value::String(invalid);
+    }
+    let mut inline_budget = json!({
+        "settingsPath": settings_path,
+        "default": 3000,
+        "max": 1_000_000,
+    });
+    if let Some(value) = tools.codemode_inline_budget.value {
+        inline_budget["value"] = Value::from(value);
+    }
+    if let Some(invalid) = tools.codemode_inline_budget.invalid {
+        inline_budget["invalid"] = Value::String(invalid);
+    }
     json!({
         "mcp": {"available": true},
-        "codemode": {"preference": "automatic", "mode": "on", "inlineBudget": null},
+        "codemode": {
+            "sandbox": {"state": "not-checked"},
+            "builtinDisabled": false,
+            "preference": tools.codemode,
+            "mode": mode,
+            "inlineBudget": inline_budget,
+        },
         "files": files,
         "servers": servers,
     })
@@ -1608,16 +1636,23 @@ pub async fn skills(State(state): State<Arc<AppState>>, Query(query): Query<CwdQ
     }
 }
 
-fn scan_skills(state: &AppState, cwd: &Path) -> anyhow::Result<Vec<Value>> {
+fn skill_roots(state: &AppState, cwd: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = vec![
         state.config.agent_dir.join("skills"),
         settings::home_dir()
             .unwrap_or_default()
             .join(".agents")
             .join("skills"),
-        cwd.join(".pi").join("skills"),
-        cwd.join(".agents").join("skills"),
     ];
+    if let Some(cwd) = cwd {
+        roots.push(cwd.join(".pi").join("skills"));
+        roots.push(cwd.join(".agents").join("skills"));
+    }
+    roots
+}
+
+fn scan_skills(state: &AppState, cwd: &Path) -> anyhow::Result<Vec<Value>> {
+    let mut roots = skill_roots(state, Some(cwd));
     let mut skills = Vec::new();
     for root in roots.drain(..) {
         if !root.is_dir() {
@@ -1770,26 +1805,86 @@ fn set_skill_disabled(text: &str, disabled: bool) -> String {
     result
 }
 
+const SKILL_CONTENT_MAX_BYTES: u64 = 1024 * 1024;
+
+fn is_markdown_path(path: &Path) -> bool {
+    path.extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| {
+            extension.eq_ignore_ascii_case("md") || extension.eq_ignore_ascii_case("markdown")
+        })
+}
+
 pub async fn skill_content(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SkillContentQuery>,
 ) -> Response {
-    let Some(path) = query.file else {
-        return bad_request("file is required");
+    let Some(file_path) = query.file_path else {
+        return bad_request("filePath is required");
     };
-    let path = PathBuf::from(path);
-    if !state.roots.is_allowed_existing(&path) && !path.starts_with(&state.config.agent_dir) {
+    let path = PathBuf::from(file_path);
+    let cwd = query.cwd.as_deref().map(Path::new);
+    let in_skill_root = skill_roots(&state, cwd)
+        .iter()
+        .any(|root| path.starts_with(root));
+    if !state.roots.is_allowed_existing(&path)
+        && !path.starts_with(&state.config.agent_dir)
+        && !in_skill_root
+    {
         return forbidden("Access denied");
     }
-    match std::fs::read_to_string(&path) {
-        Ok(text) => no_store(json!({"content": text.chars().take(256 * 1024).collect::<String>()})),
-        Err(error) => not_found(error.to_string()),
+    let target = if let Some(document) = query.document {
+        let document_path = Path::new(&document);
+        if document_path.is_absolute()
+            || document.contains(['\\', ':', '\0'])
+            || document.split('/').any(|segment| segment == "..")
+        {
+            return bad_request("Document path must stay inside the skill folder");
+        }
+        if !is_markdown_path(document_path) {
+            return crate::routes::json_error(
+                axum::http::StatusCode::UNSUPPORTED_MEDIA_TYPE,
+                "Only Markdown documents can be opened",
+            );
+        }
+        let Some(base) = path.parent() else {
+            return bad_request("Skill document is outside the skill folder");
+        };
+        let candidate = base.join(document_path);
+        if !candidate.is_file() {
+            return not_found("Skill document not found");
+        }
+        let (Ok(base), Ok(candidate)) = (base.canonicalize(), candidate.canonicalize()) else {
+            return not_found("Skill document not found");
+        };
+        if !candidate.starts_with(&base) || !is_markdown_path(&candidate) {
+            return forbidden("Document is outside the skill folder");
+        }
+        candidate
+    } else {
+        path
+    };
+    if !target.is_file() {
+        return not_found("Skill file not found");
+    }
+    if std::fs::metadata(&target).is_ok_and(|metadata| metadata.len() > SKILL_CONTENT_MAX_BYTES) {
+        return crate::routes::json_error(
+            axum::http::StatusCode::PAYLOAD_TOO_LARGE,
+            "Skill file is larger than 1 MiB",
+        );
+    }
+    match std::fs::read_to_string(&target) {
+        Ok(text) => no_store(json!({"content": text})),
+        Err(_) => not_found("Skill file not found"),
     }
 }
 
 #[derive(Debug, Deserialize)]
 pub struct SkillContentQuery {
-    file: Option<String>,
+    #[serde(rename = "filePath")]
+    file_path: Option<String>,
+    cwd: Option<String>,
+    document: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

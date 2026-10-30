@@ -188,6 +188,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         .fallback(ServeFile::new(index));
 
     Router::new()
+        .route("/manifest.webmanifest", get(routes::misc::manifest))
         .nest("/api", api)
         .fallback_service(static_files)
         .layer(middleware::from_fn(cache_headers))

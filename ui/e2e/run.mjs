@@ -508,6 +508,15 @@ try {
       // File browser brings the tabs back, and goes back.
       await checkFilesPlacement(page);
       console.log("PASS: files below the sessions by default, tabs from Settings and back");
+      // Settings › MCP renders the Code mode pane from
+      // `GET /api/mcp.codemode`; an incomplete shape used to blank the page.
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+      await settings.locator(".settings-section-tabs").getByRole("button", { name: "MCP", exact: true }).click();
+      await settings.getByText("Code mode", { exact: true }).waitFor();
+      await page.keyboard.press("Escape");
+      await settings.waitFor({ state: "hidden" });
+      console.log("PASS: Settings › MCP renders the Code mode pane");
       await checkModelDiscovery(page);
     }
     await checkModelContext(page);

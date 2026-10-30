@@ -303,3 +303,30 @@ pub async fn open_in_explorer(
 pub async fn _unused(_body: Json<Value>) -> Response {
     no_store(json!({}))
 }
+
+/// `GET /manifest.webmanifest`: pi-web generated this from `app/manifest.ts`;
+/// the Rust server keeps the same JSON and reads `PI_WEB_APP_NAME` per request.
+pub async fn manifest() -> Response {
+    let name = std::env::var("PI_WEB_APP_NAME")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| "Pi Web".to_string());
+    no_store(json!({
+        "id": "/",
+        "name": name,
+        "short_name": name,
+        "description": "Local web interface for the pi coding agent",
+        "start_url": "/",
+        "scope": "/",
+        "display": "standalone",
+        "background_color": "#ffffff",
+        "theme_color": "#1a1a1a",
+        "categories": ["developer", "productivity"],
+        "lang": "en",
+        "icons": [
+            {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+            {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
+        ]
+    }))
+}
