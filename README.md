@@ -99,7 +99,7 @@ cd ui && npm run typecheck && npm run build && npm test
 npm run smoke
 ```
 
-`npm test` 运行从 pi-web 迁移的 1483 个客户端单元测试（Node test runner + jiti）。
+`npm test` 运行从 pi-web 迁移的 1648 个客户端单元测试（Node test runner + jiti）。
 浏览器回归测试会自己启动 `target/{debug,release}/pi-star`，先构建 UI 和二进制：
 
 ```bash

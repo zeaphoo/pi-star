@@ -128,6 +128,44 @@ function postProcess(dest, rel) {
   fs.writeFileSync(dest, text);
 }
 
+// Client tests: every component/hook test plus the lib tests whose module is
+// in the copied client graph. Server-only pi-web tests stay out; Rust tests
+// cover that behaviour.
+const testFiles = new Set();
+// These lib tests exercise server-only modules or the pi SDK; Rust integration
+// tests cover the behaviour they describe.
+const excludedTests = new Set([
+  "lib/jsonc.test.mjs",
+  "lib/mcp-config-values.test.mjs",
+  "lib/message-keys.test.mjs",
+  "lib/model-discovery.test.mjs",
+  "lib/model-provider-check.test.mjs",
+  "lib/project-groups.test.mjs",
+  "lib/session-stats.test.mjs",
+  "lib/session-ui-state-shared.test.mjs",
+  "lib/subagent-extension.test.mjs",
+  "lib/subagent-settings.test.mjs",
+  "lib/subagents.test.mjs",
+  "lib/terminal-manager.test.mjs",
+  "lib/transcript-notices.test.mjs",
+]);
+function collectTests(dir) {
+  const abs = path.join(piWeb, dir);
+  if (!fs.existsSync(abs)) return;
+  for (const entry of fs.readdirSync(abs, { recursive: true, withFileTypes: true })) {
+    if (entry.isFile() && entry.name.endsWith(".test.mjs")) {
+      testFiles.add(path.relative(piWeb, path.join(entry.parentPath ?? entry.path, entry.name)));
+    }
+  }
+}
+collectTests("components");
+collectTests("hooks");
+for (const rel of seen) {
+  if (!/\.tsx?$/.test(rel)) continue;
+  const candidate = rel.replace(/\.tsx?$/, ".test.mjs");
+  if (fs.existsSync(path.join(piWeb, candidate)) && !excludedTests.has(candidate)) testFiles.add(candidate);
+}
+
 for (const dir of ["app", "components", "hooks", "lib"]) {
   fs.rmSync(path.join(out, dir), { recursive: true, force: true });
 }
@@ -137,6 +175,39 @@ for (const rel of [...seen].sort()) {
   fs.mkdirSync(path.dirname(dest), { recursive: true });
   fs.copyFileSync(src, dest);
   postProcess(dest, rel);
+}
+for (const rel of [...testFiles].sort()) {
+  const src = path.join(piWeb, rel);
+  const dest = path.join(out, rel);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  fs.copyFileSync(src, dest);
+  postProcessTest(dest, rel);
+}
+for (const dir of ["components", "hooks", "lib"]) {
+  const src = path.join(piWeb, dir, "__fixtures__");
+  if (fs.existsSync(src)) {
+    fs.cpSync(src, path.join(out, dir, "__fixtures__"), { recursive: true });
+  }
+}
+
+// Local adaptations of upstream tests, re-applied on every sync.
+function postProcessTest(dest, rel) {
+  let text = fs.readFileSync(dest, "utf8");
+  const replace = (from, to) => { text = text.split(from).join(to); };
+  if (rel === "components/PiWebTitle.test.mjs") {
+    replace('new URL("../package.json", import.meta.url)', 'new URL("../../package.json", import.meta.url)');
+    replace(`  const piPackage = JSON.parse(await readFile(new URL("../node_modules/@earendil-works/pi-coding-agent/package.json", import.meta.url), "utf8"));
+  // Today's versions, with room for a longer one.
+  const versions = brandVersionText(packageJson.version, piPackage.version);`, `  // pi-star's UI version, with room for a longer pi version.
+  const versions = brandVersionText(packageJson.version, process.env.PI_STAR_PI_VERSION ?? "1.4.0");`);
+  }
+  if (rel === "components/ChatWindow.quote-caret.test.mjs") {
+    replace('for (const path of ["../components/ChatWindow.tsx", "../demo/components/ChatWindow.tsx"]) {', 'for (const path of ["./ChatWindow.tsx"]) {');
+  }
+  if (rel === "components/test-imports.test.mjs") {
+    replace('const ROOTS = ["app", "components", "hooks", "lib", "public"];', 'const ROOTS = ["app", "components", "hooks", "lib"];');
+  }
+  fs.writeFileSync(dest, text);
 }
 
 const publicDir = path.join(repo, "ui", "public");
@@ -148,7 +219,9 @@ fs.writeFileSync(
   `# UI upstream\n\nCopied from the read-only pi-web checkout at \`${piWeb}\`.\n\n` +
   `- Source project: https://github.com/agegr/pi-web (MIT)\n` +
   `- Copied client modules: ${seen.size}\n` +
+  `- Migrated client tests: ${testFiles.size} files (plus \`ui/public/sw.test.mjs\`)\n` +
   `- Re-copy: \`node scripts/sync-ui-from-pi-web.mjs\`\n` +
-  `- Do not copy \`app/api/**\` or server-only \`lib/**\` modules; those are implemented in Rust.\n`,
+  `- Do not copy \`app/api/**\` or server-only \`lib/**\` modules; those are implemented in Rust.\n` +
+  `- Tests for those server modules are not copied; Rust unit/integration tests cover them.\n`,
 );
 console.log(`copied ${seen.size} modules into ui/src and public into ui/public`);

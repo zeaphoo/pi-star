@@ -30,7 +30,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | 认证/安全 | ✅ | Host/Origin、body limit、cookie/Basic Auth、失败指数退避 |
 | Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
 | Debug / app-update / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
-| 测试 | ✅ | 17 个 core 单测 + 22 个 HTTP/集成测试 + 1483 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
+| 测试 | ✅ | 17 个 core 单测 + 22 个 HTTP/集成测试 + 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
 
 ## 运行时边界
 

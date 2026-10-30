@@ -10,7 +10,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 30152",
     "typecheck": "tsc --noEmit",
     "smoke": "node scripts/smoke.mjs",
-    "test": "node --experimental-strip-types --test \"src/**/*.test.mjs\"",
+    "test": "node --experimental-strip-types --test \"src/**/*.test.mjs\" \"public/**/*.test.mjs\"",
     "test:e2e": "node e2e/run.mjs",
     "test:terminal": "node e2e/terminal.mjs"
   },
