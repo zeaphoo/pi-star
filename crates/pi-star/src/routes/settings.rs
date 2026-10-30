@@ -281,7 +281,19 @@ pub async fn set_enabled_models(
 }
 
 pub async fn refresh_models() -> Response {
-    no_store(json!({"ok": true}))
+    // pi-star reads the model store directly and does not run pi's SDK model
+    // runtime, so there is no remote catalog refresh to perform. Keep the
+    // response shape the Models panel expects.
+    let reason = if std::env::var_os("PI_OFFLINE").is_some() {
+        "offline"
+    } else {
+        "runtime"
+    };
+    no_store(json!({
+        "completed": false,
+        "changed": false,
+        "reason": reason,
+    }))
 }
 
 pub async fn models_config(State(state): State<Arc<AppState>>) -> Response {
@@ -1763,7 +1775,13 @@ pub async fn patch_skills(State(state): State<Arc<AppState>>, Json(body): Json<V
             results.push(json!({"filePath": file, "error": "Not a skill file"}));
             continue;
         }
-        if !state.roots.is_allowed_existing(&path) && !path.starts_with(&state.config.agent_dir) {
+        let in_skill_root = skill_roots(&state, None)
+            .iter()
+            .any(|root| path.starts_with(root));
+        if !state.roots.is_allowed_existing(&path)
+            && !path.starts_with(&state.config.agent_dir)
+            && !in_skill_root
+        {
             results.push(json!({"filePath": file, "error": "Access denied"}));
             continue;
         }
@@ -2454,4 +2472,215 @@ fn collect_usage_numbers(value: &Value, prefix: &str, metrics: &mut Vec<Value>) 
             collect_usage_numbers(value, &format!("{prefix}.{index}"), metrics);
         }
     }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkillCheckBody {
+    cwd: Option<String>,
+    package: Option<String>,
+    scope: Option<String>,
+}
+
+pub async fn skill_check(
+    State(state): State<Arc<AppState>>,
+    Json(body): Json<SkillCheckBody>,
+) -> Response {
+    let Some(cwd) = body.cwd.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("cwd required");
+    };
+    let cwd = PathBuf::from(cwd);
+    if !state.roots.is_allowed_existing(&cwd) {
+        return forbidden("Access denied");
+    }
+    let package = body.package.filter(|value| !value.trim().is_empty());
+    let scope = body
+        .scope
+        .filter(|value| value == "global" || value == "project");
+    if package.is_some() != scope.is_some() {
+        return bad_request("package and scope must be provided together");
+    }
+    let skills = match scan_skills(&state, &cwd) {
+        Ok(skills) => skills,
+        Err(error) => return internal(error),
+    };
+    let installs: Vec<Value> = skills
+        .iter()
+        .filter_map(|skill| skill.get("install").cloned())
+        .filter(|install| {
+            if let (Some(package), Some(scope)) = (package.as_deref(), scope.as_deref()) {
+                install.get("package").and_then(Value::as_str) == Some(package)
+                    && install.get("scope").and_then(Value::as_str) == Some(scope)
+            } else {
+                true
+            }
+        })
+        .collect();
+    if package.is_some() && installs.is_empty() {
+        return not_found("Installed skill not found");
+    }
+    let mut updates = Vec::new();
+    for install in installs {
+        updates.push(check_skill_update(&install).await);
+    }
+    no_store(json!({"updates": updates}))
+}
+
+async fn check_skill_update(install: &Value) -> Value {
+    let package = install
+        .get("package")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let scope = install
+        .get("scope")
+        .and_then(Value::as_str)
+        .unwrap_or("global");
+    let current = install.get("versionHash").and_then(Value::as_str);
+    let skill_path = install.get("skillPath").and_then(Value::as_str);
+    let can_check = install
+        .get("canCheckForUpdates")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let mut result = json!({
+        "package": package,
+        "scope": scope,
+        "state": "unsupported",
+        "currentVersion": current,
+    });
+    if !can_check || current.is_none() || skill_path.is_none() {
+        result["message"] =
+            Value::String("This lock entry cannot be checked automatically.".into());
+        return result;
+    }
+    let source = install
+        .get("source")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let reference = install.get("ref").and_then(Value::as_str).unwrap_or("HEAD");
+    let skill_path = skill_path.unwrap_or_default();
+    let folder = skill_folder(skill_path);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default();
+    let latest = if scope == "global" {
+        let url = format!(
+            "https://api.github.com/repos/{source}/git/trees/{}?recursive=1",
+            urlencoding(reference)
+        );
+        let mut request = client
+            .get(url)
+            .header("Accept", "application/vnd.github.v3+json")
+            .header("User-Agent", "pi-star");
+        if let Ok(token) = std::env::var("GITHUB_TOKEN").or_else(|_| std::env::var("GH_TOKEN")) {
+            request = request.bearer_auth(token);
+        }
+        match request.send().await {
+            Ok(response) if response.status().is_success() => {
+                let payload: Value = response.json().await.unwrap_or(Value::Null);
+                if folder.is_empty() {
+                    payload
+                        .get("sha")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                } else {
+                    payload
+                        .get("tree")
+                        .and_then(Value::as_array)
+                        .and_then(|tree| {
+                            tree.iter().find(|entry| {
+                                entry.get("type").and_then(Value::as_str) == Some("tree")
+                                    && entry.get("path").and_then(Value::as_str)
+                                        == Some(folder.as_str())
+                            })
+                        })
+                        .and_then(|entry| entry.get("sha").and_then(Value::as_str))
+                        .map(str::to_owned)
+                }
+            }
+            Ok(response) => {
+                result["state"] = Value::String("error".into());
+                result["message"] = Value::String(format!("HTTP {}", response.status()));
+                return result;
+            }
+            Err(error) => {
+                result["state"] = Value::String("error".into());
+                result["message"] = Value::String(error.to_string());
+                return result;
+            }
+        }
+    } else {
+        let skill_name = package
+            .rsplit_once('@')
+            .map(|(_, name)| name)
+            .unwrap_or(package);
+        let parts: Vec<&str> = source.split('/').collect();
+        if parts.len() != 2 {
+            result["state"] = Value::String("error".into());
+            result["message"] = Value::String("Invalid skill source".into());
+            return result;
+        }
+        let base = std::env::var("SKILLS_API_URL").unwrap_or_else(|_| "https://skills.sh".into());
+        let url = format!(
+            "{}/api/download/{}/{}/{}",
+            base.trim_end_matches('/'),
+            urlencoding(parts[0]),
+            urlencoding(parts[1]),
+            urlencoding(&skill_slug(skill_name))
+        );
+        match client.get(url).send().await {
+            Ok(response) if response.status().is_success() => {
+                let payload: Value = response.json().await.unwrap_or(Value::Null);
+                payload
+                    .get("hash")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            }
+            Ok(response) => {
+                result["state"] = Value::String("error".into());
+                result["message"] = Value::String(format!("HTTP {}", response.status()));
+                return result;
+            }
+            Err(error) => {
+                result["state"] = Value::String("error".into());
+                result["message"] = Value::String(error.to_string());
+                return result;
+            }
+        }
+    };
+    let Some(latest) = latest else {
+        result["state"] = Value::String("error".into());
+        result["message"] = Value::String("Remote skill path was not found.".into());
+        return result;
+    };
+    result["latestVersion"] = Value::String(latest.clone());
+    result["state"] = Value::String(if Some(latest.as_str()) == current {
+        "up-to-date".into()
+    } else {
+        "update-available".into()
+    });
+    result
+}
+
+fn skill_folder(skill_path: &str) -> String {
+    let normalized = skill_path.replace('\\', "/");
+    normalized
+        .strip_suffix("/SKILL.md")
+        .or_else(|| normalized.strip_suffix("SKILL.md"))
+        .unwrap_or(&normalized)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+fn skill_slug(name: &str) -> String {
+    let mut slug = String::new();
+    for ch in name.to_lowercase().chars() {
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+        } else if ch.is_whitespace() || ch == '_' || ch == '-' {
+            if !slug.ends_with('-') {
+                slug.push('-');
+            }
+        }
+    }
+    slug.trim_matches('-').to_string()
 }

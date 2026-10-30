@@ -255,6 +255,41 @@ async fn files_list_read_and_index() {
     );
 
     let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/files/{encoded}/hello.txt?type=meta"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["size"], 23);
+
+    let boundary = "----pi-star-test-boundary";
+    let upload_body = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"upload.txt\"\r\nContent-Type: text/plain\r\n\r\nuploaded from test\n\r\n--{boundary}--\r\n"
+    );
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/files/{encoded}?type=upload"))
+            .header(
+                header::CONTENT_TYPE,
+                format!("multipart/form-data; boundary={boundary}"),
+            )
+            .body(Body::from(upload_body))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["uploaded"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        std::fs::read_to_string(fixture.cwd.join("upload.txt")).unwrap(),
+        "uploaded from test\n"
+    );
+
+    let (status, body) = call(
         app,
         Request::builder()
             .uri(format!(
@@ -374,7 +409,7 @@ async fn git_status_lists_untracked_files() {
 
     let app = router(&fixture).await;
     let (status, body) = call(
-        app,
+        app.clone(),
         Request::builder()
             .uri(format!("/api/git/status?cwd={}", urlencoding(&fixture.cwd)))
             .body(Body::empty())
@@ -386,6 +421,40 @@ async fn git_status_lists_untracked_files() {
     assert!(body["files"].as_array().unwrap().iter().any(|file| {
         file["filePath"].as_str().unwrap().ends_with("changed.txt") && file["status"] == "untracked"
     }));
+
+    let changed = fixture.cwd.join("changed.txt");
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/git/diff?cwd={}&path={}",
+                urlencoding(&fixture.cwd),
+                urlencoding(&changed)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["supported"], true);
+    assert_eq!(body["status"], "untracked");
+    assert!(body["patch"].as_str().unwrap().contains("+new file"));
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/worktrees?cwd={}", urlencoding(&fixture.cwd)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["isGit"], true);
+    assert_eq!(
+        body["currentWorktreePath"],
+        fixture.cwd.to_string_lossy().as_ref()
+    );
+    assert_eq!(body["worktrees"].as_array().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -1038,4 +1107,637 @@ async fn mcp_overview_has_the_codemode_shape_the_panel_reads() {
     );
     assert_eq!(body["codemode"]["inlineBudget"]["default"], 3000);
     assert_eq!(body["codemode"]["inlineBudget"]["max"], 1_000_000);
+}
+
+fn fixture_session_path(fixture: &Fixture) -> PathBuf {
+    fixture
+        .agent_dir
+        .join("sessions")
+        .join(pi_star_core::config::encode_cwd(&fixture.cwd))
+        .join(format!(
+            "2026-01-01T00-00-00.000Z_{}.jsonl",
+            fixture.session_id
+        ))
+}
+
+#[tokio::test]
+async fn agent_bash_output_requires_a_referenced_temp_file() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let name = format!("pi-bash-{}.log", uuid::Uuid::new_v4().simple());
+    let output = std::env::temp_dir().join(name);
+    std::fs::write(&output, "full bash output\nsecond line\n").unwrap();
+
+    use std::io::Write;
+    let mut file = std::fs::OpenOptions::new()
+        .append(true)
+        .open(fixture_session_path(&fixture))
+        .unwrap();
+    writeln!(
+        file,
+        "{}",
+        json!({
+            "type": "message", "id": "bash-1", "parentId": "a1", "timestamp": "2026-01-01T00:00:00.000Z",
+            "message": {
+                "role": "bashExecution", "command": "echo full", "output": "full",
+                "fullOutputPath": output.to_string_lossy(), "exitCode": 0
+            }
+        })
+    )
+    .unwrap();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/agent/{}/bash-output?path={}",
+                fixture.session_id,
+                urlencoding(&output)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["data"]["output"]
+            .as_str()
+            .unwrap()
+            .contains("second line")
+    );
+
+    let other = std::env::temp_dir().join(format!("pi-bash-{}.log", uuid::Uuid::new_v4().simple()));
+    std::fs::write(&other, "not referenced\n").unwrap();
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/api/agent/{}/bash-output?path={}",
+                fixture.session_id,
+                urlencoding(&other)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    let _ = std::fs::remove_file(output);
+    let _ = std::fs::remove_file(other);
+}
+
+#[tokio::test]
+async fn skills_check_reports_an_unsupported_lock_entry() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let skill_dir = fixture.cwd.join(".pi").join("skills").join("check");
+    std::fs::create_dir_all(&skill_dir).unwrap();
+    std::fs::write(
+        skill_dir.join("SKILL.md"),
+        "---\nname: check\ndescription: fixture\n---\n\n# Check\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.cwd.join("skills-lock.json"),
+        json!({
+            "version": 1,
+            "skills": {
+                "check": {
+                    "source": "owner/repo",
+                    "sourceType": "github",
+                    "ref": "HEAD",
+                    "computedHash": "abc123"
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/skills/check")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "cwd": fixture.cwd,
+                    "package": "owner/repo@check",
+                    "scope": "project"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["updates"][0]["state"], "unsupported");
+    assert_eq!(body["updates"][0]["package"], "owner/repo@check");
+
+    let skill_file = skill_dir.join("SKILL.md");
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PATCH")
+            .uri("/api/skills")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"filePath": skill_file, "disableModelInvocation": true}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["results"][0]["filePath"],
+        skill_file.to_string_lossy().as_ref()
+    );
+    assert!(
+        std::fs::read_to_string(&skill_file)
+            .unwrap()
+            .contains("disable-model-invocation: true")
+    );
+
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/skills/check")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"cwd": fixture.cwd, "package": "owner/repo@check"}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn models_refresh_and_tools_settings_keep_their_contract() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/models/refresh")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from("{}"))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["completed"], false);
+    assert_eq!(body["changed"], false);
+    assert!(matches!(
+        body["reason"].as_str(),
+        Some("runtime" | "offline")
+    ));
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/tools/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"codemode": "always", "codemodeMode": "only", "codemodeInlineBudget": 1234})
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["codemode"], "always");
+    assert_eq!(body["codemodeMode"]["value"], "only");
+    assert_eq!(body["codemodeInlineBudget"]["value"], 1234);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/cache-miss-notices")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"showCacheMissNotices": true}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["showCacheMissNotices"], true);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/subagents/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"maxConcurrent": 3}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["maxConcurrent"], 3);
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/models/enabled")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["providers"].is_array());
+    assert!(body["availableTotal"].is_number());
+}
+
+#[tokio::test]
+async fn session_rename_search_stats_export_and_delete() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PATCH")
+            .uri(format!("/api/sessions/{}", fixture.session_id))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"name": "Renamed fixture"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{}", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["info"]["name"], "Renamed fixture");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/sessions/search?q=hello%20fixture")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["results"].as_array().unwrap().iter().any(|result| {
+        result.pointer("/session/id").and_then(Value::as_str) == Some(fixture.session_id.as_str())
+    }));
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/sessions/stats")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"ids": [fixture.session_id]}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["stats"][fixture.session_id.as_str()]["totalActiveMs"].is_number());
+
+    let (status, text) = call_text(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{}/export", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(text.contains("fixture reply"));
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{}/auto-name", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!body["title"].as_str().unwrap().is_empty());
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/sessions/{}", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/sessions/{}", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn cwd_browse_create_and_misc_reports() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/home")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["home"].as_str().unwrap().starts_with('/'));
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/cwd/browse?path={}",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["path"], fixture.cwd.to_string_lossy().as_ref());
+    assert!(body["directories"].is_array());
+
+    let new_dir = format!("created-{}", uuid::Uuid::new_v4().simple());
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/cwd/browse")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"path": fixture.cwd, "name": new_dir}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(std::path::Path::new(body["path"].as_str().unwrap()).is_dir());
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/cwd/browse")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"path": fixture.cwd, "name": new_dir}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/cwd/validate")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"cwd": fixture.cwd}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cwd"], fixture.cwd.to_string_lossy().as_ref());
+    assert!(body["projectKey"].is_string());
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/open-in-explorer")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["platform"].is_string());
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/app-update")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["updateAvailable"], false);
+    assert!(body["currentVersion"].is_string());
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/web-auth")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["authenticated"], true);
+}
+
+#[tokio::test]
+async fn terminal_create_get_and_kill() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/terminal")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"cwd": fixture.cwd, "cols": 80, "rows": 24}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let id = body["id"].as_str().unwrap().to_string();
+    assert_eq!(id.len(), 32);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/terminal/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cwd"], fixture.cwd.to_string_lossy().as_ref());
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/terminal/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"type": "resize", "cols": 100, "rows": 30}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/terminal/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/terminal/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
+async fn mcp_config_is_listed_and_auth_keys_round_trip() {
+    let fixture = write_fixture();
+    std::fs::write(
+        fixture.agent_dir.join("mcp.json"),
+        json!({
+            "mcpServers": {
+                "demo": {"command": "echo", "args": ["hello"], "env": {"TOKEN": "secret"}}
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/mcp?cwd={}", urlencoding(&fixture.cwd)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["servers"][0]["name"], "demo");
+    assert_eq!(body["servers"][0]["scope"], "global");
+    assert_eq!(body["servers"][0]["transport"], "stdio");
+    assert_eq!(body["servers"][0]["envNames"][0], "TOKEN");
+    assert!(
+        body["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["exists"] == true)
+    );
+
+    std::fs::create_dir_all(fixture.cwd.join(".pi")).unwrap();
+    std::fs::write(
+        fixture.cwd.join(".pi").join("mcp.json"),
+        json!({"mcpServers": {"project-demo": {"command": "echo"}}}).to_string(),
+    )
+    .unwrap();
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/project-trust?cwd={}",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["requiresTrust"], true);
+    assert_eq!(body["trusted"], false);
+    assert_eq!(body["mcpServers"][0]["name"], "project-demo");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/project-trust")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"cwd": fixture.cwd, "trusted": true}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["trusted"], true);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/auth/api-key/openai")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"apiKey": "sk-test-fixture"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["ok"], true);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/auth/providers")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["providers"].as_array().is_some());
+    assert!(body["oauthProviders"].as_array().is_some());
+
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .method("DELETE")
+            .uri("/api/auth/api-key/openai")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let auth = std::fs::read_to_string(fixture.agent_dir.join("auth.json")).unwrap();
+    assert!(!auth.contains("sk-test-fixture"));
 }

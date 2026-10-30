@@ -58,6 +58,7 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .route("/agent/{id}/events", get(routes::agent::events))
         .route("/agent/{id}/lease", post(routes::agent::lease))
+        .route("/agent/{id}/bash-output", get(routes::agent::bash_output))
         .route(
             "/files/{*path}",
             get(routes::files::get_file).post(routes::files::post_file),
@@ -148,6 +149,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(routes::settings::skills).patch(routes::settings::patch_skills),
         )
         .route("/skills/content", get(routes::settings::skill_content))
+        .route("/skills/check", post(routes::settings::skill_check))
         .route("/skills/install", post(routes::skills_install::install))
         .route("/skills/search", post(routes::settings::skill_search))
         .route("/skills/update", post(routes::skills_install::update))

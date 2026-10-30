@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -413,5 +413,122 @@ pub async fn debug(
         },
         "sessions": sessions,
         "session": session,
+    }))
+}
+
+const MAX_INLINE_BASH_OUTPUT_BYTES: u64 = 5 * 1024 * 1024;
+
+#[derive(Debug, Deserialize, Default)]
+pub struct BashOutputQuery {
+    path: Option<String>,
+    download: Option<String>,
+}
+
+fn bash_output_name_valid(name: &str) -> bool {
+    let Some(rest) = name.strip_prefix("pi-bash-") else {
+        return false;
+    };
+    let Some(stem) = rest.strip_suffix(".log") else {
+        return false;
+    };
+    !stem.is_empty()
+        && stem
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
+}
+
+/// `GET /api/agent/{id}/bash-output?path=...`: a bash output file under the
+/// temp directory, and only when this session's transcript names it.
+pub async fn bash_output(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<BashOutputQuery>,
+) -> Response {
+    use axum::http::{StatusCode, header};
+
+    let Some(path) = query.path.filter(|value| !value.is_empty()) else {
+        return bad_request("path required");
+    };
+    let requested = PathBuf::from(path);
+    let Some(name) = requested.file_name().and_then(|name| name.to_str()) else {
+        return bad_request("invalid path");
+    };
+    if !bash_output_name_valid(name) {
+        return bad_request("invalid path");
+    }
+    let temp_root = std::env::temp_dir()
+        .canonicalize()
+        .unwrap_or_else(|_| std::env::temp_dir());
+    let Ok(resolved) = requested.canonicalize() else {
+        return not_found("full output unavailable");
+    };
+    if resolved.parent() != Some(temp_root.as_path()) {
+        return bad_request("invalid path");
+    }
+    if !resolved.is_file() {
+        return not_found("full output unavailable");
+    }
+    let Some(session_path) = pi_star_core::session::resolve_session_path(&state.config, &id) else {
+        return not_found("Session not found");
+    };
+    let Ok(session) = pi_star_core::session::read_session(&session_path) else {
+        return not_found("Session not found");
+    };
+    let referenced = session.entries.iter().any(|entry| {
+        pi_star_core::session::entry_type(entry) == Some("message")
+            && entry.pointer("/message/role").and_then(Value::as_str) == Some("bashExecution")
+            && entry
+                .pointer("/message/fullOutputPath")
+                .and_then(Value::as_str)
+                .is_some_and(|value| pi_star_core::project::same_path(Path::new(value), &resolved))
+    });
+    if !referenced {
+        return crate::routes::json_error(StatusCode::FORBIDDEN, "forbidden");
+    }
+    let metadata = match std::fs::metadata(&resolved) {
+        Ok(metadata) => metadata,
+        Err(_) => return not_found("full output unavailable"),
+    };
+    if query.download.as_deref() == Some("1") {
+        let bytes = match std::fs::read(&resolved) {
+            Ok(bytes) => bytes,
+            Err(_) => return not_found("full output unavailable"),
+        };
+        return (
+            StatusCode::OK,
+            [
+                (
+                    header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8".to_string(),
+                ),
+                (
+                    header::CONTENT_DISPOSITION,
+                    "attachment; filename=\"bash-output.log\"".to_string(),
+                ),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            bytes,
+        )
+            .into_response();
+    }
+    if metadata.len() > MAX_INLINE_BASH_OUTPUT_BYTES {
+        return (
+            StatusCode::PAYLOAD_TOO_LARGE,
+            axum::Json(json!({
+                "error": format!(
+                    "Full output is too large to display (limit {MAX_INLINE_BASH_OUTPUT_BYTES} bytes)"
+                ),
+                "data": {"size": metadata.len(), "maxBytes": MAX_INLINE_BASH_OUTPUT_BYTES},
+            })),
+        )
+            .into_response();
+    }
+    let bytes = match std::fs::read(&resolved) {
+        Ok(bytes) => bytes,
+        Err(_) => return not_found("full output unavailable"),
+    };
+    no_store(json!({
+        "success": true,
+        "data": {"output": String::from_utf8_lossy(&bytes)},
     }))
 }
