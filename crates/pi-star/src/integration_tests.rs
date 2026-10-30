@@ -1948,3 +1948,122 @@ async fn mcp_runtime_lists_and_calls_http_tools() {
     assert_eq!(output, "echo:hello");
     handle.abort();
 }
+
+#[tokio::test]
+async fn pi_rpc_backend_speaks_jsonl_and_streams_events() {
+    let temp = tempfile::tempdir().unwrap();
+    let agent_dir = temp.path().join("agent");
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    let script = temp.path().join("fake-pi-rpc.py");
+    std::fs::write(
+        &script,
+        r#"#!/usr/bin/env python3
+import sys, json, os, socket
+def control_response(request):
+    address = os.environ.get("PI_STAR_CONTROL_ADDR", "")
+    token = os.environ.get("PI_STAR_CONTROL_TOKEN", "")
+    host, _, port = address.rpartition(":")
+    sock = socket.create_connection((host, int(port)))
+    sock.sendall((json.dumps({"type": "hello", "token": token}) + "\n").encode())
+    data = [{"name": "read", "label": "Read", "description": "Read a file", "parameters": {"type": "object"}, "active": True}]
+    sock.sendall((json.dumps({"type": "response", "id": request["id"], "success": True, "data": data}) + "\n").encode())
+    sock.close()
+forked = False
+for line in sys.stdin:
+    try:
+        command = json.loads(line)
+    except Exception:
+        continue
+    kind = command.get("type")
+    request_id = command.get("id")
+    message = command.get("message") or ""
+    if kind == "fork":
+        forked = True
+        print(json.dumps({"id": request_id, "type": "response", "command": "fork", "success": True, "data": {"cancelled": False}}), flush=True)
+        continue
+    if kind == "prompt" and message.startswith("/pi-star-host "):
+        request = json.loads(message[len("/pi-star-host "):])
+        control_response(request)
+        print(json.dumps({"id": request_id, "type": "response", "command": "prompt", "success": True, "data": {"disposition": "handled"}}), flush=True)
+        continue
+    if kind == "get_state":
+        print(json.dumps({"id": request_id, "type": "response", "command": "get_state", "success": True, "data": {
+            "sessionId": "forked" if forked else "fake", "sessionFile": "/tmp/forked.jsonl" if forked else "", "model": {"provider": "fake", "id": "fake"},
+            "thinkingLevel": "off", "isStreaming": False, "isCompacting": False,
+            "autoCompactionEnabled": True, "messageCount": 0, "pendingMessageCount": 0
+        }}), flush=True)
+    elif kind == "prompt":
+        print(json.dumps({"id": request_id, "type": "response", "command": "prompt", "success": True, "data": {"disposition": "started"}}), flush=True)
+        print(json.dumps({"type": "agent_start"}), flush=True)
+        print(json.dumps({"type": "message_start", "message": {"role": "assistant", "content": []}}), flush=True)
+        print(json.dumps({"type": "message_end", "message": {"role": "assistant", "content": [{"type": "text", "text": "hello"}]}}), flush=True)
+        print(json.dumps({"type": "agent_end", "messages": [], "willRetry": False}), flush=True)
+        print(json.dumps({"type": "agent_settled"}), flush=True)
+    else:
+        print(json.dumps({"id": request_id, "type": "response", "command": kind, "success": True, "data": {}}), flush=True)
+"#,
+    )
+    .unwrap();
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let extension = temp.path().join("fake-extension.ts");
+    std::fs::write(&extension, "export default function () {}\n").unwrap();
+    let config = pi_star_core::Config::new(Some(agent_dir), None).unwrap();
+    unsafe { std::env::set_var("PI_STAR_AGENT_EXTENSION", &extension) };
+    let registry = crate::pi_rpc::PiRpcRegistry::new_with_cli(config, script.to_string_lossy());
+    let completed = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    {
+        let completed = completed.clone();
+        registry.set_completion_callback(std::sync::Arc::new(move |_, _| {
+            completed.store(true, std::sync::atomic::Ordering::SeqCst);
+        }));
+    }
+    let session = registry
+        .create(&cwd, crate::pi_rpc::PiSpawnOptions::default())
+        .await
+        .unwrap();
+    assert!(!session.is_running());
+    let mut events = session.subscribe();
+    let response = session
+        .send(&json!({"type": "prompt", "message": "hi"}))
+        .await
+        .unwrap();
+    assert_eq!(response["disposition"], "started");
+    let mut saw_message_end = false;
+    let mut saw_prompt_done = false;
+    for _ in 0..20 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(2), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.get("type").and_then(Value::as_str) {
+            Some("message_end") => saw_message_end = true,
+            Some("prompt_done") => {
+                saw_prompt_done = true;
+                break;
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_message_end);
+    assert!(saw_prompt_done);
+    assert!(completed.load(std::sync::atomic::Ordering::SeqCst));
+    let tools = session.send(&json!({"type": "get_tools"})).await.unwrap();
+    assert_eq!(tools[0]["name"], "read");
+    assert_eq!(tools[0]["active"], true);
+    let old_id = session.id();
+    let fork = session
+        .send(&json!({"type": "fork", "entryId": "entry-1"}))
+        .await
+        .unwrap();
+    assert_eq!(fork["newSessionId"], "forked");
+    assert!(registry.get(&old_id).is_none());
+    assert!(registry.get("forked").is_some());
+    unsafe { std::env::remove_var("PI_STAR_AGENT_EXTENSION") };
+    registry.shutdown();
+}

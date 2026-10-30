@@ -41,6 +41,22 @@ openspec/               本次迁移的 proposal/spec/design/tasks
 scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
 ```
 
+### Agent 后端
+
+默认使用 Rust Agent。也可以让会话交给 `pi --mode rpc` 子进程执行：
+
+```bash
+PI_STAR_AGENT_BACKEND=pi-rpc ./target/release/pi-star --port 30151
+```
+
+可用 `PI_STAR_PI_CLI` 指定 pi 可执行文件，`PI_STAR_AGENT_EXTENSION` 指定
+`agent-extension/index.ts`，`PI_STAR_PI_RPC_MAX_SESSIONS` 限制同时存活的 pi RPC 会话数
+（默认 8，超出时先回收空闲会话）。两种后端共享同一批会话文件和配置，但一个会话同一时间只能由一个
+后端写入。PiRpcBackend 覆盖 prompt、steer、follow-up、abort、队列、模型/thinking、压缩、重试、
+会话统计、fork/clone、命令、扩展 UI 和事件流；`get_tools`、`set_tools`、`navigate_tree`、
+`fork_branch`、`reload` 由 `agent-extension/` 通过 pi 扩展 API 补偿。该扩展还注册基础的
+`Agent`、`get_subagent_result`、`steer_subagent` 工具，子代理是独立的 pi RPC 会话。
+
 数据仍以文件为唯一事实来源：
 
 - 会话：`~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`

@@ -18,6 +18,7 @@ use pi_star_core::terminal::TerminalManager;
 use pi_star_core::ui_state::UiStateStore;
 
 use crate::debug_streams::DebugStreams;
+use crate::pi_rpc::PiRpcRegistry;
 
 #[derive(Default)]
 pub struct AuthThrottle {
@@ -58,6 +59,8 @@ pub struct AppState {
     pub config: Config,
     pub roots: Arc<AllowedRoots>,
     pub agents: Arc<AgentRegistry>,
+    /// Present when sessions run through `pi --mode rpc` instead of the Rust Agent.
+    pub pi_rpc: Option<Arc<PiRpcRegistry>>,
     pub terminals: Arc<TerminalManager>,
     pub ui_state: Arc<UiStateStore>,
     pub session_index: Arc<SessionIndex>,
@@ -107,12 +110,16 @@ impl AppState {
         }
         let push = Arc::new(PushStore::load(config.agent_dir.join("web-push.json")));
         let agents = Arc::new(AgentRegistry::new(config.clone(), roots.clone()));
+        let pi_rpc = match std::env::var("PI_STAR_AGENT_BACKEND").ok().as_deref() {
+            Some("pi-rpc" | "pi") => Some(Arc::new(PiRpcRegistry::new(config.clone()))),
+            _ => None,
+        };
         agents.set_max_subagents(
             pi_star_core::settings::subagent_settings(&config).max_concurrent as usize,
         );
-        {
+        let completion: Arc<dyn Fn(&str, Option<&str>) + Send + Sync> = {
             let push = push.clone();
-            agents.set_completion_callback(Arc::new(move |session_id, session_name| {
+            Arc::new(move |session_id, session_name| {
                 let push = push.clone();
                 let session_id = session_id.to_string();
                 let session_name = session_name.map(str::to_owned);
@@ -120,7 +127,11 @@ impl AppState {
                     push.notify_session_complete(&session_id, session_name.as_deref())
                         .await;
                 });
-            }));
+            })
+        };
+        agents.set_completion_callback(completion.clone());
+        if let Some(pi_rpc) = &pi_rpc {
+            pi_rpc.set_completion_callback(completion);
         }
         let ui_state = Arc::new(UiStateStore::new(config.ui_state_path()));
         let terminals = Arc::new(TerminalManager::new());
@@ -150,6 +161,7 @@ impl AppState {
             config,
             roots,
             agents,
+            pi_rpc,
             terminals,
             ui_state,
             session_index,
@@ -204,6 +216,9 @@ impl AppState {
 
     pub fn shutdown(&self) {
         self.agents.shutdown();
+        if let Some(pi_rpc) = &self.pi_rpc {
+            pi_rpc.shutdown();
+        }
         self.terminals.kill_all();
     }
 }

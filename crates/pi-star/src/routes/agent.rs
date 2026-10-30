@@ -10,6 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::debug_streams::StreamKind;
+use crate::pi_rpc::PiSpawnOptions;
 use crate::routes::{bad_request, internal, no_store, not_found};
 use crate::state::AppState;
 
@@ -51,6 +52,47 @@ pub async fn new_session(
             .into_response();
     }
     state.roots.add(&cwd);
+    if let Some(pi) = &state.pi_rpc {
+        let options = PiSpawnOptions {
+            provider: body.provider.clone(),
+            model_id: body.model_id.clone(),
+            thinking_level: body.thinking_level.clone(),
+            tool_names: body.tool_names.clone(),
+            name: None,
+        };
+        let session = match pi.create(&cwd, options).await {
+            Ok(session) => session,
+            Err(error) => return internal(error),
+        };
+        let kind = body.kind.as_deref().unwrap_or("prompt");
+        let data = if kind == "ensure_session" {
+            Value::Null
+        } else {
+            let mut command = serde_json::Map::new();
+            command.insert("type".into(), Value::String("prompt".into()));
+            if let Some(message) = body.message {
+                command.insert("message".into(), message);
+            }
+            if let Some(images) = body.images {
+                command.insert("images".into(), images);
+            }
+            for (key, value) in body.rest {
+                command.insert(key, value);
+            }
+            match session.send(&Value::Object(command)).await {
+                Ok(data) => data,
+                Err(error) => return internal(error),
+            }
+        };
+        let state_json = session.state_json();
+        return no_store(json!({
+            "success": true,
+            "sessionId": session.id(),
+            "data": data,
+            "model": state_json.get("model").cloned().unwrap_or(Value::Null),
+            "thinkingLevel": state_json.get("thinkingLevel").cloned().unwrap_or(Value::Null),
+        }));
+    }
     let runtime = match state.agents.create(&cwd) {
         Ok(runtime) => runtime,
         Err(error) => return internal(error),
@@ -109,6 +151,14 @@ pub async fn get_state(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<StateQuery>,
 ) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(session) = pi.get(&id) {
+            return no_store(json!({
+                "running": true,
+                "state": session.state_json(),
+            }));
+        }
+    }
     if let Some(runtime) = state.agents.get(&id) {
         return no_store(json!({
             "running": true,
@@ -123,6 +173,20 @@ pub async fn command(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        let session = match pi.open_or_create(&id).await {
+            Ok(session) => session,
+            Err(_) => return not_found("Session not found"),
+        };
+        return match session.send(&body).await {
+            Ok(data) => no_store(json!({ "success": true, "data": data })),
+            Err(error) => (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                axum::Json(json!({ "error": error })),
+            )
+                .into_response(),
+        };
+    }
     let runtime = state
         .agents
         .get(&id)
@@ -153,6 +217,13 @@ pub async fn events(
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        let session = match pi.open_or_create(&id).await {
+            Ok(session) => session,
+            Err(_) => return not_found("Session not found"),
+        };
+        return pi_events(&state, session, query.holder, headers);
+    }
     let runtime = state
         .agents
         .get(&id)
@@ -212,6 +283,61 @@ pub async fn events(
         .into_response()
 }
 
+fn pi_events(
+    state: &Arc<AppState>,
+    session: Arc<crate::pi_rpc::PiRpcSession>,
+    holder: Option<String>,
+    headers: HeaderMap,
+) -> Response {
+    let mut receiver = session.subscribe();
+    let state_json = session.state_json();
+    let streaming = state_json
+        .get("isStreaming")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let pending_ui = session.pending_extension_ui_ids();
+    let stream_handle =
+        state
+            .debug_streams
+            .register(StreamKind::Agent, Some(session.id()), holder, &headers);
+    let stream = async_stream::stream! {
+        stream_handle.write();
+        yield Ok::<_, std::convert::Infallible>(
+            axum::response::sse::Event::default().data(json!({
+                "type": "connected",
+                "isStreaming": streaming,
+                "pendingExtensionUiIds": pending_ui,
+            }).to_string())
+        );
+        loop {
+            tokio::select! {
+                received = receiver.recv() => {
+                    match received {
+                        Ok(event) => {
+                            if let Some(event) = filter_event(event) {
+                                stream_handle.write();
+                                yield Ok(axum::response::sse::Event::default().data(event.to_string()));
+                            }
+                        }
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            stream_handle.write();
+                            continue;
+                        }
+                        Err(_) => break,
+                    }
+                }
+                _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    stream_handle.write();
+                    yield Ok(axum::response::sse::Event::default().data("{\"type\":\"heartbeat\"}"));
+                }
+            }
+        }
+    };
+    axum::response::sse::Sse::new(stream)
+        .keep_alive(axum::response::sse::KeepAlive::default())
+        .into_response()
+}
+
 fn filter_event(event: Value) -> Option<Value> {
     let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
     if matches!(kind, "turn_start" | "turn_end" | "entry_appended") {
@@ -238,10 +364,16 @@ fn filter_event(event: Value) -> Option<Value> {
 }
 
 pub async fn running(State(state): State<Arc<AppState>>) -> Response {
+    let mut running = state.agents.running_ids();
+    let mut awaiting = state.agents.awaiting_input_ids();
+    if let Some(pi) = &state.pi_rpc {
+        running.extend(pi.running_ids());
+        awaiting.extend(pi.awaiting_input_ids());
+    }
     no_store(json!({
         "sessionListVersion": state.started.elapsed().as_millis() as u64,
-        "runningSessionIds": state.agents.running_ids(),
-        "awaitingInputSessionIds": state.agents.awaiting_input_ids(),
+        "runningSessionIds": running,
+        "awaitingInputSessionIds": awaiting,
         "completionNotificationSuppressedSessionIds": [],
         "subagentsActiveSessionIds": [],
         "sessionUiStateRevision": state.ui_state.revision(),
@@ -249,6 +381,17 @@ pub async fn running(State(state): State<Arc<AppState>>) -> Response {
 }
 
 pub async fn lease(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(session) = pi.get(&id) {
+            session.touch();
+            return no_store(json!({
+                "running": session.is_running(),
+                "awaitingInput": !session.pending_extension_ui_ids().is_empty(),
+                "subagentsActive": false,
+                "state": session.state_json(),
+            }));
+        }
+    }
     if let Some(runtime) = state.agents.get(&id) {
         runtime.touch();
         let state = runtime.state_json(false);
@@ -413,6 +556,13 @@ pub async fn debug(
         },
         "sessions": sessions,
         "session": session,
+        "piRpc": state.pi_rpc.as_ref().map(|pi| {
+            pi.ids()
+                .into_iter()
+                .filter_map(|id| pi.get(&id))
+                .map(|session| session.debug_snapshot())
+                .collect::<Vec<_>>()
+        }).unwrap_or_default(),
     }))
 }
 

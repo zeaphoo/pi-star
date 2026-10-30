@@ -34,12 +34,17 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
         .map(|session| session.modified.clone())
         .max()
         .unwrap_or_default();
-    let running = state.agents.running_ids();
+    let mut running = state.agents.running_ids();
+    let mut awaiting = state.agents.awaiting_input_ids();
+    if let Some(pi) = &state.pi_rpc {
+        running.extend(pi.running_ids());
+        awaiting.extend(pi.awaiting_input_ids());
+    }
     no_store(json!({
         "sessions": sessions,
         "sessionListVersion": version,
         "runningSessionIds": running,
-        "awaitingInputSessionIds": state.agents.awaiting_input_ids(),
+        "awaitingInputSessionIds": awaiting,
         "completionNotificationSuppressedSessionIds": [],
         "sessionUiStateRevision": state.ui_state.revision(),
         "subagentsActiveSessionIds": [],
@@ -177,6 +182,9 @@ pub async fn delete(
         return not_found("Session not found");
     };
     state.agents.remove(&id);
+    if let Some(pi) = &state.pi_rpc {
+        pi.remove(&id);
+    }
     let deleted = delete_session_file(&state, &path);
     no_store(json!({ "ok": true, "deleted": deleted }))
 }
@@ -476,6 +484,11 @@ pub async fn context(
 }
 
 pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(session) = pi.get(&id) {
+            return no_store(json!({ "running": true, "state": session.state_json() }));
+        }
+    }
     if let Some(runtime) = state.agents.get(&id) {
         return no_store(json!({ "running": true, "state": runtime.state_json(true) }));
     }
