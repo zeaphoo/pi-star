@@ -1,5 +1,6 @@
 mod app;
 mod auth;
+mod debug_streams;
 #[cfg(test)]
 mod integration_tests;
 mod routes;

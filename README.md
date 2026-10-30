@@ -11,7 +11,7 @@ UI 直接来自 [pi-web](https://github.com/agegr/pi-web)（MIT），服务端�
 
 已经跑通的主链路：
 
-- 从 pi-web 复制 230 个客户端模块，Vite 构建后由 Axum 同源提供；页面、会话侧边栏、
+- 从 pi-web 复制 231 个客户端模块，Vite 构建后由 Axum 同源提供；页面、会话侧边栏、
   文件树、聊天、模型选择、设置面板和终端 UI 均可加载。
 - 扫描并读取 pi 的 JSONL 会话，支持会话列表、活动分支上下文、向上分页、树/分支、
   重命名、删除、fork、搜索、统计、导出和侧边栏 UI 状态（pin/archive/项目顺序/项目名）。
@@ -92,14 +92,32 @@ cd ui && npm run dev
 验证：
 
 ```bash
-cargo test --offline
-cd ui && npm run typecheck && npm run build
+cargo test --offline -p pi-star-core
+cargo test --offline -p pi-star
+cd ui && npm run typecheck && npm run build && npm test
 # 需要已运行的 pi-star（默认 http://127.0.0.1:30151）
 npm run smoke
 ```
 
-`npm run smoke` 使用 Playwright；如果浏览器不在默认位置，设置 `PI_STAR_CHROMIUM` 指向
-Chromium 可执行文件，`PI_STAR_URL` 可覆盖服务地址。
+`npm test` 运行从 pi-web 迁移的 1483 个客户端单元测试（Node test runner + jiti）。
+浏览器回归测试会自己启动 `target/{debug,release}/pi-star`，先构建 UI 和二进制：
+
+```bash
+cd ui && npm run build
+cd .. && cargo build
+cd ui && npm run test:e2e        # 会话、分页、侧边栏、设置、模型、文件、主题等
+npm run test:terminal            # 真实 PTY 终端、重连、重启、workspace 隔离
+```
+
+Playwright 需要 Chromium。浏览器不在默认位置时设置 `PI_STAR_CHROMIUM`，例如
+`PI_STAR_CHROMIUM=/usr/bin/chromium-browser`；`PI_STAR_BIN` 可指定二进制路径。
+pi-web 的扩展对话框 e2e 需要执行 Node/TypeScript 扩展，默认跳过；设置
+`PI_STAR_EXTENSIONS=1` 可在未来 Rust 扩展宿主接入后重新启用。`npm run smoke` 的
+`PI_STAR_URL` 可覆盖已运行服务地址。
+
+从 pi-web 迁移的测试位于 `ui/src/**/*.test.mjs` 与 `ui/e2e/`。仅存在于 pi-web 服务端
+（Next API Route、Agent RPC、MCP host 等）的测试由 Rust 单元/集成测试覆盖：`cargo test
+-p pi-star-core` 与 `cargo test -p pi-star`。
 
 重新从 pi-web 复制 UI：
 

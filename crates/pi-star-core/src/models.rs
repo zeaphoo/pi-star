@@ -367,3 +367,114 @@ mod tests {
         assert_eq!(value["a"], 1);
     }
 }
+
+// ── models.json image size limits ────────────────────────────────────────────
+//
+// pi's schema wants `inputLimits.images.resize.maxBytes` to be an integer of at
+// least 1 and drops the whole models.json on anything else, so the save route
+// checks every custom model that sets it. Mirrors pi-web's
+// `lib/model-image-limits.ts` (`parseImageMaxBytes`, `checkImageMaxBytes`).
+
+const MAX_SAFE_INTEGER: u64 = 9_007_199_254_740_991;
+
+/// A whole number of bytes, at least 1; None for anything pi would refuse.
+pub fn parse_image_max_bytes(value: &Value) -> Option<u64> {
+    let parsed = match value {
+        Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() || !text.chars().all(|ch| ch.is_ascii_digit()) {
+                return None;
+            }
+            text.parse::<u64>().ok()?
+        }
+        Value::Number(number) => number.as_u64()?,
+        _ => return None,
+    };
+    (parsed >= 1 && parsed <= MAX_SAFE_INTEGER).then_some(parsed)
+}
+
+fn image_max_bytes(model: &Value) -> Option<&Value> {
+    (model.get("inputLimits")?.get("images")?.get("resize"))?.get("maxBytes")
+}
+
+/// The first custom model whose limit pi would refuse, as a message naming it.
+pub fn check_image_max_bytes(config: &Value) -> Result<(), String> {
+    let Some(providers) = config.get("providers").and_then(Value::as_object) else {
+        return Ok(());
+    };
+    for (provider_id, provider) in providers {
+        let Some(models) = provider.get("models").and_then(Value::as_array) else {
+            continue;
+        };
+        for model in models {
+            // The store drops models with a blank id before writing.
+            if model
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| id.trim().is_empty())
+            {
+                continue;
+            }
+            let Some(value) = image_max_bytes(model) else {
+                continue;
+            };
+            if parse_image_max_bytes(value).is_none() {
+                let id = model.get("id").and_then(Value::as_str).unwrap_or("?");
+                return Err(format!(
+                    "Image size limit of {provider_id}/{id} must be a positive whole number of bytes"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod image_limit_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn parses_only_positive_safe_whole_bytes() {
+        assert_eq!(parse_image_max_bytes(&json!(" 2048 ")), Some(2048));
+        assert_eq!(parse_image_max_bytes(&json!(2048)), Some(2048));
+        assert_eq!(parse_image_max_bytes(&json!(0)), None);
+        assert_eq!(parse_image_max_bytes(&json!(-1)), None);
+        assert_eq!(parse_image_max_bytes(&json!(2048.5)), None);
+        assert_eq!(parse_image_max_bytes(&json!("1e6")), None);
+        assert_eq!(parse_image_max_bytes(&json!("")), None);
+        assert_eq!(parse_image_max_bytes(&json!(null)), None);
+        assert_eq!(
+            parse_image_max_bytes(&json!(9_007_199_254_740_992u64)),
+            None
+        );
+    }
+
+    #[test]
+    fn checks_every_custom_model_and_names_the_first_bad_one() {
+        let valid = json!({
+            "providers": {
+                "gateway": { "models": [
+                    { "id": "a", "inputLimits": { "images": { "resize": { "maxBytes": 524288 } } } },
+                    { "id": "b" },
+                    { "id": " ", "inputLimits": { "images": { "resize": { "maxBytes": "x" } } } }
+                ] },
+                "managed": { "modelOverrides": { "c": { "contextWindow": 1 } } }
+            }
+        });
+        assert!(check_image_max_bytes(&valid).is_ok());
+        let invalid = json!({
+            "providers": { "gateway": { "models": [
+                { "id": "vision", "inputLimits": { "images": { "resize": { "maxBytes": "1.5" } } } }
+            ] } }
+        });
+        assert_eq!(
+            check_image_max_bytes(&invalid),
+            Err(
+                "Image size limit of gateway/vision must be a positive whole number of bytes"
+                    .into()
+            )
+        );
+        assert!(check_image_max_bytes(&json!({})).is_ok());
+    }
+}

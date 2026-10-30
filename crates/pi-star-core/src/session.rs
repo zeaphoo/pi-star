@@ -215,8 +215,8 @@ impl SessionFile {
             details_pending: None,
             parent_session_id,
             relation,
-            project_root: Some(project.project_root),
-            project_key: Some(project_key(Path::new(&self.header.cwd))),
+            project_root: Some(project.project_root.clone()),
+            project_key: Some(project_key(Path::new(&project.project_root))),
             branch: project.branch,
             is_worktree: Some(project.is_worktree),
             transient: Some(false),
@@ -409,8 +409,8 @@ pub fn read_header_only_info(path: &Path) -> Option<SessionInfo> {
             .map(|_| SessionRelation::Fork {
                 origin_session_id: None,
             }),
-        project_root: Some(project.project_root),
-        project_key: Some(project_key(Path::new(&header.cwd))),
+        project_root: Some(project.project_root.clone()),
+        project_key: Some(project_key(Path::new(&project.project_root))),
         branch: project.branch,
         is_worktree: Some(project.is_worktree),
         transient: Some(false),
@@ -558,34 +558,58 @@ pub fn build_tree(entries: &[Value]) -> Vec<TreeNode> {
             _ => roots.push(id),
         }
     }
+    // Build each root iteratively: a long linear session must not overflow the
+    // stack (and a depth limit used to leave its tail behind as fake roots).
     fn take(
         id: &str,
         nodes: &mut HashMap<String, TreeNode>,
         attached: &HashMap<String, Vec<String>>,
-        depth: usize,
     ) -> Option<TreeNode> {
-        if depth > 200 {
-            return nodes.remove(id);
+        struct Frame {
+            node: TreeNode,
+            children: Vec<String>,
+            next: usize,
         }
-        let mut node = nodes.remove(id)?;
-        if let Some(children) = attached.get(id) {
-            for child in children {
-                if let Some(child_node) = take(child, nodes, attached, depth + 1) {
-                    node.children.push(child_node);
+        let root = nodes.remove(id)?;
+        let mut stack = vec![Frame {
+            node: root,
+            children: attached.get(id).cloned().unwrap_or_default(),
+            next: 0,
+        }];
+        loop {
+            let frame = stack.last_mut()?;
+            if frame.next < frame.children.len() {
+                let child_id = frame.children[frame.next].clone();
+                frame.next += 1;
+                if let Some(child) = nodes.remove(&child_id) {
+                    let children = attached.get(&child_id).cloned().unwrap_or_default();
+                    stack.push(Frame {
+                        node: child,
+                        children,
+                        next: 0,
+                    });
                 }
+                continue;
+            }
+            let finished = stack.pop()?;
+            if let Some(parent) = stack.last_mut() {
+                parent.node.children.push(finished.node);
+            } else {
+                return Some(finished.node);
             }
         }
-        Some(node)
     }
     let mut result = Vec::new();
     for root in roots {
-        if let Some(node) = take(&root, &mut nodes, &attached, 0) {
+        if let Some(node) = take(&root, &mut nodes, &attached) {
             result.push(node);
         }
     }
     // Orphans (missing parent) are still shown, in file order.
     for id in order {
-        if let Some(node) = nodes.remove(&id) {
+        if nodes.contains_key(&id)
+            && let Some(node) = take(&id, &mut nodes, &attached)
+        {
             result.push(node);
         }
     }
@@ -804,7 +828,13 @@ fn entry_to_ui_message(
                                 .take(240)
                                 .collect::<String>();
                             block["thinking"] = Value::String(thinking.trim_end().to_string());
-                            block["deferred"] = Value::Bool(true);
+                            // An empty thinking block is hidden by the chat, not
+                            // made loadable: deferring it would show a button.
+                            if thinking.trim().is_empty() {
+                                block["deferred"] = Value::Bool(false);
+                            } else {
+                                block["deferred"] = Value::Bool(true);
+                            }
                         }
                     }
                 }
@@ -951,12 +981,31 @@ fn count_turns_before(entries: &[Value], oldest_parent: &str) -> usize {
     let mut turns = 0;
     let mut current = by_id.get(oldest_parent).copied();
     while let Some(entry) = current {
-        let anchor = matches!(entry_type(entry), Some("compaction" | "custom_message"))
-            || (entry_type(entry) == Some("message")
-                && matches!(
-                    entry.pointer("/message/role").and_then(Value::as_str),
-                    Some("user" | "assistant")
-                ));
+        // The anchors the chat groups turns by (pi-web's isMessageGroupAnchor):
+        // a user message, a compaction, a displayed subagent notification, or a
+        // branch summary. An assistant reply belongs to the same turn.
+        let anchor = match entry_type(entry) {
+            Some("message") => {
+                entry.pointer("/message/role").and_then(Value::as_str) == Some("user")
+            }
+            Some("compaction") => true,
+            Some("branch_summary") => entry
+                .get("summary")
+                .and_then(Value::as_str)
+                .is_some_and(|summary| !summary.is_empty()),
+            Some("custom_message") => {
+                let display = entry.get("display").and_then(Value::as_bool) != Some(false);
+                let custom_type = entry.get("customType").and_then(Value::as_str);
+                display
+                    && matches!(
+                        custom_type,
+                        Some(
+                            "compaction" | "pi-web:subagent-notification" | "subagent-notification"
+                        )
+                    )
+            }
+            _ => false,
+        };
         if anchor {
             turns += 1;
         }
@@ -1149,6 +1198,59 @@ mod tests {
 
     fn encode_for_test(cwd: &str) -> String {
         crate::config::encode_cwd(Path::new(cwd))
+    }
+
+    #[test]
+    fn builds_a_long_linear_tree_without_fake_roots() {
+        let entries: Vec<Value> = (0..600)
+            .map(|index| {
+                let id = format!("e{index}");
+                let parent = if index == 0 {
+                    Value::Null
+                } else {
+                    Value::String(format!("e{}", index - 1))
+                };
+                let role = if index % 2 == 0 { "user" } else { "assistant" };
+                json!({
+                    "type": "message",
+                    "id": id,
+                    "parentId": parent,
+                    "message": { "role": role, "content": "x" }
+                })
+            })
+            .collect();
+        let tree = build_tree(&entries);
+        assert_eq!(tree.len(), 1);
+        assert_eq!(tree[0].entry["id"], "e0");
+        // The linear tail is compressed into one node, not repeated as roots.
+        let mut nodes = 1;
+        let mut current = &tree[0];
+        while let Some(child) = current.children.first() {
+            nodes += 1;
+            current = child;
+        }
+        assert!(nodes <= 2, "expected a compressed chain, got {nodes} nodes");
+    }
+
+    #[test]
+    fn turns_before_counts_user_turns_and_compactions_only() {
+        let mut entries = Vec::new();
+        for turn in 0..10 {
+            let user = format!("u{turn}");
+            let assistant = format!("a{turn}");
+            entries.push(json!({
+                "type": "message", "id": user,
+                "parentId": if turn == 0 { Value::Null } else { Value::String(format!("a{}", turn - 1)) },
+                "message": { "role": "user", "content": "x" }
+            }));
+            entries.push(json!({
+                "type": "message", "id": assistant, "parentId": user,
+                "message": { "role": "assistant", "content": "x" }
+            }));
+        }
+        let context = build_context("s", &entries, Some("a9"), 2, None, false, false);
+        assert_eq!(context.entry_ids, vec!["u9", "a9"]);
+        assert_eq!(context.turns_before, 9);
     }
 
     #[test]

@@ -852,3 +852,105 @@ async fn mcp_oauth_discovers_registers_and_stores_tokens() {
         "access-1"
     );
 }
+
+#[tokio::test]
+async fn debug_snapshot_has_the_shape_the_panel_renders() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/agent/debug")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["now"].is_number(),
+        "now is epoch ms, not a timestamp string"
+    );
+    let server = &body["server"];
+    assert!(server["startedAt"].is_number());
+    assert!(server["idleTimeoutMs"].is_number());
+    assert!(server["heartbeatMs"].is_number());
+    assert!(server["wrappers"]["alive"].is_number());
+    assert!(server["eventStreams"]["total"].is_number());
+    assert!(server["sseTotal"].is_number());
+    assert!(server["pages"].is_array());
+    assert!(server["fileWatches"].is_number());
+    assert!(server["terminals"]["count"].is_number());
+    assert!(body["sessions"].is_array());
+    assert!(body["session"].is_null());
+
+    let (status, detail) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/agent/debug?session={}", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let session = &detail["session"];
+    assert_eq!(session["sessionId"], fixture.session_id);
+    assert!(session["eventStreams"].is_array());
+    assert!(session["subagents"]["runs"].is_array());
+    assert!(session["subagents"]["notifications"].is_array());
+    assert!(session["providers"].is_array());
+}
+
+#[tokio::test]
+async fn models_config_refuses_an_invalid_image_limit() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let body = json!({
+        "providers": {
+            "gateway": {
+                "models": [{
+                    "id": "vision",
+                    "inputLimits": { "images": { "resize": { "maxBytes": 1.5 } } }
+                }]
+            }
+        }
+    });
+    let (status, reply) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/models-config")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        reply["error"],
+        "Image size limit of gateway/vision must be a positive whole number of bytes"
+    );
+
+    let good = json!({
+        "providers": {
+            "gateway": {
+                "models": [{
+                    "id": "vision",
+                    "inputLimits": { "images": { "resize": { "maxBytes": 524288 } } }
+                }]
+            }
+        }
+    });
+    let (status, reply) = call(
+        app,
+        Request::builder()
+            .method("PUT")
+            .uri("/api/models-config")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(good.to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(reply["success"], true);
+}

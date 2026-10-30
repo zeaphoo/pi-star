@@ -31,7 +31,7 @@ export function translateMessage(
 ): string {
   const message = messages[locale]?.[key] ?? messages.en?.[key];
   if (message === undefined) {
-    if (import.meta.env.DEV) console.warn(`[i18n] Missing translation: ${key}`);
+    if (import.meta.env?.DEV) console.warn(`[i18n] Missing translation: ${key}`);
     return key;
   }
   return interpolateMessage(message, params);

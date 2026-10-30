@@ -163,12 +163,27 @@ fn glob_match(pattern: &str, value: &str) -> bool {
         .unwrap_or(false)
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, Default)]
+pub struct RenamePair {
+    from: String,
+    to: String,
+}
+
+#[derive(Debug, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
 pub struct EnabledModelsBody {
     op: Option<String>,
     enabled: Option<bool>,
     refs: Option<Vec<String>>,
     provider: Option<String>,
+    /// `resync`: provider and model renames made by the models.json save.
+    #[serde(default)]
+    renames: Vec<RenamePair>,
+    #[serde(default)]
+    model_renames: Vec<RenamePair>,
+    /// Providers that were fully enabled before the save.
+    #[serde(default)]
+    fully_enabled: Vec<String>,
 }
 
 pub async fn set_enabled_models(
@@ -218,6 +233,41 @@ pub async fn set_enabled_models(
             }
         }
         Some("prune") => {}
+        Some("resync") => {
+            // Repair the patterns after models.json changed: carry renames
+            // through each entry and keep fully enabled providers fully on.
+            for pattern in &mut patterns {
+                for rename in &body.model_renames {
+                    if pattern == &rename.from {
+                        *pattern = rename.to.clone();
+                    }
+                }
+                if let Some((provider, rest)) = pattern.split_once('/') {
+                    if let Some(rename) = body.renames.iter().find(|rename| rename.from == provider)
+                    {
+                        *pattern = format!("{}/{}", rename.to, rest);
+                    }
+                }
+            }
+            let available = state
+                .models()
+                .map(|data| data.model_list)
+                .unwrap_or_default();
+            for provider in &body.fully_enabled {
+                let provider = body
+                    .renames
+                    .iter()
+                    .find(|rename| &rename.from == provider)
+                    .map(|rename| rename.to.clone())
+                    .unwrap_or_else(|| provider.clone());
+                for model in available.iter().filter(|model| model.provider == provider) {
+                    let reference = format!("{}/{}", model.provider, model.id);
+                    if !patterns.contains(&reference) {
+                        patterns.push(reference);
+                    }
+                }
+            }
+        }
         _ => return bad_request("Invalid op"),
     }
     if let Err(error) = settings::set_enabled_models(&state.config, patterns) {
@@ -256,6 +306,9 @@ pub async fn set_models_config(
 ) -> Response {
     if !body.is_object() {
         return bad_request("Expected a JSON object");
+    }
+    if let Err(error) = pi_star_core::models::check_image_max_bytes(&body) {
+        return bad_request(error);
     }
     if let Some(providers) = body.get("providers").and_then(Value::as_object) {
         for (name, provider) in providers {

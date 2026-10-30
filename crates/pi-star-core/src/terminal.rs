@@ -152,18 +152,27 @@ impl TerminalManager {
                         Err(_) => break,
                     }
                 }
-                let _ = sender.send(TerminalEvent::Closed);
+                // The exit watcher owns the end of a shell: it sends Exit with
+                // the code. Sending Closed here would race it, and a stream
+                // that saw Closed first reported "Terminal closed" instead.
             });
         }
         {
             let record = record.clone();
             std::thread::spawn(move || {
-                let code = {
-                    let mut child = record.child.lock();
-                    child
-                        .wait()
-                        .map(|status| status.exit_code() as i32)
-                        .unwrap_or(-1)
+                // Poll instead of holding the child lock through `wait()`:
+                // `kill()` needs that lock, and a shell can outlive its
+                // stream by hours.
+                let code = loop {
+                    let status = {
+                        let mut child = record.child.lock();
+                        child.try_wait()
+                    };
+                    match status {
+                        Ok(Some(status)) => break status.exit_code() as i32,
+                        Ok(None) => std::thread::sleep(std::time::Duration::from_millis(100)),
+                        Err(_) => break -1,
+                    }
                 };
                 *record.exit_code.lock() = Some(code);
                 *record.exited.lock() = true;
@@ -246,5 +255,14 @@ impl TerminalManager {
 
     pub fn count(&self) -> usize {
         self.terminals.lock().len()
+    }
+
+    /// Shells whose process has exited but whose backlog can still be read.
+    pub fn exited_count(&self) -> usize {
+        self.terminals
+            .lock()
+            .values()
+            .filter(|record| *record.exited.lock())
+            .count()
     }
 }

@@ -21,7 +21,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped，项目设置覆盖全局 |
 | Provider | ✅ | OpenAI-compatible / Anthropic Messages；模型缓存、provider usage |
 | OAuth / device-code | ✅ | Anthropic 授权码 + PKCE；GitHub Copilot device-code；API Key 保存/删除/登出 |
-| 模型与 models.json | ✅ | 目录、默认/启用、CRUD、discover/test、5s 进程内缓存 |
+| 模型与 models.json | ✅ | 目录、默认/启用、CRUD、discover/test、图片大小上限校验、5s 进程内缓存 |
 | MCP | ✅ | 文件读写、状态/遮罩、Test（stdio JSON-RPC/HTTP）、OAuth discovery/注册/回调、mcp-auth.json |
 | Skills | ✅ | 列表/内容/开关、skills.sh 搜索、GitHub/本地包安装与更新、lock 文件 |
 | Plugins | ✅ | 列表、本地/Git/npm 安装、更新、启用/禁用/移除、npm 更新检查 |
@@ -29,8 +29,8 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | 静态服务/SPA | ✅ | 缓存头、SPA fallback、API JSON 404 |
 | 认证/安全 | ✅ | Host/Origin、body limit、cookie/Basic Auth、失败指数退避 |
 | Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
-| Debug / app-update / web-auth | ✅ | 只读快照与基础状态接口 |
-| 测试 | ✅ | 13 个 core 单测 + 15 个 HTTP/集成测试 + `npm run typecheck/build/smoke` |
+| Debug / app-update / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
+| 测试 | ✅ | 17 个 core 单测 + 20 个 HTTP/集成测试 + 1483 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
 
 ## 运行时边界
 

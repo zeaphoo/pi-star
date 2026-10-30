@@ -3,13 +3,15 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use axum::Json;
-use axum::extract::{Path as AxumPath, State};
+use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::json;
 
 use pi_star_core::terminal::TerminalEvent;
 
+use crate::debug_streams::StreamKind;
 use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
@@ -104,20 +106,33 @@ pub async fn kill(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<Str
     no_store(json!({ "success": true }))
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct StreamQuery {
+    holder: Option<String>,
+}
+
 pub async fn events(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let Some(mut subscription) = state.terminals.subscribe(&id) else {
         return not_found("Terminal not found");
     };
+    let stream_handle =
+        state
+            .debug_streams
+            .register(StreamKind::Terminal, None, query.holder, &headers);
     let stream = async_stream::stream! {
+        stream_handle.connected();
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().comment("")
         );
         yield Ok(axum::response::sse::Event::default().data(serde_json::to_string(&subscription.output).unwrap_or_default()));
         if subscription.exited {
             let event = TerminalEvent::Exit { exit_code: subscription.exit_code.unwrap_or(0) };
+            stream_handle.write();
             yield Ok(axum::response::sse::Event::default().data(serde_json::to_string(&event).unwrap_or_default()));
         }
         loop {
@@ -126,6 +141,7 @@ pub async fn events(
                     match received {
                         Ok(event) => {
                             let terminal = matches!(event, TerminalEvent::Exit { .. } | TerminalEvent::Closed);
+                            stream_handle.write();
                             yield Ok(axum::response::sse::Event::default().data(serde_json::to_string(&event).unwrap_or_default()));
                             if terminal {
                                 break;
@@ -135,6 +151,7 @@ pub async fn events(
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    stream_handle.write();
                     yield Ok(axum::response::sse::Event::default().comment(""));
                 }
             }

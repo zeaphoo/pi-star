@@ -4,10 +4,12 @@ use std::time::Duration;
 
 use axum::Json;
 use axum::extract::{Path as AxumPath, Query, State};
+use axum::http::HeaderMap;
 use axum::response::{IntoResponse, Response};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use crate::debug_streams::StreamKind;
 use crate::routes::{bad_request, internal, no_store, not_found};
 use crate::state::AppState;
 
@@ -140,9 +142,16 @@ pub async fn command(
     }
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct StreamQuery {
+    holder: Option<String>,
+}
+
 pub async fn events(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<StreamQuery>,
+    headers: HeaderMap,
 ) -> Response {
     let runtime = state
         .agents
@@ -160,7 +169,12 @@ pub async fn events(
         .and_then(Value::as_bool)
         .unwrap_or(false);
     let pending_ui = runtime.pending_extension_ui_ids();
+    let stream_handle =
+        state
+            .debug_streams
+            .register(StreamKind::Agent, Some(id.clone()), query.holder, &headers);
     let stream = async_stream::stream! {
+        stream_handle.write();
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().data(json!({
                 "type": "connected",
@@ -175,14 +189,19 @@ pub async fn events(
                         Ok(event) => {
                             let event = filter_event(event);
                             if let Some(event) = event {
+                                stream_handle.write();
                                 yield Ok(axum::response::sse::Event::default().data(event.to_string()));
                             }
                         }
-                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+                        Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {
+                            stream_handle.write();
+                            continue;
+                        }
                         Err(_) => break,
                     }
                 }
                 _ = tokio::time::sleep(Duration::from_secs(30)) => {
+                    stream_handle.write();
                     yield Ok(axum::response::sse::Event::default().data("{\"type\":\"heartbeat\"}"));
                 }
             }
@@ -252,36 +271,147 @@ pub struct DebugQuery {
     session: Option<String>,
 }
 
+fn session_summary(state: &AppState, id: &str) -> Value {
+    let runtime = state.agents.get(id);
+    let streams = state.debug_streams.session_agent_streams(id);
+    let running = runtime.as_ref().is_some_and(|runtime| runtime.is_running());
+    json!({
+        "sessionId": id,
+        "state": if runtime.is_some() { "alive" } else { "none" },
+        "running": running,
+        "awaitingInput": false,
+        "subagent": false,
+        "eventStreams": streams.len(),
+        "providers": 0,
+        "nextIdleCheckAt": Value::Null,
+        "forcedByStop": false,
+        "starts": if runtime.is_some() { 1 } else { 0 },
+    })
+}
+
+fn wrapper_json(
+    state: &AppState,
+    id: &str,
+    runtime: &pi_star_core::agent::SessionRuntime,
+) -> Value {
+    let snapshot = runtime.debug_snapshot();
+    let state_json = runtime.state_json(false);
+    let queued = state_json
+        .pointer("/queuedMessages/steering")
+        .and_then(Value::as_array)
+        .map(Vec::len)
+        .unwrap_or(0)
+        + state_json
+            .pointer("/queuedMessages/followUp")
+            .and_then(Value::as_array)
+            .map(Vec::len)
+            .unwrap_or(0);
+    let running = runtime.is_running();
+    let uptime = snapshot
+        .get("uptimeMs")
+        .and_then(Value::as_u64)
+        .unwrap_or(0) as i64;
+    let started_at = crate::debug_streams::now_ms() - uptime;
+    json!({
+        "sessionId": id,
+        "state": "alive",
+        "stale": false,
+        "subagent": false,
+        "chatOnly": false,
+        "createdAt": started_at,
+        "startedAt": started_at,
+        "closingAt": Value::Null,
+        "extensions": "none",
+        "run": {
+            "running": running,
+            "streaming": state_json.get("isStreaming").and_then(Value::as_bool).unwrap_or(false),
+            "promptRunning": state_json.get("isPromptRunning").and_then(Value::as_bool).unwrap_or(false),
+            "pendingPrompts": 0,
+            "bashRunning": state_json.get("isBashRunning").and_then(Value::as_bool).unwrap_or(false),
+            "compacting": state_json.get("isCompacting").and_then(Value::as_bool).unwrap_or(false),
+            "retrying": false,
+            "queuedMessages": queued,
+            "waitingForMcp": false,
+            "runningTools": 0,
+            "mutatingCommands": 0,
+            "replacement": Value::Null,
+        },
+        "idle": {
+            "timeoutMs": state.idle_timeout_ms,
+            "nextCheckAt": Value::Null,
+            "lastResetAt": Value::Null,
+            "forcedByStop": false,
+        },
+        "awaitingInput": false,
+        "pendingUiRequests": runtime.pending_extension_ui_ids().len(),
+        "customUis": 0,
+        "eventListeners": state.debug_streams.session_agent_streams(id).len(),
+        "lastEvent": Value::Null,
+        "lastCommand": Value::Null,
+    })
+}
+
 pub async fn debug(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DebugQuery>,
 ) -> Response {
-    let runtimes = if let Some(id) = query.session {
-        state
-            .agents
-            .get(&id)
-            .map(|runtime| vec![runtime.debug_snapshot()])
-            .unwrap_or_default()
-    } else {
-        let ids = state.agents.running_ids();
-        ids.into_iter()
-            .filter_map(|id| {
-                state
-                    .agents
-                    .get(&id)
-                    .map(|runtime| runtime.debug_snapshot())
-            })
-            .collect()
-    };
+    let mut ids = state.agents.ids();
+    ids.extend(state.debug_streams.session_ids_with_streams());
+    ids.sort();
+    ids.dedup();
+    let sessions: Vec<Value> = ids.iter().map(|id| session_summary(&state, id)).collect();
+
+    let session = query.session.as_ref().map(|id| {
+        let runtime = state.agents.get(id);
+        let streams: Vec<Value> = state
+            .debug_streams
+            .session_agent_streams(id)
+            .iter()
+            .map(|stream| stream.to_client_json())
+            .collect();
+        json!({
+            "sessionId": id,
+            "wrapper": runtime
+                .as_ref()
+                .map(|runtime| wrapper_json(&state, id, runtime))
+                .unwrap_or(Value::Null),
+            "lifecycle": Value::Null,
+            "starting": false,
+            "providers": [],
+            "eventStreams": streams,
+            "subagents": { "active": false, "runs": [], "notifications": [] },
+            "mcp": Value::Null,
+        })
+    });
+
+    let agent_streams = state.debug_streams.count(StreamKind::Agent);
+    let terminal_streams = state.debug_streams.count(StreamKind::Terminal);
+    let file_watches = state.debug_streams.count(StreamKind::FileWatch);
+    let terminals = state.terminals.count();
     no_store(json!({
-        "now": chrono::Utc::now().to_rfc3339(),
-        "protocol": 1,
-        "sessions": runtimes,
-        "streams": [],
-        "subagents": [],
-        "terminals": { "count": state.terminals.count() },
-        "mcp": [],
-        "fileWatches": 0,
-        "serverUptimeMs": state.started.elapsed().as_millis() as u64,
+        "now": crate::debug_streams::now_ms(),
+        "server": {
+            "startedAt": state.started_epoch_ms,
+            "idleTimeoutMs": state.idle_timeout_ms,
+            "heartbeatMs": 30_000,
+            "wrappers": {
+                "alive": state.agents.ids().len(),
+                "closing": 0,
+                "starting": 0,
+            },
+            "eventStreams": { "total": agent_streams },
+            "sseTotal": agent_streams + terminal_streams + file_watches,
+            "pages": state.debug_streams.pages(),
+            "fileWatches": file_watches,
+            "terminals": {
+                "count": terminals,
+                "listeners": terminal_streams,
+                "detached": 0,
+                "exited": state.terminals.exited_count(),
+                "nextCleanupAt": Value::Null,
+            },
+        },
+        "sessions": sessions,
+        "session": session,
     }))
 }

@@ -106,6 +106,11 @@ impl AgentRegistry {
             .collect()
     }
 
+    /// Every session the registry still holds a runtime for.
+    pub fn ids(&self) -> Vec<String> {
+        self.runtimes.lock().keys().cloned().collect()
+    }
+
     pub fn awaiting_input_ids(&self) -> Vec<String> {
         Vec::new()
     }
@@ -253,6 +258,17 @@ impl SessionRuntime {
 
     pub fn is_running(&self) -> bool {
         self.running.load(Ordering::SeqCst)
+    }
+
+    /// The transcript the wrapper holds, which may be newer than the file.
+    pub fn entries_snapshot(&self) -> Vec<Value> {
+        self.state.lock().entries.clone()
+    }
+
+    /// Replaces the wrapper's transcript with a fresh read of the session file
+    /// (a mount/refresh read, `?force=1`).
+    pub fn replace_entries(&self, entries: Vec<Value>) {
+        self.state.lock().entries = entries;
     }
 
     pub fn state_json(&self, include_prompt: bool) -> Value {

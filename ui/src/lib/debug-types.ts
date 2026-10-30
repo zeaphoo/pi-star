@@ -88,6 +88,10 @@ export interface DebugLivenessProvider {
 export interface DebugEventStream {
   /** The page id the stream was opened with (`?holder=`); null for an older page. */
   holder: string | null;
+  /** The request's reported address (`x-forwarded-for`, which Next fills from the socket); a label, not an identity. */
+  address: string | null;
+  /** Its browser and system read from the user agent ("Chrome · macOS"); never the user agent itself. */
+  client: string | null;
   openedAt: number;
   /** When `connected` was written; null while the stream still starts the wrapper. */
   connectedAt: number | null;
@@ -95,6 +99,16 @@ export interface DebugEventStream {
   droppedEvents: number;
   /** Bytes the browser has not read yet. */
   queuedBytes: number;
+}
+
+/** One page holding event streams on the server, labelled by its first stream's request. */
+export interface DebugServerPage {
+  holder: string | null;
+  address: string | null;
+  client: string | null;
+  agent: number;
+  terminal: number;
+  fileWatch: number;
 }
 
 export interface DebugSubagentRun {
@@ -188,9 +202,11 @@ export interface DebugServerGlobal {
   eventStreams: {
     /** Every open agent event stream, from all pages and browsers. */
     total: number;
-    /** Streams per page id (null: opened without one). */
-    byHolder: { holder: string | null; count: number }[];
   };
+  /** Every open SSE response, each a connection of its browser's pool: agent, terminal, file watch. */
+  sseTotal: number;
+  /** The pages holding them (opened with `?holder=`; null: without one), by kind. */
+  pages: DebugServerPage[];
   fileWatches: number;
   terminals: {
     count: number;

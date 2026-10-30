@@ -16,6 +16,8 @@ use pi_star_core::session_index::SessionIndex;
 use pi_star_core::terminal::TerminalManager;
 use pi_star_core::ui_state::UiStateStore;
 
+use crate::debug_streams::DebugStreams;
+
 #[derive(Default)]
 pub struct AuthThrottle {
     failures: u32,
@@ -61,6 +63,11 @@ pub struct AppState {
     pub push: Arc<PushStore>,
     pub models_cache: Mutex<Option<(Instant, ModelsData)>>,
     pub started: Instant,
+    /// Process start on the wall clock, for the Debug panel (epoch ms).
+    pub started_epoch_ms: i64,
+    /// `PI_WEB_IDLE_TIMEOUT_MS` in effect; 0 means disabled.
+    pub idle_timeout_ms: u64,
+    pub debug_streams: Arc<DebugStreams>,
     pub password: Option<String>,
     pub auth_token: String,
     pub allowed_hosts: Vec<String>,
@@ -132,6 +139,10 @@ impl AppState {
                     .map(str::to_owned),
             );
         }
+        let idle_timeout_ms = std::env::var("PI_WEB_IDLE_TIMEOUT_MS")
+            .ok()
+            .and_then(|value| value.parse::<u64>().ok())
+            .unwrap_or(600_000);
         Ok(Arc::new(Self {
             config,
             roots,
@@ -142,6 +153,9 @@ impl AppState {
             push,
             models_cache: Mutex::new(None),
             started: Instant::now(),
+            started_epoch_ms: crate::debug_streams::now_ms(),
+            idle_timeout_ms,
+            debug_streams: Arc::new(DebugStreams::new()),
             password,
             auth_token: uuid::Uuid::new_v4().to_string(),
             allowed_hosts,

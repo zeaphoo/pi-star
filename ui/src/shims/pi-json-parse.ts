@@ -24,7 +24,9 @@ export function parseStreamingJson<T = unknown>(text: string): T | undefined {
       else if (char === "{" || char === "[") stack.push(char);
       else if (char === "}" || char === "]") stack.pop();
     }
-    if (inString) candidate += '"';
+    // A stream that stopped after a backslash has no escaped character yet:
+    // drop it, then close the string.
+    if (inString) candidate = (escaped ? candidate.slice(0, -1) : candidate) + '"';
     for (let i = stack.length - 1; i >= 0; i--) candidate += stack[i] === "{" ? "}" : "]";
     try {
       return JSON.parse(candidate) as T;

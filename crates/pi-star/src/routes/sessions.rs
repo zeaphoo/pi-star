@@ -47,6 +47,8 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
 
 #[derive(Debug, Deserialize, Default)]
 pub struct SessionQuery {
+    #[serde(rename = "force")]
+    force: Option<String>,
     tail: Option<usize>,
     before: Option<String>,
     tree: Option<String>,
@@ -69,6 +71,25 @@ pub async fn get_session(
         Ok(session) => session,
         Err(error) => return internal(error),
     };
+    // A live wrapper serves its own snapshot: two processes writing one JSONL
+    // is unsupported. A mount/refresh read (`?force=1`) adopts the file and
+    // says it rebuilt, after which ordinary reads are stable again (#632).
+    let runtime = state.agents.get(&id);
+    let force = query.force.as_deref() == Some("1");
+    let wrapper_rebuilt = if let Some(runtime) = &runtime {
+        if force {
+            runtime.replace_entries(session.entries.clone());
+            Some(true)
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+    let entries = match (&runtime, force) {
+        (Some(runtime), false) => runtime.entries_snapshot(),
+        _ => session.entries.clone(),
+    };
     let info = session.info();
     state.roots.add(&info.cwd);
     if let Some(root) = &info.project_root {
@@ -81,7 +102,7 @@ pub async fn get_session(
         .clamp(1, session::MAX_TAIL);
     let context = build_context(
         &id,
-        &session.entries,
+        &entries,
         leaf_id.as_deref(),
         tail,
         query.before.as_deref(),
@@ -94,21 +115,16 @@ pub async fn get_session(
             .as_deref()
             .is_some_and(|value| value != "0"),
     );
-    let tree = build_tree(&session.entries);
-    let stats = compute_stats(&session.entries);
-    let tool_names = session
-        .entries
+    let tree = build_tree(&entries);
+    let stats = compute_stats(&entries);
+    let tool_names = entries
         .iter()
         .find(|entry| {
             entry_type(entry) == Some("custom")
                 && entry.get("customType").and_then(Value::as_str) == Some("pi-web:tool-selection")
         })
         .and_then(|entry| entry.pointer("/data/tools").cloned());
-    let latest = session
-        .entries
-        .last()
-        .and_then(entry_id)
-        .unwrap_or_default();
+    let latest = entries.last().and_then(entry_id).unwrap_or_default();
     let revision = format!("{}:{}:{}", info.modified, session.entries.len(), latest);
     let mut response = json!({
         "sessionId": id,
@@ -119,8 +135,11 @@ pub async fn get_session(
         "snapshotRevision": revision,
         "context": context,
         "stats": stats,
-        "totalActiveMs": total_active_ms(&session.entries),
+        "totalActiveMs": total_active_ms(&entries),
     });
+    if let Some(rebuilt) = wrapper_rebuilt {
+        response["wrapperRebuilt"] = Value::Bool(rebuilt);
+    }
     if query.tree.as_deref() == Some("summary") {
         response["treeFormat"] = Value::String("summary".into());
     }

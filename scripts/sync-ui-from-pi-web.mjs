@@ -97,7 +97,7 @@ function postProcess(dest, rel) {
     replace('process.env.NEXT_PUBLIC_PI_VERSION', 'import.meta.env.VITE_PI_VERSION');
   }
   if (rel === "lib/i18n/format.ts") {
-    replace('process.env.NODE_ENV !== "production"', 'import.meta.env.DEV');
+    replace('process.env.NODE_ENV !== "production"', 'import.meta.env?.DEV');
   }
   if (rel === "app/globals.css") {
     replace(`/* demo/ is a separate project; keep its sources out of this app's class scan. */\n@source not "../demo";\n/* Agent worktrees: scanning them makes webpack snapshot their symlinked\n   node_modules, which crashes \`next build\` with "reading 'length'". */\n@source not "../.claude";\n`, "");

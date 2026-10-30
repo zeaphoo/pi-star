@@ -12,6 +12,7 @@ use serde_json::json;
 
 use pi_star_core::files;
 
+use crate::debug_streams::StreamKind;
 use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
@@ -22,6 +23,8 @@ pub struct FileQuery {
     hidden: Option<String>,
     offset: Option<u64>,
     conflict: Option<String>,
+    /// The page that opened a watch stream (`?holder=`, Debug panel only).
+    holder: Option<String>,
 }
 
 pub async fn get_file(
@@ -103,7 +106,7 @@ pub async fn get_file(
                 Err(error) => internal(error),
             }
         }
-        "watch" => watch_file(file_path, query).await,
+        "watch" => watch_file(file_path, query, headers, state.debug_streams.clone()).await,
         _ => bad_request("Invalid file request type"),
     }
 }
@@ -175,9 +178,16 @@ async fn file_response(path: &Path, mime: &str, headers: &HeaderMap, attachment:
     builder.body(body).unwrap_or_else(|error| internal(error))
 }
 
-async fn watch_file(path: PathBuf, _query: FileQuery) -> Response {
+async fn watch_file(
+    path: PathBuf,
+    query: FileQuery,
+    headers: HeaderMap,
+    streams: Arc<crate::debug_streams::DebugStreams>,
+) -> Response {
+    let stream_handle = streams.register(StreamKind::FileWatch, None, query.holder, &headers);
     let stream = async_stream::stream! {
         let mut last = files::modified_version(&path);
+        stream_handle.connected();
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().event("connected").data(json!({"filePath": path.to_string_lossy()}).to_string())
         );
@@ -191,6 +201,7 @@ async fn watch_file(path: PathBuf, _query: FileQuery) -> Response {
                     Some((size, mtime)) => json!({"size": size, "mtime": mtime}),
                     None => json!({"size": 0, "mtime": chrono::Utc::now().to_rfc3339()}),
                 };
+                stream_handle.write();
                 yield Ok(axum::response::sse::Event::default().event("change").data(payload.to_string()));
             }
         }
