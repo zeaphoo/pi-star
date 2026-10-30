@@ -45,10 +45,13 @@ pub fn provisioned_from_entry(entry: &Entry) -> ProvisionedEntry {
         },
         Entry::Compaction(m) => ProvisionedKind::Compaction {
             summary: m.summary.clone(),
-            retained_tail: m.retained_tail.clone(),
+            first_kept_entry_id: (!m.first_kept_entry_id.is_empty())
+                .then(|| m.first_kept_entry_id.clone()),
             tokens_before: m.tokens_before,
             details: m.details.clone(),
             usage: m.usage.clone(),
+            from_hook: m.from_hook,
+            system_message: m.system_message.clone(),
         },
         Entry::BranchSummary(m) => ProvisionedKind::BranchSummary {
             from_id: m.from_id.clone(),
@@ -59,6 +62,9 @@ pub fn provisioned_from_entry(entry: &Entry) -> ProvisionedEntry {
         Entry::Custom(m) => ProvisionedKind::Custom {
             custom_type: m.custom_type.clone(),
             data: m.data.clone(),
+        },
+        Entry::Raw(m) => ProvisionedKind::Raw {
+            value: m.value.clone(),
         },
     };
     ProvisionedEntry { id, kind }
@@ -177,12 +183,20 @@ pub struct CompactionEntry {
     #[serde(flatten)]
     pub base: EntryBase,
     pub summary: String,
-    pub retained_tail: Vec<pi_star_agent::message::AgentMessage>,
+    /// First entry still kept on the branch after this checkpoint (pi v3
+    /// `firstKeptEntryId`). Empty strings are normalized to the entry's own id
+    /// on read, matching pi's `firstKeptEntryId ?? id` default.
+    #[serde(default)]
+    pub first_kept_entry_id: String,
     pub tokens_before: i64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub details: Option<JsonValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_hook: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub system_message: Option<JsonValue>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -208,6 +222,18 @@ pub struct CustomEntry {
     pub data: Option<JsonValue>,
 }
 
+/// An entry kind this runtime does not model (pi's `usage`, `context_edit`,
+/// `label`, `session_info`, `custom_message`, a `system` message, …).
+///
+/// Kept verbatim so loading and appending to a session written by pi never drops
+/// or rejects lines we do not understand. Raw entries participate in the tree
+/// (id/parent) but project to no model context.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RawEntry {
+    pub base: EntryBase,
+    pub value: JsonValue,
+}
+
 /// `Entry = MessageEntry | ModelChangeEntry | ... | CustomEntry`.
 ///
 /// Serialized as a flat object (each arm `#[serde(flatten)]`s its `base`), so
@@ -224,6 +250,7 @@ pub enum Entry {
     Compaction(CompactionEntry),
     BranchSummary(BranchSummaryEntry),
     Custom(CustomEntry),
+    Raw(RawEntry),
 }
 
 impl Entry {
@@ -236,6 +263,7 @@ impl Entry {
             Entry::Compaction(e) => &e.base,
             Entry::BranchSummary(e) => &e.base,
             Entry::Custom(e) => &e.base,
+            Entry::Raw(e) => &e.base,
         }
     }
 
@@ -248,6 +276,7 @@ impl Entry {
             Entry::Compaction(e) => &mut e.base,
             Entry::BranchSummary(e) => &mut e.base,
             Entry::Custom(e) => &mut e.base,
+            Entry::Raw(e) => &mut e.base,
         }
     }
 
@@ -269,6 +298,7 @@ impl Entry {
             Entry::Compaction(_) => "compaction",
             Entry::BranchSummary(_) => "branch_summary",
             Entry::Custom(_) => "custom",
+            Entry::Raw(_) => "raw",
         }
     }
 
@@ -316,6 +346,7 @@ impl Entry {
             Entry::Compaction(e) => serde_json::to_value(e),
             Entry::BranchSummary(e) => serde_json::to_value(e),
             Entry::Custom(e) => serde_json::to_value(e),
+            Entry::Raw(e) => Ok(e.value.clone()),
         };
         if let Ok(Value::Object(arm_map)) = arm {
             for (k, v) in arm_map {
@@ -387,11 +418,6 @@ impl<'de> Deserialize<'de> for Entry {
                 .map_err(serde::de::Error::custom)?,
             }),
             "compaction" => {
-                let retained_tail =
-                    serde_json::from_value(obj.get("retainedTail").cloned().ok_or_else(|| {
-                        serde::de::Error::custom("compaction missing \"retainedTail\"")
-                    })?)
-                    .map_err(serde::de::Error::custom)?;
                 let summary =
                     serde_json::from_value(obj.get("summary").cloned().ok_or_else(|| {
                         serde::de::Error::custom("compaction missing \"summary\"")
@@ -402,15 +428,23 @@ impl<'de> Deserialize<'de> for Entry {
                         serde::de::Error::custom("compaction missing \"tokensBefore\"")
                     })?)
                     .map_err(serde::de::Error::custom)?;
+                let first_kept_entry_id = obj
+                    .get("firstKeptEntryId")
+                    .and_then(|v| v.as_str())
+                    .filter(|id| !id.is_empty())
+                    .map(str::to_owned)
+                    .unwrap_or_else(|| base.id.clone());
                 Entry::Compaction(CompactionEntry {
                     base,
                     summary,
-                    retained_tail,
+                    first_kept_entry_id,
                     tokens_before,
                     details: obj.get("details").cloned(),
                     usage: obj
                         .get("usage")
                         .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                    from_hook: obj.get("fromHook").and_then(|v| v.as_bool()),
+                    system_message: obj.get("systemMessage").cloned(),
                 })
             }
             "branch_summary" => Entry::BranchSummary(BranchSummaryEntry {
@@ -438,11 +472,10 @@ impl<'de> Deserialize<'de> for Entry {
                 .map_err(serde::de::Error::custom)?,
                 data: obj.get("data").cloned(),
             }),
-            other => {
-                return Err(serde::de::Error::custom(format!(
-                    "unknown entry type {other}"
-                )))
-            }
+            _ => Entry::Raw(RawEntry {
+                base,
+                value: raw.clone(),
+            }),
         };
         Ok(entry)
     }
@@ -511,10 +544,12 @@ pub enum ProvisionedKind {
     },
     Compaction {
         summary: String,
-        retained_tail: Vec<pi_star_agent::message::AgentMessage>,
+        first_kept_entry_id: Option<String>,
         tokens_before: i64,
         details: Option<JsonValue>,
         usage: Option<Usage>,
+        from_hook: Option<bool>,
+        system_message: Option<JsonValue>,
     },
     BranchSummary {
         from_id: String,
@@ -525,6 +560,9 @@ pub enum ProvisionedKind {
     Custom {
         custom_type: String,
         data: Option<JsonValue>,
+    },
+    Raw {
+        value: JsonValue,
     },
 }
 
@@ -539,6 +577,7 @@ impl ProvisionedEntry {
             ProvisionedKind::Compaction { .. } => "compaction",
             ProvisionedKind::BranchSummary { .. } => "branch_summary",
             ProvisionedKind::Custom { .. } => "custom",
+            ProvisionedKind::Raw { .. } => "raw",
         }
     }
 }
@@ -584,18 +623,25 @@ pub fn provisioned_into_entry(
         }
         ProvisionedKind::Compaction {
             summary,
-            retained_tail,
+            first_kept_entry_id,
             tokens_before,
             details,
             usage,
-        } => Entry::Compaction(CompactionEntry {
-            base,
-            summary,
-            retained_tail,
-            tokens_before,
-            details,
-            usage,
-        }),
+            from_hook,
+            system_message,
+        } => {
+            let first_kept_entry_id = first_kept_entry_id.unwrap_or_else(|| base.id.clone());
+            Entry::Compaction(CompactionEntry {
+                base,
+                summary,
+                first_kept_entry_id,
+                tokens_before,
+                details,
+                usage,
+                from_hook,
+                system_message,
+            })
+        }
         ProvisionedKind::BranchSummary {
             from_id,
             summary,
@@ -612,6 +658,17 @@ pub fn provisioned_into_entry(
             base,
             custom_type,
             data,
+        }),
+        ProvisionedKind::Raw { value } => Entry::Raw(RawEntry {
+            base: EntryBase {
+                entry_type: value
+                    .get("type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("raw")
+                    .to_string(),
+                ..base
+            },
+            value,
         }),
     }
 }

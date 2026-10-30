@@ -7,15 +7,16 @@
 //! here (`build_session_context`) so the two never diverge.
 //!
 //! Shape notes:
-//! - `defaultContextEntryTransform` keeps the **last** `compaction` entry plus
-//!   everything after it; with no compaction, keeps all entries. This is the
-//!   "resume from the latest summary" boundary the loop feeds the model.
+//! - `buildContextEntries` mirrors pi's compaction-aware selection: with no
+//!   compaction it keeps every entry; with a compaction it keeps the compaction,
+//!   the entries between `firstKeptEntryId` and the compaction (system messages
+//!   excluded), then everything after the compaction.
 //! - `sessionEntryToContextMessages` projects each entry to zero or more
 //!   [`AgentMessage`]s: messages pass through (deferred assistant handles are
 //!   dropped — they are placeholders, not model-visible content); a compaction
-//!   entry expands to its `compactionSummary` message plus the retained tail; a
-//!   non-empty `branch_summary` expands to a `branchSummary` message; a `custom`
-//!   entry expands via the registered projector (or nothing).
+//!   entry expands to its `compactionSummary` message; a non-empty
+//!   `branch_summary` expands to a `branchSummary` message; a `custom` entry
+//!   expands via the registered projector (or nothing).
 //! - `deriveSessionContextState` walks the FULL path (not the truncated context
 //!   entries) so `thinking_level`/`model`/`active_tool_names` reflect the latest
 //!   change even when it fell before a compaction boundary.
@@ -71,28 +72,66 @@ impl std::fmt::Debug for SessionContextBuildOptions {
     }
 }
 
-/// `defaultContextEntryTransform` — keep the last `compaction` entry + everything
-/// after it; if no compaction, keep all entries. Mirrors
-/// `defaultContextEntryTransform`.
+/// `defaultContextEntryTransform` — the compaction-aware entry selection.
+/// Returns the selected entries in model order. Mirrors pi's
+/// `buildContextEntries`.
 pub fn default_context_entry_transform(path_entries: &[Entry]) -> Vec<Entry> {
-    default_context_entries(path_entries).to_vec()
+    context_entry_indices(path_entries)
+        .into_iter()
+        .map(|index| path_entries[index].clone())
+        .collect()
 }
 
-fn default_context_entries(path_entries: &[Entry]) -> &[Entry] {
-    let start = path_entries
+/// Indexes of the entries that contribute to the model context, in order.
+///
+/// Mirrors pi's `buildContextEntries`:
+/// - no compaction: every index, oldest first;
+/// - with a compaction: the compaction, then the entries from
+///   `firstKeptEntryId` up to (excluding) the compaction — skipping system
+///   messages — then everything after the compaction.
+fn context_entry_indices(path_entries: &[Entry]) -> Vec<usize> {
+    let Some(compaction_index) = path_entries
         .iter()
         .rposition(|entry| matches!(entry, Entry::Compaction(_)))
-        .unwrap_or(0);
-    &path_entries[start..]
+    else {
+        return (0..path_entries.len()).collect();
+    };
+    let first_kept = match &path_entries[compaction_index] {
+        Entry::Compaction(compaction) => compaction.first_kept_entry_id.as_str(),
+        _ => unreachable!("compaction_index points at a compaction"),
+    };
+    let mut indices = Vec::with_capacity(path_entries.len());
+    indices.push(compaction_index);
+    let mut found_first_kept = false;
+    for (index, entry) in path_entries[..compaction_index].iter().enumerate() {
+        if entry.id() == first_kept {
+            found_first_kept = true;
+        }
+        if found_first_kept && !is_system_message(entry) {
+            indices.push(index);
+        }
+    }
+    indices.extend(compaction_index + 1..path_entries.len());
+    indices
 }
 
-fn context_entries<'a>(
-    path_entries: &'a [Entry],
-    options: &SessionContextBuildOptions,
-) -> std::borrow::Cow<'a, [Entry]> {
-    let mut entries = std::borrow::Cow::Borrowed(default_context_entries(path_entries));
+/// pi's `entry.type === "message" && entry.message.role === "system"`.
+/// System prompts are handled by the harness separately, and imported pi
+/// sessions store them as raw message entries.
+fn is_system_message(entry: &Entry) -> bool {
+    match entry {
+        Entry::Raw(raw) => {
+            raw.base.entry_type == "message"
+                && raw.value.pointer("/message/role").and_then(|v| v.as_str()) == Some("system")
+        }
+        _ => false,
+    }
+}
+
+fn context_entries(path_entries: &[Entry], options: &SessionContextBuildOptions) -> Vec<Entry> {
+    let mut entries = default_context_entry_transform(path_entries);
     for transform in &options.entry_transforms {
-        entries = std::borrow::Cow::Owned(transform(&entries));
+        entries = transform(&entries);
     }
     entries
 }
@@ -101,11 +140,10 @@ fn context_entries<'a>(
 ///
 /// The borrowed builder remains the compatibility path for callers
 /// that need transforms/projectors. The harness's ordinary path already owns the
-/// `Vec<Entry>` returned by storage, so cloning every message out of those entries
-/// is unnecessary when no user hook can observe the intermediate entries. In that
-/// case move ordinary messages and compaction retained-tail messages directly into
-/// the provider context. Derived state is computed before consuming the path so it
-/// still observes the full branch, including entries before the latest compaction.
+/// `Vec<Entry>` returned by storage, so selected entries are moved into the
+/// provider context instead of cloned. Derived state is computed before consuming
+/// the path so it still observes the full branch, including entries before the
+/// latest compaction.
 pub(crate) fn build_session_context_owned(
     path_entries: Vec<Entry>,
     options: &SessionContextBuildOptions,
@@ -121,13 +159,13 @@ pub(crate) fn build_session_context_owned(
     let started = diagnostics.then(Instant::now);
     let path_entry_count = path_entries.len();
     let mut ctx = derive_session_context_state(path_entries.iter().rev());
-    let start = path_entries
-        .iter()
-        .rposition(|entry| matches!(entry, Entry::Compaction(_)))
-        .unwrap_or(0);
+    let indices = context_entry_indices(&path_entries);
+    let context_entry_count = indices.len();
+    let mut slots: Vec<Option<Entry>> = path_entries.into_iter().map(Some).collect();
     let mut messages = Vec::new();
 
-    for entry in path_entries.into_iter().skip(start) {
+    for index in indices {
+        let entry = slots[index].take().expect("each index is selected once");
         match entry {
             Entry::Message(message) => {
                 if !matches!(
@@ -144,7 +182,6 @@ pub(crate) fn build_session_context_owned(
                     compaction.tokens_before,
                     compaction.base.timestamp,
                 ));
-                messages.extend(compaction.retained_tail);
             }
             Entry::BranchSummary(summary) if !summary.summary.is_empty() => {
                 messages.push(create_branch_summary_message(
@@ -163,7 +200,7 @@ pub(crate) fn build_session_context_owned(
         eprintln!(
             "RPI_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
             path_entry_count,
-            path_entry_count.saturating_sub(start),
+            context_entry_count,
             ctx.messages.len(),
             started.elapsed().as_nanos().min(u64::MAX as u128),
         );
@@ -172,18 +209,18 @@ pub(crate) fn build_session_context_owned(
 }
 
 /// Build the default context directly from a validated branch walk. The state
-/// owns the entries, so only model-visible messages and retained-tail messages
-/// are cloned; old entries before the latest compaction are never cloned.
+/// owns the entries, so only model-visible messages are cloned; entries before
+/// the selected compaction range are never cloned.
 pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> SessionContext {
     let diagnostics = std::env::var_os("RPI_AGENT_DIAGNOSTICS").is_some_and(|value| value != "0");
     let started = diagnostics.then(Instant::now);
     let mut ctx = derive_session_context_state(path_entries.iter().copied().rev());
-    let start = path_entries
-        .iter()
-        .rposition(|entry| matches!(entry, Entry::Compaction(_)))
-        .unwrap_or(0);
+    let owned: Vec<Entry> = path_entries.iter().map(|entry| (*entry).clone()).collect();
+    let indices = context_entry_indices(&owned);
+    let context_entry_count = indices.len();
     let mut messages = Vec::new();
-    for entry in path_entries.iter().skip(start).copied() {
+    for index in indices {
+        let entry = path_entries[index];
         match entry {
             Entry::Message(message) => {
                 if !matches!(
@@ -200,7 +237,6 @@ pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> Se
                     compaction.tokens_before,
                     compaction.base.timestamp,
                 ));
-                messages.extend(compaction.retained_tail.iter().cloned());
             }
             Entry::BranchSummary(summary) if !summary.summary.is_empty() => {
                 messages.push(create_branch_summary_message(
@@ -217,7 +253,7 @@ pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> Se
         eprintln!(
             "RPI_CONTEXT_DIAGNOSTICS path_entries={} context_entries={} messages={} build_ns={}",
             path_entries.len(),
-            path_entries.len().saturating_sub(start),
+            context_entry_count,
             ctx.messages.len(),
             started.elapsed().as_nanos().min(u64::MAX as u128),
         );
@@ -231,7 +267,7 @@ pub fn build_context_entries(
     path_entries: &[Entry],
     options: &SessionContextBuildOptions,
 ) -> Vec<Entry> {
-    context_entries(path_entries, options).into_owned()
+    context_entries(path_entries, options)
 }
 
 /// `sessionEntryToContextMessages` — project one entry to context messages.
@@ -260,17 +296,15 @@ pub fn session_entry_to_context_messages(
     }
 }
 
-/// `createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)`
-/// plus the retained tail. Mirrors the TS `compaction` branch.
+/// `createCompactionSummaryMessage(entry.summary, entry.tokensBefore, entry.timestamp)`.
+/// Kept entries are selected by [`context_entry_indices`] and projected on their
+/// own, so a compaction contributes only its summary message.
 fn compaction_to_context_messages(c: &CompactionEntry) -> Vec<AgentMessage> {
-    let mut out = Vec::with_capacity(c.retained_tail.len() + 1);
-    out.push(create_compaction_summary_message(
+    vec![create_compaction_summary_message(
         &c.summary,
         c.tokens_before,
         c.base.timestamp,
-    ));
-    out.extend(c.retained_tail.iter().cloned());
-    out
+    )]
 }
 
 /// `createBranchSummaryMessage(entry.summary, entry.fromId, entry.timestamp)` —
@@ -420,7 +454,7 @@ mod tests {
         id: &str,
         parent: &str,
         summary: &str,
-        tail: Vec<AgentMessage>,
+        first_kept_entry_id: &str,
         seq: u64,
     ) -> Entry {
         use crate::session::types::{CompactionEntry, EntryBase};
@@ -433,10 +467,12 @@ mod tests {
                 timestamp: seq as i64,
             },
             summary: summary.into(),
-            retained_tail: tail,
+            first_kept_entry_id: first_kept_entry_id.into(),
             tokens_before: 100,
             details: None,
             usage: None,
+            from_hook: None,
+            system_message: None,
         })
     }
 
@@ -526,13 +562,7 @@ mod tests {
             model_change("model", "root", "old", "old-model", 1),
             thinking_level("thinking", "model", "high", 2),
             active("tools", "thinking", vec!["read".into()], 3),
-            compaction_entry(
-                "compact",
-                "tools",
-                "summary",
-                vec![assistant("retained")],
-                4,
-            ),
+            compaction_entry("compact", "tools", "summary", "", 4),
         ];
         let old = derive_session_context_state(entries.iter().rev());
         assert_eq!(old.model, Some(("old".into(), "old-model".into())));
@@ -561,16 +591,12 @@ mod tests {
     fn starts_at_latest_compaction_and_materializes_retained_tail() {
         let entries = vec![
             msg_entry("old", None, user("old"), 1),
-            compaction_entry(
-                "compact",
-                "old",
-                "summary",
-                vec![user("retained"), assistant("answer")],
-                2,
-            ),
-            model_change("model", "compact", "openai", "gpt-5", 3),
-            thinking_level("thinking", "model", "high", 4),
-            msg_entry_p("tail", "thinking", user("tail"), 5),
+            msg_entry_p("retained", "old", user("retained"), 2),
+            msg_entry_p("answer", "retained", assistant("answer"), 3),
+            compaction_entry("compact", "answer", "summary", "retained", 4),
+            model_change("model", "compact", "openai", "gpt-5", 5),
+            thinking_level("thinking", "model", "high", 6),
+            msg_entry_p("tail", "thinking", user("tail"), 7),
         ];
         let borrowed = build_session_context(&entries, &SessionContextBuildOptions::default());
         assert_eq!(
@@ -631,19 +657,15 @@ mod tests {
                     active_tool_names: vec!["read".into()],
                 })
             },
-            compaction_entry(
-                "compact",
-                "old-tools",
-                "summary",
-                vec![user("retained"), assistant("answer")],
-                4,
-            ),
-            model_change("new-model", "compact", "anthropic", "claude", 5),
+            msg_entry_p("retained", "old-tools", user("retained"), 4),
+            msg_entry_p("answer", "retained", assistant("answer"), 5),
+            compaction_entry("compact", "answer", "summary", "retained", 6),
+            model_change("new-model", "compact", "anthropic", "claude", 7),
             msg_entry_p(
                 "deferred",
                 "new-model",
                 AgentMessage::Assistant(Box::new(deferred)),
-                6,
+                8,
             ),
             {
                 use crate::session::types::{ActiveToolsEntry, EntryBase};
@@ -651,15 +673,15 @@ mod tests {
                     base: EntryBase {
                         entry_type: "active_tools_change".into(),
                         id: "empty-tools".into(),
-                        seq: 7,
+                        seq: 9,
                         parent_id: Some("deferred".into()),
-                        timestamp: 7,
+                        timestamp: 9,
                     },
                     active_tool_names: vec![],
                 })
             },
-            thinking_level("off", "empty-tools", "off", 8),
-            msg_entry_p("tail", "off", user("tail"), 9),
+            thinking_level("off", "empty-tools", "off", 10),
+            msg_entry_p("tail", "off", user("tail"), 11),
         ];
         let borrowed = build_session_context(&entries, &SessionContextBuildOptions::default());
         assert_eq!(
@@ -713,7 +735,7 @@ mod tests {
             entry_projectors: projectors,
         };
         let entries = vec![
-            compaction_entry("compact", "root", "summary", vec![], 1),
+            compaction_entry("compact", "root", "summary", "", 1),
             custom_entry("custom", "compact", "note", "data", 2),
             msg_entry_p("tail", "custom", user("tail"), 3),
         ];
@@ -737,7 +759,7 @@ mod tests {
     #[test]
     fn applies_caller_transforms_after_compaction_boundary() {
         let entries = vec![
-            compaction_entry("compact", "old", "summary", vec![], 2),
+            compaction_entry("compact", "old", "summary", "", 2),
             branch_summary_entry("branch", "compact", "abandoned", "branch summary", 3),
             msg_entry_p("tail", "branch", user("tail"), 4),
         ];

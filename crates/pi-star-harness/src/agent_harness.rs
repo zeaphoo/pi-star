@@ -59,7 +59,6 @@ use crate::events::{HarnessEvent, HarnessEventBus, RunEndEvent, RunEndOutcome, R
 use crate::messages::{
     convert_to_llm as harness_convert_to_llm,
     convert_to_llm_incremental as harness_convert_to_llm_incremental,
-    create_compaction_summary_message,
 };
 use crate::prompt_templates::format_prompt_template_invocation;
 use crate::result::{HarnessError, HarnessResult, OperationKind};
@@ -3534,10 +3533,12 @@ impl AgentHarness {
             id: id.clone(),
             kind: ProvisionedKind::Compaction {
                 summary: result.summary.clone(),
-                retained_tail: result.retained_tail.clone(),
+                first_kept_entry_id: result.first_kept_entry_id.clone(),
                 tokens_before: result.tokens_before,
                 details,
                 usage: result.usage.clone(),
+                from_hook: None,
+                system_message: None,
             },
         };
 
@@ -4318,24 +4319,10 @@ impl AgentHarness {
                                     ) {
                                         return None;
                                     }
-                                    let entries: Vec<Entry> = context
-                                        .messages
-                                        .iter()
-                                        .enumerate()
-                                        .map(|(i, message)| {
-                                            Entry::Message(crate::session::types::MessageEntry {
-                                                base: crate::session::types::EntryBase {
-                                                    entry_type: "message".into(),
-                                                    id: format!("runtime-{i}"),
-                                                    seq: i as u64 + 1,
-                                                    parent_id: None,
-                                                    timestamp: i as i64,
-                                                },
-                                                message: message.clone(),
-                                                terminate: None,
-                                            })
-                                        })
-                                        .collect();
+                                    let entries = match harness.branch_path_oldest_first().await {
+                                        Ok(path) => path,
+                                        Err(_) => return None,
+                                    };
                                     let prep = match prepare_compaction(&entries, settings) {
                                         Ok(Some(p)) => p,
                                         _ => return None,
@@ -4375,14 +4362,10 @@ impl AgentHarness {
                                         return None;
                                     }
                                     cut.store(new_messages_len, Ordering::Release);
-                                    let mut messages =
-                                        Vec::with_capacity(result.retained_tail.len() + 1);
-                                    messages.push(create_compaction_summary_message(
-                                        &result.summary,
-                                        result.tokens_before,
-                                        0,
-                                    ));
-                                    messages.extend(result.retained_tail);
+                                    let messages = match harness.branch_context_default().await {
+                                        Ok(context) => context.messages,
+                                        Err(_) => return None,
+                                    };
                                     Some(pi_star_agent::AgentLoopTurnUpdate {
                                         context: Some(AgentContext {
                                             system_prompt: context.system_prompt.clone(),

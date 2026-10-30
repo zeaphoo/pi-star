@@ -911,10 +911,12 @@ mod tests {
             id: "compaction-1".to_string(),
             kind: ProvisionedKind::Compaction {
                 summary: "summarized".to_string(),
-                retained_tail: Vec::new(),
+                first_kept_entry_id: None,
                 tokens_before: 1234,
                 details: None,
                 usage: None,
+                from_hook: None,
+                system_message: None,
             },
         };
         let target = crate::session::reducer::entry_provisioned_json(&provisioned_into_entry(

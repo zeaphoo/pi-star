@@ -44,7 +44,7 @@ use crate::compaction::tokens::{
 };
 use crate::messages::convert_to_llm;
 use crate::messages::{create_branch_summary_message, create_compaction_summary_message};
-use crate::session::types::{Entry, EntryBase, MessageEntry};
+use crate::session::types::Entry;
 use crate::types::{CompactionSettings, RetryPolicy};
 
 // ---------------------------------------------------------------------------
@@ -129,7 +129,9 @@ pub struct CompactResult {
     pub summary: String,
     pub tokens_before: i64,
     pub usage: Option<Usage>,
-    pub retained_tail: Vec<AgentMessage>,
+    /// First entry kept after the checkpoint (pi v3 `firstKeptEntryId`).
+    /// `None` means "keep nothing"; the persisted entry then points at itself.
+    pub first_kept_entry_id: Option<String>,
     pub details: Option<CompactionDetails>,
 }
 
@@ -138,7 +140,7 @@ pub struct CompactResult {
 pub struct CompactionPreparation {
     pub messages_to_summarize: Vec<AgentMessage>,
     pub turn_prefix_messages: Vec<AgentMessage>,
-    pub retained_tail: Vec<AgentMessage>,
+    pub first_kept_entry_id: Option<String>,
     pub is_split_turn: bool,
     pub tokens_before: i64,
     pub previous_summary: Option<String>,
@@ -193,16 +195,6 @@ pub fn get_message_from_entry_for_compaction(entry: &Entry) -> Option<AgentMessa
         return None;
     }
     get_message_from_entry(entry)
-}
-
-/// The timestamp carried by an `AgentMessage` (each variant stores one).
-fn agent_message_timestamp(message: &AgentMessage) -> i64 {
-    match message {
-        AgentMessage::User(u) => u.timestamp,
-        AgentMessage::Assistant(a) => a.timestamp,
-        AgentMessage::ToolResult(t) => t.timestamp,
-        AgentMessage::Custom(c) => c.timestamp,
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -280,33 +272,21 @@ pub fn prepare_compaction(
                     _ => unreachable!("prev_compaction_index points at a compaction"),
                 };
                 let prev_summary = prev.summary.clone();
-                let prev_id = prev.base.id.clone();
-                let prev_seq = prev.base.seq;
-                let mut virtual_entries: Vec<Entry> = Vec::with_capacity(prev.retained_tail.len());
-                for (idx, message) in prev.retained_tail.iter().enumerate() {
-                    let id = format!("{prev_id}:retained:{idx}");
-                    let parent_id = if idx == 0 {
-                        Some(prev_id.clone())
-                    } else {
-                        Some(format!("{prev_id}:retained:{}", idx - 1))
-                    };
-                    let timestamp = agent_message_timestamp(message);
-                    virtual_entries.push(Entry::Message(MessageEntry {
-                        base: EntryBase {
-                            entry_type: "message".into(),
-                            id,
-                            seq: prev_seq,
-                            parent_id,
-                            timestamp,
-                        },
-                        message: message.clone(),
-                        terminate: None,
-                    }));
+                let first_kept = prev.first_kept_entry_id.clone();
+                // pi keeps `[compaction, entries from firstKeptEntryId up to the
+                // compaction, entries after the compaction]` and never re-adds
+                // summarized history. Older compaction entries stay in the kept
+                // range but project to no messages in `buildContextEntries`.
+                let mut compactable: Vec<Entry> = Vec::with_capacity(path_entries.len() - i + 1);
+                compactable.push(Entry::Compaction(prev));
+                if let Some(first_kept_index) = path_entries[..i]
+                    .iter()
+                    .position(|entry| entry.id() == first_kept)
+                {
+                    compactable.extend(path_entries[first_kept_index..i].iter().cloned());
                 }
-                // `…virtualRetainedEntries, ...pathEntries.slice(prevCompactionIndex + 1)`.
-                let rest: Vec<Entry> = path_entries[i + 1..].to_vec();
-                virtual_entries.extend(rest);
-                (Some(prev_summary), virtual_entries)
+                compactable.extend(path_entries[i + 1..].iter().cloned());
+                (Some(prev_summary), compactable)
             }
             None => (None, path_entries.to_vec()),
         };
@@ -355,15 +335,9 @@ pub fn prepare_compaction(
         }
     }
 
-    let mut retained_tail: Vec<AgentMessage> = Vec::new();
-    for entry in compactable_entries
-        .iter()
-        .skip(cut_point.first_kept_entry_index)
-    {
-        if let Some(m) = get_message_from_entry_for_compaction(entry) {
-            retained_tail.push(m);
-        }
-    }
+    let first_kept_entry_id = compactable_entries
+        .get(cut_point.first_kept_entry_index)
+        .map(|entry| entry.id().to_string());
 
     let mut file_ops =
         extract_file_operations(&messages_to_summarize, path_entries, prev_compaction_index);
@@ -376,7 +350,7 @@ pub fn prepare_compaction(
     Ok(Some(CompactionPreparation {
         messages_to_summarize,
         turn_prefix_messages,
-        retained_tail,
+        first_kept_entry_id,
         is_split_turn: cut_point.is_split_turn,
         tokens_before,
         previous_summary,
@@ -800,7 +774,7 @@ pub async fn compact(
         summary,
         tokens_before: preparation.tokens_before,
         usage,
-        retained_tail: preparation.retained_tail.clone(),
+        first_kept_entry_id: preparation.first_kept_entry_id.clone(),
         details: Some(CompactionDetails {
             read_files,
             modified_files,
@@ -811,7 +785,7 @@ pub async fn compact(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::session::types::EntryBase;
+    use crate::session::types::{EntryBase, MessageEntry};
 
     #[test]
     fn compaction_inherits_total_and_idle_timeouts() {
@@ -873,10 +847,12 @@ mod tests {
                 timestamp: 2,
             },
             summary: "s".into(),
-            retained_tail: Vec::new(),
+            first_kept_entry_id: "c1".into(),
             tokens_before: 10,
             details: None,
             usage: None,
+            from_hook: None,
+            system_message: None,
         });
         let r = prepare_compaction(
             &[entries[0].clone(), compaction],
@@ -897,10 +873,7 @@ mod tests {
         };
         let p = prepare_compaction(&entries, settings).unwrap().unwrap();
         assert!(p.messages_to_summarize.is_empty());
-        assert!(p
-            .retained_tail
-            .iter()
-            .any(|m| matches!(m, AgentMessage::User(u) if u.content.as_text()==Some("hi"))));
+        assert_eq!(p.first_kept_entry_id.as_deref(), Some("e1"));
         assert!(!p.is_split_turn);
     }
 
@@ -959,10 +932,12 @@ mod tests {
                 timestamp: 1,
             },
             summary: "s".into(),
-            retained_tail: Vec::new(),
+            first_kept_entry_id: "c1".into(),
             tokens_before: 0,
             details: Some(details),
             usage: None,
+            from_hook: None,
+            system_message: None,
         });
         let ops = extract_file_operations(&[], &[compaction], Some(0));
         assert!(ops.read.contains("/r"));

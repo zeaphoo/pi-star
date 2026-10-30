@@ -34,6 +34,11 @@ pi-star 的 Agent 内核来自 [pi-rust](https://github.com/bigfish1913/pi-rust)
 - `pi-star-tools` 不再依赖 `rpi-plugin-sdk`：`SESSION_ID_ENV` / `SUBAGENT_PARENT_ENV`
   改为本地常量。
 - WebP 输出改用 `image 0.25` 的 lossless encoder（上游的 lossy API 在当前依赖版本中不存在）。
+- 压缩 entry 改为 pi v3 形状：`firstKeptEntryId` / `systemMessage` / `fromHook`，删除
+  上游重复存储的 `retainedTail`；上下文按 pi 的 `buildContextEntries` 选取。
+- 新增 `Entry::Raw` 透传本运行时未建模的 pi entry 类型（`usage`、`context_edit`、
+  `label`、`session_info`、`custom_message`、`system` message），加载 pi 会话时不再
+  因未知类型报错或丢行。
 - 后续（v3 存储改造）会删除上游的 `session/jsonl/**` 与 `session/sqlite.rs`，改用 pi-star
   现有的 v3 JSONL 读写层。
 
