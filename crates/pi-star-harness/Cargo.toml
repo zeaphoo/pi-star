@@ -1,0 +1,29 @@
+[package]
+name = "pi-star-harness"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Session tree, compaction, skills and the agent harness loop for pi-star"
+
+[dependencies]
+pi-star-ai = { workspace = true }
+pi-star-agent = { workspace = true }
+pi-star-tools = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+yaml_serde = { workspace = true }
+schemars = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+# Temporary: the JSONL/SQLite session backends are removed in the v3 storage
+# rewrite; until then the original repo code still references rusqlite.
+rusqlite = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["test-util"] }

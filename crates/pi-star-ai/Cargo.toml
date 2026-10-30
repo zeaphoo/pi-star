@@ -1,0 +1,32 @@
+[package]
+name = "pi-star-ai"
+version.workspace = true
+edition = "2021"
+license.workspace = true
+description = "Model types, providers and streaming protocol adapters for pi-star"
+
+[dependencies]
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+async-trait = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+schemars = { workspace = true }
+jsonschema = { workspace = true }
+reqwest = { workspace = true, optional = true }
+bytes = { workspace = true, optional = true }
+eventsource-stream = { workspace = true, optional = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+base64 = { workspace = true }
+regex = { workspace = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["test-util"] }
+
+[features]
+default = ["providers"]
+# Real HTTP providers (anthropic, openai). Off disables every network path.
+providers = ["dep:reqwest", "dep:bytes", "dep:eventsource-stream"]
