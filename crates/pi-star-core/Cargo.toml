@@ -8,6 +8,10 @@ license.workspace = true
 anyhow.workspace = true
 async-stream.workspace = true
 async-trait.workspace = true
+pi-star-ai = { workspace = true }
+pi-star-agent = { workspace = true }
+pi-star-tools = { workspace = true }
+pi-star-harness = { workspace = true }
 aes-gcm.workspace = true
 base64.workspace = true
 chrono.workspace = true

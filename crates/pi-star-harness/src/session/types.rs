@@ -378,14 +378,29 @@ impl<'de> Deserialize<'de> for Entry {
             .ok_or_else(|| serde::de::Error::custom("entry missing \"type\""))?;
         let base = deserialize_base(obj).map_err(serde::de::Error::custom)?;
         let entry = match ty {
-            "message" => Entry::Message(MessageEntry {
-                base,
-                message: serde_json::from_value(obj.get("message").cloned().ok_or_else(|| {
-                    serde::de::Error::custom("message entry missing \"message\"")
-                })?)
-                .map_err(serde::de::Error::custom)?,
-                terminate: obj.get("terminate").and_then(|v| v.as_bool()),
-            }),
+            "message" => match obj.get("message").cloned() {
+                Some(message) => {
+                    match serde_json::from_value::<pi_star_agent::message::AgentMessage>(message) {
+                        Ok(message) => Entry::Message(MessageEntry {
+                            base,
+                            message,
+                            terminate: obj.get("terminate").and_then(|v| v.as_bool()),
+                        }),
+                        // pi's `system` messages and other roles this runtime does
+                        // not model are preserved verbatim instead of failing the
+                        // whole session load.
+                        Err(_) => Entry::Raw(RawEntry {
+                            base,
+                            value: raw.clone(),
+                        }),
+                    }
+                }
+                None => {
+                    return Err(serde::de::Error::custom(
+                        "message entry missing \"message\"",
+                    ))
+                }
+            },
             "model_change" => {
                 Entry::ModelChange(ModelChangeEntry {
                     base,

@@ -1,4 +1,5 @@
 pub mod provider;
+pub mod session_store;
 pub mod tools;
 
 use std::collections::{BTreeMap, HashMap};
