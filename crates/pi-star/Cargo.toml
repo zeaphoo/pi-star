@@ -1,0 +1,39 @@
+[package]
+name = "pi-star"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "pi-star"
+path = "src/main.rs"
+
+[dependencies]
+pi-star-core = { path = "../pi-star-core" }
+anyhow.workspace = true
+async-stream.workspace = true
+axum = { version = "0.8", features = ["multipart", "macros"] }
+base64.workspace = true
+chrono.workspace = true
+clap = { version = "4", features = ["derive", "env"] }
+futures-util.workspace = true
+globset.workspace = true
+hex.workspace = true
+ignore.workspace = true
+mime_guess.workspace = true
+parking_lot.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+tower-http = { version = "0.6", features = ["compression-gzip", "fs", "limit", "set-header", "trace"] }
+tracing.workspace = true
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid.workspace = true
+
+[dev-dependencies]
+http-body-util = "0.1"
+tempfile = "3"
+tower = { version = "0.5", features = ["util"] }

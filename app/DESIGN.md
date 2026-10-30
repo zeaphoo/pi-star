@@ -77,7 +77,7 @@ Tauri 打开一个 webview，页面**不是** Tauri 打包的静态资源，而�
   "identifier": "window-controls",
   "description": "sidecar 页面可控制 own 窗口",
   "local": false,                       // 内置 splash 页不给这份权限
-  "remote": { "urls": ["http://127.0.0.1:30143"] },
+  "remote": { "urls": ["http://127.0.0.1:30153"] },
   "windows": ["main"],
   "permissions": [
     "core:window:allow-minimize",
@@ -142,7 +142,7 @@ app 启动
       └─ 失败/超时 → navigate 回 splash 的 error 态（可显示日志、重试按钮）
 ```
 
-- **端口**：v1 固定（harness 30143 / pi-web 30141），capability 静态可读；
+- **端口**：v1 固定（harness 30153 / pi-star 30151 / pi-web 30141），capability 静态可读；
   生产建议"Rust 探测空闲端口 + `Manager::add_capability` 运行时下发 remote URL"（`dynamic-acl` 是默认 feature），
   避免把 `http://127.0.0.1:<任意端口>` 这种宽口径写死。注意宽口径的风险：
   同端口的任何本地页面都会拿到这三个窗口命令 —— 所以生产上要"随机端口 + 精确 origin"，
