@@ -6,7 +6,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
 use anyhow::{Result, anyhow};
@@ -143,6 +143,7 @@ pub struct PiRpcSession {
     stdin: tokio::sync::Mutex<Option<tokio::process::ChildStdin>>,
     pending: Mutex<HashMap<String, Pending>>,
     next_id: AtomicU64,
+    aborted: AtomicBool,
     events: broadcast::Sender<Value>,
     state: Mutex<PiState>,
     last_activity: Mutex<Instant>,
@@ -173,6 +174,7 @@ impl PiRpcSession {
             stdin: tokio::sync::Mutex::new(Some(stdin)),
             pending: Mutex::new(HashMap::new()),
             next_id: AtomicU64::new(1),
+            aborted: AtomicBool::new(false),
             events,
             state: Mutex::new(PiState {
                 running: false,
@@ -274,7 +276,8 @@ impl PiRpcSession {
                 let aborted = event
                     .get("aborted")
                     .and_then(Value::as_bool)
-                    .unwrap_or(false);
+                    .unwrap_or(false)
+                    || self.aborted.swap(false, Ordering::SeqCst);
                 {
                     let mut state = self.state.lock();
                     state.running = false;
@@ -477,6 +480,11 @@ impl PiRpcSession {
 
     pub async fn send(&self, command: &Value) -> Result<Value, String> {
         let kind = command.get("type").and_then(Value::as_str).unwrap_or("");
+        if kind == "prompt" {
+            self.aborted.store(false, Ordering::SeqCst);
+        } else if kind == "abort" {
+            self.aborted.store(true, Ordering::SeqCst);
+        }
         let result = match kind {
             "extension_ui_response" => self.send_extension_ui_response(command.clone()).await,
             "get_tools" => self.host_command("get_tools", json!({})).await,
@@ -612,6 +620,8 @@ pub struct PiRpcRegistry {
     pub config: Config,
     sessions: Arc<Mutex<HashMap<String, Arc<PiRpcSession>>>>,
     cli: String,
+    extension: Option<PathBuf>,
+    extra_env: Vec<(String, String)>,
     max_sessions: usize,
     completion: Mutex<Option<Arc<dyn Fn(&str, Option<&str>) + Send + Sync>>>,
 }
@@ -627,6 +637,8 @@ impl PiRpcRegistry {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             cli: std::env::var("PI_STAR_PI_CLI").unwrap_or_else(|_| "pi".to_string()),
+            extension: agent_extension_path(),
+            extra_env: Vec::new(),
             max_sessions,
             completion: Mutex::new(None),
         }
@@ -638,7 +650,28 @@ impl PiRpcRegistry {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
             cli: cli.into(),
+            extension: agent_extension_path(),
+            extra_env: Vec::new(),
             max_sessions: 8,
+            completion: Mutex::new(None),
+        }
+    }
+
+    #[cfg(test)]
+    pub fn new_with_options(
+        config: Config,
+        cli: impl Into<String>,
+        extension: Option<PathBuf>,
+        extra_env: Vec<(String, String)>,
+        max_sessions: usize,
+    ) -> Self {
+        Self {
+            config,
+            sessions: Arc::new(Mutex::new(HashMap::new())),
+            cli: cli.into(),
+            extension,
+            extra_env,
+            max_sessions,
             completion: Mutex::new(None),
         }
     }
@@ -758,6 +791,16 @@ impl PiRpcRegistry {
         self.make_room()?;
         let session = read_session(path)?;
         let id = session.id().to_string();
+        let lock = self
+            .config
+            .agent_dir
+            .join("pi-star-subagent-locks")
+            .join(format!("{id}.json"));
+        if lock.is_file() {
+            return Err(anyhow!(
+                "Session {id} is owned by a running subagent process"
+            ));
+        }
         if let Some(existing) = self.get(&id) {
             return Ok(existing);
         }
@@ -766,7 +809,7 @@ impl PiRpcRegistry {
         let (control, control_addr) = PiControl::start(control_token.clone())
             .await
             .map_err(|error| anyhow!("start pi-star control channel: {error}"))?;
-        let extension = agent_extension_path();
+        let extension = self.extension.clone();
         let mut command = Command::new(&self.cli);
         command
             .arg("--mode")
@@ -780,6 +823,9 @@ impl PiRpcRegistry {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .kill_on_drop(true);
+        for (key, value) in &self.extra_env {
+            command.env(key, value);
+        }
         if let Some(extension) = &extension {
             command.arg("--extension").arg(extension);
         }
@@ -787,7 +833,10 @@ impl PiRpcRegistry {
             command.arg("--name").arg(name);
         }
         if let Some(tools) = &options.tool_names {
-            if !tools.is_empty() {
+            if tools.is_empty() {
+                // A Chat-only composer sends an empty list, not "use the default".
+                command.arg("--no-tools");
+            } else {
                 command.arg("--tools").arg(tools.join(","));
             }
         }

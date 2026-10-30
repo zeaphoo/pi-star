@@ -16,7 +16,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | Git / worktree | ✅ | status、diff、list/add/remove |
 | 终端 | ✅ | portable-pty + SSE + 进程组清理 |
 | Agent 主链路 | ✅ | 默认 Rust Agent；`PI_STAR_AGENT_BACKEND=pi-rpc` 时由 `pi --mode rpc` 子进程执行，JSONL 协议桥接 prompt/事件/扩展 UI |
-| PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue、模型/thinking、压缩/重试、统计、fork/clone、session rekey、扩展 UI、事件流；`pi-star-agent-extension` 补偿 get/set tools、tree、branch、reload 和基础 subagent 工具 |
+| PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue、模型/thinking、压缩/重试、统计、fork/clone、session rekey、单写者路由、子代理 session 锁、扩展 UI、事件流；`pi-star-agent-extension` 补偿 get/set tools、tree、branch、reload 和基础 subagent 工具；真实 pi + 假模型端到端测试覆盖工具、abort、扩展 UI、fork/rekey |
 | 会话空闲回收 / 租约 | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`，后台 30s 回收；lease 续租 |
 | Subagents | ✅ | 子会话、父会话等待、并发上限、profile 扫描/保存/开关、状态显示 |
 | 扩展 UI | ✅ | pending 请求、SSE 重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
@@ -33,7 +33,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
 | Debug / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
 | app-update | ✅ | 可配置发布源（`PI_STAR_UPDATE_URL`），12h 缓存，支持 `PI_STAR_SKIP_VERSION_CHECK=1` |
-| 测试 | ✅ | 23 个 core 单测 + 33 个服务端单测/集成测试 + 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
+| 测试 | ✅ | 23 个 core 单测 + 35 个服务端单测/集成测试 + 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
 
 ## 运行时边界
 

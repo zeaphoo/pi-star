@@ -2067,3 +2067,300 @@ for line in sys.stdin:
     unsafe { std::env::remove_var("PI_STAR_AGENT_EXTENSION") };
     registry.shutdown();
 }
+
+async fn fake_openai_stream(body: Value) -> String {
+    let messages = body.get("messages").and_then(Value::as_array);
+    let has_tool = messages.is_some_and(|messages| {
+        messages
+            .iter()
+            .any(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+    });
+    let slow = messages.is_some_and(|messages| {
+        messages
+            .iter()
+            .rev()
+            .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+            .is_some_and(|message| match message.get("content") {
+                Some(Value::String(content)) => content.contains("SLOW"),
+                Some(Value::Array(blocks)) => blocks.iter().any(|block| {
+                    block
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| text.contains("SLOW"))
+                }),
+                _ => false,
+            })
+    });
+    if slow {
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+    }
+    if !has_tool && !slow {
+        return "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call-e2e\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"printf e2e-tool\\\"}\"}}]}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n".to_string();
+    }
+    "data: {\"choices\":[{\"delta\":{\"content\":\"E2E final answer\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n".to_string()
+}
+
+#[tokio::test]
+async fn pi_rpc_backend_full_e2e_with_fake_model() {
+    if std::process::Command::new("pi")
+        .arg("--version")
+        .output()
+        .map(|output| !output.status.success())
+        .unwrap_or(true)
+    {
+        eprintln!("skipping pi RPC e2e: pi CLI is not installed");
+        return;
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let model_server = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+            let sse = fake_openai_stream(body).await;
+            ([(header::CONTENT_TYPE, "text/event-stream")], sse)
+        }),
+    );
+    let model_handle = tokio::spawn(async move {
+        axum::serve(listener, model_server).await.unwrap();
+    });
+
+    let temp = tempfile::tempdir().unwrap();
+    let agent_dir = temp.path().join("agent");
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "fake": {
+                    "api": "openai-completions",
+                    "baseUrl": format!("http://{addr}/v1"),
+                    "apiKey": "fake-key",
+                    "models": [{"id": "fake-model", "name": "Fake Model"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({
+            "defaultProvider": "fake",
+            "defaultModel": "fake-model",
+            "defaultThinkingLevel": "off"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.join("auth.json"),
+        json!({"fake": {"type": "api_key", "key": "fake-key"}}).to_string(),
+    )
+    .unwrap();
+
+    let extension_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("agent-extension")
+        .join("index.ts");
+    let wrapper = temp.path().join("e2e-extension.ts");
+    std::fs::write(
+        &wrapper,
+        format!(
+            "import piStarHost from {};\n\
+             export default function (pi) {{\n\
+               piStarHost(pi);\n\
+               pi.registerCommand(\"pi-star-ui-confirm\", {{ handler: async (_args, ctx) => {{ await ctx.ui.confirm(\"E2E\", \"Continue?\"); }} }});\n\
+             }}\n",
+            serde_json::to_string(&extension_path.to_string_lossy().to_string()).unwrap()
+        ),
+    )
+    .unwrap();
+    let config = pi_star_core::Config::new(Some(agent_dir.clone()), None).unwrap();
+    let registry = crate::pi_rpc::PiRpcRegistry::new_with_options(
+        config,
+        "pi",
+        Some(wrapper),
+        vec![(
+            "PI_CODING_AGENT_DIR".to_string(),
+            agent_dir.to_string_lossy().to_string(),
+        )],
+        4,
+    );
+    let session = registry
+        .create(&cwd, crate::pi_rpc::PiSpawnOptions::default())
+        .await
+        .unwrap();
+    let tools = session.send(&json!({"type": "get_tools"})).await.unwrap();
+    assert!(
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "Agent")
+    );
+    assert!(
+        tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool["name"] == "get_subagent_result")
+    );
+    let mut events = session.subscribe();
+    let response = session
+        .send(&json!({"type": "prompt", "message": "Use the bash tool for the E2E"}))
+        .await
+        .unwrap();
+    assert_eq!(response["disposition"], "started");
+    let mut saw_tool_start = false;
+    let mut saw_tool_end = false;
+    let mut final_text = String::new();
+    for _ in 0..80 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        match event.get("type").and_then(Value::as_str) {
+            Some("tool_execution_start") => saw_tool_start = true,
+            Some("tool_execution_end") => saw_tool_end = true,
+            Some("message_end") => {
+                let role = event.pointer("/message/role").and_then(Value::as_str);
+                if role == Some("assistant") {
+                    final_text = event
+                        .pointer("/message/content/0/text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("")
+                        .to_string();
+                }
+            }
+            Some("prompt_done") => break,
+            _ => {}
+        }
+    }
+    assert!(saw_tool_start, "the fake model's bash call must run");
+    assert!(saw_tool_end, "bash must finish");
+    assert_eq!(final_text, "E2E final answer");
+
+    // Extension UI: the wrapper command asks a question; the RPC client answers it.
+    // The prompt response is held until the command handler returns, so send it
+    // from a task and answer the UI request concurrently.
+    let prompt_session = session.clone();
+    let prompt_task = tokio::spawn(async move {
+        prompt_session
+            .send(&json!({"type": "prompt", "message": "/pi-star-ui-confirm"}))
+            .await
+    });
+    let mut ui_request = None;
+    for _ in 0..20 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(5), events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.get("type").and_then(Value::as_str) == Some("extension_ui_request") {
+            ui_request = Some(event);
+            break;
+        }
+    }
+    let ui_request = ui_request.expect("extension UI request");
+    assert_eq!(ui_request["method"], "confirm");
+    session
+        .send(&json!({
+            "type": "extension_ui_response",
+            "id": ui_request["id"],
+            "confirmed": true
+        }))
+        .await
+        .unwrap();
+    let prompt = prompt_task.await.unwrap().unwrap();
+    assert_eq!(prompt["disposition"], "handled");
+    assert!(session.pending_extension_ui_ids().is_empty());
+
+    // Abort a slow provider request.
+    let mut abort_events = session.subscribe();
+    session
+        .send(&json!({"type": "prompt", "message": "SLOW request"}))
+        .await
+        .unwrap();
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    session.send(&json!({"type": "abort"})).await.unwrap();
+    let mut aborted = false;
+    for _ in 0..40 {
+        let event = tokio::time::timeout(std::time::Duration::from_secs(10), abort_events.recv())
+            .await
+            .unwrap()
+            .unwrap();
+        if event.get("type").and_then(Value::as_str) == Some("prompt_done") {
+            aborted = event.get("aborted").and_then(Value::as_bool) == Some(true);
+            break;
+        }
+    }
+    assert!(aborted, "abort must settle the run as aborted");
+
+    // Fork the completed session and rekey the runtime to the new session id.
+    let entries = session.send(&json!({"type": "get_entries"})).await.unwrap();
+    let entry_id = entries
+        .get("entries")
+        .and_then(Value::as_array)
+        .and_then(|entries| {
+            entries.iter().find_map(|entry| {
+                let message = entry.get("message");
+                (entry.get("type").and_then(Value::as_str) == Some("message")
+                    && message
+                        .and_then(|message| message.get("role"))
+                        .and_then(Value::as_str)
+                        == Some("user"))
+                .then(|| entry.get("id").and_then(Value::as_str))
+                .flatten()
+            })
+        })
+        .unwrap_or_default()
+        .to_string();
+    let old_id = session.id();
+    let fork = session
+        .send(&json!({"type": "fork", "entryId": entry_id}))
+        .await
+        .unwrap();
+    let new_id = fork
+        .get("newSessionId")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    assert!(!new_id.is_empty());
+    assert_ne!(new_id, old_id);
+    assert!(registry.get(&old_id).is_none());
+    assert!(registry.get(new_id).is_some());
+
+    registry.shutdown();
+    model_handle.abort();
+}
+
+#[tokio::test]
+async fn pi_rpc_refuses_a_session_owned_by_a_subagent() {
+    let fixture = write_fixture();
+    let lock_dir = fixture.agent_dir.join("pi-star-subagent-locks");
+    std::fs::create_dir_all(&lock_dir).unwrap();
+    std::fs::write(
+        lock_dir.join(format!("{}.json", fixture.session_id)),
+        json!({"pid": 12345}).to_string(),
+    )
+    .unwrap();
+    let config = pi_star_core::Config::new(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+    )
+    .unwrap();
+    let registry = crate::pi_rpc::PiRpcRegistry::new_with_cli(config, "pi-does-not-exist");
+    let error = match registry
+        .open(
+            &fixture.session_id,
+            crate::pi_rpc::PiSpawnOptions::default(),
+        )
+        .await
+    {
+        Ok(_) => panic!("a locked subagent session must not open"),
+        Err(error) => error,
+    };
+    assert!(error.to_string().contains("owned by a running subagent"));
+}

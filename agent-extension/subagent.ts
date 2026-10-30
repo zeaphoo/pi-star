@@ -9,7 +9,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { readFileSync, readdirSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -51,8 +51,27 @@ function notify(run: Run) {
   for (const waiter of run.waiters.splice(0)) waiter();
 }
 
+function lockPath(id: string): string | null {
+  const agentDir = process.env.PI_CODING_AGENT_DIR || join(homedir(), ".pi", "agent");
+  try {
+    const dir = join(agentDir, "pi-star-subagent-locks");
+    mkdirSync(dir, { recursive: true });
+    return join(dir, `${id}.json`);
+  } catch {
+    return null;
+  }
+}
+
+function unlock(run: Run) {
+  const path = lockPath(run.id);
+  if (path) {
+    try { unlinkSync(path); } catch { /* already gone */ }
+  }
+}
+
 function settle(run: Run, status: string, result?: string, error?: string) {
   if (TERMINAL.has(run.status)) return;
+  unlock(run);
   run.status = status;
   run.completedAt = Date.now();
   if (result !== undefined) run.result = result;
@@ -181,6 +200,14 @@ function startChild(pi: any, params: any, runInBackground: boolean): Run {
     buffer: "",
     waiters: [],
   };
+  const marker = lockPath(id);
+  if (marker) {
+    try {
+      writeFileSync(marker, JSON.stringify({ pid: proc.pid, startedAt: run.createdAt }));
+    } catch {
+      // A missing marker only weakens the duplicate-open guard.
+    }
+  }
   runs().set(id, run);
   lineLoop(run);
   proc.stderr?.on("data", () => {});

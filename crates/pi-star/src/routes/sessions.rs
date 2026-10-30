@@ -165,6 +165,17 @@ pub async fn rename(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<RenameBody>,
 ) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(active) = pi.get(&id) {
+            return match active
+                .send(&json!({"type": "set_session_name", "name": body.name.trim()}))
+                .await
+            {
+                Ok(_) => no_store(json!({ "ok": true })),
+                Err(error) => internal(error),
+            };
+        }
+    }
     let Some(path) = session::resolve_session_path(&state.config, &id) else {
         return not_found("Session not found");
     };
@@ -204,6 +215,9 @@ pub async fn delete_many(
         match session::resolve_session_path(&state.config, &id) {
             Some(path) => {
                 state.agents.remove(&id);
+                if let Some(pi) = &state.pi_rpc {
+                    pi.remove(&id);
+                }
                 delete_session_file(&state, &path);
                 deleted.push(id);
             }
@@ -366,7 +380,7 @@ pub struct ForkBody {
 
 pub async fn fork_body(State(state): State<Arc<AppState>>, Json(body): Json<ForkBody>) -> Response {
     let id = body.session_id.or(body.id).unwrap_or_default();
-    fork_session_inner(&state, &id, body.entry_id.as_deref())
+    fork_session_inner(&state, &id, body.entry_id.as_deref()).await
 }
 
 pub async fn fork_session(
@@ -374,10 +388,51 @@ pub async fn fork_session(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<ForkBody>,
 ) -> Response {
-    fork_session_inner(&state, &id, body.entry_id.as_deref())
+    fork_session_inner(&state, &id, body.entry_id.as_deref()).await
 }
 
-fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) -> Response {
+async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) -> Response {
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(active) = pi.get(id) {
+            let entry = match entry_id {
+                Some(entry) => entry.to_string(),
+                None => {
+                    let entries = match active.send(&json!({"type":"get_entries"})).await {
+                        Ok(entries) => entries,
+                        Err(error) => return internal(error),
+                    };
+                    entries
+                        .get("leafId")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                }
+            };
+            if entry.is_empty() {
+                return bad_request("entryId is required");
+            }
+            let result = match active.send(&json!({"type":"fork", "entryId": entry})).await {
+                Ok(result) => result,
+                Err(error) => return internal(error),
+            };
+            let new_id = result
+                .get("newSessionId")
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+                .unwrap_or_else(|| active.id());
+            let new_path = active.path();
+            let mut info = read_session(&new_path)
+                .map(|session| serde_json::to_value(session.info()))
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or(Value::Null);
+            if info.is_object() {
+                info["parentSessionId"] = Value::String(id.to_string());
+                info["relation"] = json!({"kind":"fork","originSessionId": id});
+            }
+            return no_store(json!({ "sessionId": new_id, "session": info }));
+        }
+    }
     let Some(path) = session::resolve_session_path(&state.config, id) else {
         return not_found("Session not found");
     };
@@ -698,6 +753,17 @@ pub async fn auto_name(
     } else {
         title
     };
+    if let Some(pi) = &state.pi_rpc {
+        if let Some(active) = pi.get(&id) {
+            if let Err(error) = active
+                .send(&json!({"type": "set_session_name", "name": title}))
+                .await
+            {
+                return internal(error);
+            }
+            return no_store(json!({ "title": title, "usage": null }));
+        }
+    }
     if let Err(error) = append_session_info(&path, &title) {
         return internal(error);
     }
