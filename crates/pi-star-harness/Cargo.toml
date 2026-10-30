@@ -20,10 +20,6 @@ schemars = { workspace = true }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
-# Temporary: the JSONL/SQLite session backends are removed in the v3 storage
-# rewrite; until then the original repo code still references rusqlite.
-rusqlite = { workspace = true }
-
 [dev-dependencies]
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }

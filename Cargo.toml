@@ -47,7 +47,6 @@ p256 = { version = "0.13", features = ["ecdsa", "ecdh"] }
 parking_lot = "0.12"
 rand = "0.8"
 portable-pty = "0.9"
-rusqlite = { version = "0.31", features = ["bundled"] }
 schemars = { version = "0.8", features = ["preserve_order"] }
 similar = { version = "2", features = ["text"] }
 regex = "1"

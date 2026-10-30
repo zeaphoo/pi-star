@@ -6100,14 +6100,10 @@ fn now_ms() -> i64 {
 #[cfg(test)]
 mod session_switch_tests {
     use super::*;
-    use crate::session::jsonl::{
-        JsonlSessionCreateOptions, JsonlSessionRepo, JsonlSessionRepoOptions,
-    };
     use crate::session::memory::{InMemorySessionStorage, SystemClock};
     use crate::session::session::DefaultIdGenerator;
     use crate::session::types::SessionMetadata;
     use pi_star_ai::{Api, Model};
-    use pi_star_tools::{FileSystem, OsExecutionEnv};
 
     fn opts() -> AgentHarnessOptions {
         AgentHarnessOptions {
@@ -6219,42 +6215,7 @@ mod session_switch_tests {
     /// a hand-wired call that a future edit could drop.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_refused_append_is_reported_as_a_write_failure() {
-        /// Refuses every append, the way a full disk does.
-        struct RefusingAppend;
-
-        #[async_trait::async_trait]
-        impl pi_star_tools::env::AppendFile for RefusingAppend {
-            async fn append(&mut self, _: &[u8]) -> Result<(), pi_star_tools::FileError> {
-                Err(pi_star_tools::FileError::new(
-                    pi_star_tools::FileErrorCode::Unknown,
-                    "disk full",
-                ))
-            }
-        }
-
-        let tmp =
-            std::env::temp_dir().join(format!("rpi-write-failure-probe-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let env = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
-        let fs: Arc<dyn FileSystem> = env.clone();
-        let repo = JsonlSessionRepo::with_env_cwd(JsonlSessionRepoOptions {
-            fs,
-            sessions_root: tmp.join("sessions").to_string_lossy().into_owned(),
-            clock: Arc::new(SystemClock),
-            ids: Arc::new(DefaultIdGenerator::new()),
-        });
-        let storage = repo
-            .create_typed(&JsonlSessionCreateOptions {
-                id: Some("sess-write".into()),
-                parent_session_id: None,
-                cwd: tmp.to_string_lossy().into_owned(),
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        storage.install_append_handle(Box::new(RefusingAppend));
-
+        let storage = super::test_support::FailingStorage::new("sess-write");
         let mut options = opts();
         options.session = Session::new(Arc::new(storage), None);
         let harness = AgentHarness::create(options).await.unwrap();
@@ -6309,8 +6270,6 @@ mod session_switch_tests {
             unsaved[0].what.contains("a message you sent"),
             "the copy must say what could not be persisted: {unsaved:?}"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     /// A lane handle must see the failures the harness it spawned recorded.
@@ -6496,40 +6455,20 @@ mod session_switch_tests {
     #[tokio::test]
     async fn set_session_swaps_durable_backing() {
         let h = AgentHarness::create(opts()).await.unwrap();
-        // Build two JSONL sessions with one user message each.
-        let tmp =
-            std::env::temp_dir().join(format!("rpi-set-session-probe-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let cwd = tmp.to_string_lossy().into_owned();
-        let env = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
-        let fs: Arc<dyn FileSystem> = env.clone();
-        let repo = JsonlSessionRepo::with_env_cwd(JsonlSessionRepoOptions {
-            fs,
-            sessions_root: tmp.join("sessions").to_string_lossy().into_owned(),
-            clock: Arc::new(SystemClock),
-            ids: Arc::new(DefaultIdGenerator::new()),
-        });
-        let s1 = repo
-            .create_typed(&JsonlSessionCreateOptions {
-                id: Some("sess-one".into()),
-                parent_session_id: None,
-                cwd: cwd.clone(),
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        let s2 = repo
-            .create_typed(&JsonlSessionCreateOptions {
-                id: Some("sess-two".into()),
-                parent_session_id: None,
-                cwd,
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        let sess1 = Session::new(Arc::new(s1), None);
-        let sess2 = Session::new(Arc::new(s2), None);
+        // Two independent sessions with one user message each.
+        let storage = |id: &str| {
+            InMemorySessionStorage::new(
+                SessionMetadata {
+                    id: id.into(),
+                    created_at: 0,
+                    parent_session_id: None,
+                },
+                Arc::new(SystemClock),
+                Arc::new(DefaultIdGenerator::new()),
+            )
+        };
+        let sess1 = Session::new(Arc::new(storage("sess-one")), None);
+        let sess2 = Session::new(Arc::new(storage("sess-two")), None);
         sess1
             .append_message(pi_star_agent::AgentMessage::User(
                 pi_star_ai::types::UserMessage::new(String::from("alpha"), 1),
@@ -6572,7 +6511,6 @@ mod session_switch_tests {
             .await
             .unwrap();
         assert_eq!(e2.len(), 1);
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 
     #[tokio::test]
@@ -6692,13 +6630,9 @@ mod borrowed_context_tests {
 #[cfg(test)]
 mod unsaved_isolation_tests {
     use super::*;
-    use crate::session::jsonl::{
-        JsonlSessionCreateOptions, JsonlSessionRepo, JsonlSessionRepoOptions,
-    };
     use crate::session::memory::{InMemorySessionStorage, SystemClock};
     use crate::session::session::DefaultIdGenerator;
     use crate::session::types::SessionMetadata;
-    use pi_star_tools::{FileSystem, OsExecutionEnv};
 
     fn metadata(id: &str) -> crate::session::types::SessionMetadata {
         SessionMetadata {
@@ -6797,42 +6731,7 @@ mod unsaved_isolation_tests {
     /// JSONL backend whose appends all fail, exactly the way a full disk does.
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn review_refused_normal_prompt_has_a_recovery_copy() {
-        /// Refuses every append, the way a full disk does.
-        struct RefusingAppend;
-
-        #[async_trait::async_trait]
-        impl pi_star_tools::env::AppendFile for RefusingAppend {
-            async fn append(&mut self, _: &[u8]) -> Result<(), pi_star_tools::FileError> {
-                Err(pi_star_tools::FileError::new(
-                    pi_star_tools::FileErrorCode::Unknown,
-                    "disk full",
-                ))
-            }
-        }
-
-        let tmp =
-            std::env::temp_dir().join(format!("rpi-normal-prompt-probe-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&tmp);
-        std::fs::create_dir_all(&tmp).unwrap();
-        let env = Arc::new(OsExecutionEnv::with_cwd(tmp.clone()));
-        let fs: Arc<dyn FileSystem> = env.clone();
-        let repo = JsonlSessionRepo::with_env_cwd(JsonlSessionRepoOptions {
-            fs,
-            sessions_root: tmp.join("sessions").to_string_lossy().into_owned(),
-            clock: Arc::new(SystemClock),
-            ids: Arc::new(DefaultIdGenerator::new()),
-        });
-        let storage = repo
-            .create_typed(&JsonlSessionCreateOptions {
-                id: Some("sess-write".into()),
-                parent_session_id: None,
-                cwd: tmp.to_string_lossy().into_owned(),
-                metadata: None,
-            })
-            .await
-            .unwrap();
-        storage.install_append_handle(Box::new(RefusingAppend));
-
+        let storage = super::test_support::FailingStorage::new("sess-write");
         let mut options = AgentHarnessOptions::default();
         options.session = Session::new(Arc::new(storage), None);
         let harness = AgentHarness::create(options).await.unwrap();
@@ -6851,8 +6750,6 @@ mod unsaved_isolation_tests {
             format!("{unsaved:?}").contains("UNSAVED_NORMAL_PROMPT"),
             "a normal failed prompt needs the recovery copy promised by the warning: {unsaved:?}"
         );
-
-        let _ = std::fs::remove_dir_all(&tmp);
     }
 }
 
@@ -6947,5 +6844,121 @@ mod agent_end_log_barrier_tests {
              already be in the durable log (the footer reconciles from the log \
              exactly there)"
         );
+    }
+}
+
+#[cfg(test)]
+mod test_support {
+    use super::*;
+    use crate::error::{SessionError, SessionResult};
+    use crate::session::types::{
+        BranchBounds, Entry, EntryQuery, LanePointer, LaneRecord, LogItem, LogOptions,
+        OperationStartedRecord, ProvisionedEntry, RecordQuery, SessionMetadata, SessionStats,
+        SessionStorage,
+    };
+    use crate::session::{DefaultIdGenerator, InMemorySessionStorage, SystemClock};
+
+    /// In-memory storage that refuses entry commits, the way a full disk does.
+    /// Used to pin the harness's write-failure reporting now that the JSONL
+    /// backend lives in `pi-star-core`.
+    #[derive(Clone)]
+    pub struct FailingStorage(pub InMemorySessionStorage);
+
+    impl FailingStorage {
+        pub fn new(id: &str) -> Self {
+            Self(InMemorySessionStorage::new(
+                SessionMetadata {
+                    id: id.into(),
+                    created_at: 0,
+                    parent_session_id: None,
+                },
+                Arc::new(SystemClock),
+                Arc::new(DefaultIdGenerator::new()),
+            ))
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl SessionStorage for FailingStorage {
+        fn metadata(&self) -> SessionMetadata {
+            self.0.metadata()
+        }
+
+        async fn get_lanes(&self) -> SessionResult<Vec<LanePointer>> {
+            self.0.get_lanes().await
+        }
+
+        async fn create_lane(&self, lane: &str, at: Option<&str>) -> SessionResult<()> {
+            self.0.create_lane(lane, at).await
+        }
+
+        async fn move_lane(&self, lane: &str, to: Option<&str>) -> SessionResult<()> {
+            self.0.move_lane(lane, to).await
+        }
+
+        async fn append_entry(
+            &self,
+            _entry: ProvisionedEntry,
+            _lane: &str,
+        ) -> SessionResult<Entry> {
+            Err(SessionError::storage("disk full"))
+        }
+
+        async fn append_record(&self, record: LaneRecord) -> SessionResult<LaneRecord> {
+            self.0.append_record(record).await
+        }
+
+        async fn get_entry(&self, id: &str) -> SessionResult<Option<Entry>> {
+            self.0.get_entry(id).await
+        }
+
+        async fn find_entries(&self, query: &EntryQuery) -> SessionResult<Vec<Entry>> {
+            self.0.find_entries(query).await
+        }
+
+        async fn find_entries_on_branch(
+            &self,
+            query: &EntryQuery,
+            bounds: &BranchBounds,
+            start: &str,
+        ) -> SessionResult<Vec<Entry>> {
+            self.0.find_entries_on_branch(query, bounds, start).await
+        }
+
+        async fn find_records(&self, query: &RecordQuery) -> SessionResult<Vec<LaneRecord>> {
+            self.0.find_records(query).await
+        }
+
+        async fn find_open_operations(
+            &self,
+            lane: &str,
+            limit: Option<usize>,
+        ) -> SessionResult<Vec<OperationStartedRecord>> {
+            self.0.find_open_operations(lane, limit).await
+        }
+
+        async fn get_log(&self, options: &LogOptions) -> SessionResult<Vec<LogItem>> {
+            self.0.get_log(options).await
+        }
+
+        async fn get_name(&self) -> SessionResult<Option<String>> {
+            self.0.get_name().await
+        }
+
+        async fn set_name(&self, name: Option<&str>) -> SessionResult<()> {
+            self.0.set_name(name).await
+        }
+
+        async fn get_label(&self, id: &str) -> SessionResult<Option<String>> {
+            self.0.get_label(id).await
+        }
+
+        async fn set_label(&self, id: &str, label: Option<&str>) -> SessionResult<()> {
+            self.0.set_label(id, label).await
+        }
+
+        async fn get_stats(&self) -> SessionResult<SessionStats> {
+            self.0.get_stats().await
+        }
     }
 }

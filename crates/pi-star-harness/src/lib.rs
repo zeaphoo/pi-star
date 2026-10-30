@@ -3,7 +3,7 @@
 //!
 //! M5 surface, built up module-by-module. Currently exposes the foundation
 //! layers (`error`, `result`, `types`, `session::types`); subsequent modules
-//! (`session::state`, `session::reducer`, `session::jsonl`, `compaction`,
+//! (`session::state`, `session::reducer`, `compaction`,
 //! `messages`, `events`, `skills`, `agent_harness`) are added as M5 progresses.
 
 #![forbid(unsafe_code)]

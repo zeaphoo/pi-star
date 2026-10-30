@@ -39,8 +39,9 @@ pi-star 的 Agent 内核来自 [pi-rust](https://github.com/bigfish1913/pi-rust)
 - 新增 `Entry::Raw` 透传本运行时未建模的 pi entry 类型（`usage`、`context_edit`、
   `label`、`session_info`、`custom_message`、`system` message），加载 pi 会话时不再
   因未知类型报错或丢行。
-- 后续（v3 存储改造）会删除上游的 `session/jsonl/**` 与 `session/sqlite.rs`，改用 pi-star
-  现有的 v3 JSONL 读写层。
+- 删除上游的 `session/jsonl/**` 与 `session/sqlite.rs`（v4 存储）。持久化改由
+  `pi-star-core::agent::session_store` 实现，直接读写 pi v3 JSONL；harness 只保留内存
+  后端与状态机。
 
 ## 维护策略
 

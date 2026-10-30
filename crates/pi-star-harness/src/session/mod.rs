@@ -2,19 +2,17 @@
 //!
 //! Durable session model ([`types`]), the in-memory state reducer ([`state`])
 //! + record-log validator ([`reducer`]), the in-memory backend ([`memory`]),
-//! the JSONL codec + storage + repo ([`jsonl`]), the context builder
-//! ([`context`]) that projects a branch path to provider-facing messages, and
-//! the `Session` + `SessionTree` facade ([`session`]) built over a
-//! [`types::SessionStorage`].
+//! the context builder ([`context`]) that projects a branch path to
+//! provider-facing messages, and the `Session` + `SessionTree` facade
+//! ([`session`]) built over a [`types::SessionStorage`]. The durable pi v3
+//! backend lives in `pi-star-core` (`agent::session_store`).
 //!
 //! Built up incrementally across M5b–M5f.
 
 pub mod context;
-pub mod jsonl;
 pub mod memory;
 pub mod reducer;
 pub mod session;
-pub mod sqlite;
 pub mod state;
 pub mod types;
 pub mod values;
@@ -31,7 +29,6 @@ pub use reducer::{
     validate_record_log, RecordLogCorruption, RecordLogCorruptionReason, RecordLogSlice,
 };
 pub use session::{DefaultIdGenerator, Session};
-pub use sqlite::{SqliteSessionRepo, SqliteSessionStorage};
 pub use state::{ApplyOutcome, SessionState};
 pub use values::{SessionValueWriter, SessionValues, VALUE_CUSTOM_TYPE};
 pub mod keyed_queue;

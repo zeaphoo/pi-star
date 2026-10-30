@@ -96,6 +96,9 @@ impl SessionState {
     /// The highest applied mutation seq (0 before any mutation). The JSONL
     /// loader uses this to detect a duplicated/late append, where a mutation
     /// arrives with an already-consumed seq.
+    // Only the removed v4 persistence used this; kept for parity with the
+    // shared session-state API.
+    #[allow(dead_code)]
     pub(crate) fn sequence(&self) -> u64 {
         self.sequence
     }
@@ -103,6 +106,9 @@ impl SessionState {
     /// Advance the seq counter to `seq` (no-op when already at or past it).
     /// The JSONL loader calls this when a divergent writer's counter leaves a
     /// gap, so the next mutation is accepted instead of refused.
+    // Only the removed v4 persistence used this; kept for parity with the
+    // shared session-state API.
+    #[allow(dead_code)]
     pub(crate) fn resync_sequence(&mut self, seq: u64) {
         if seq > self.sequence {
             self.sequence = seq;
@@ -451,6 +457,9 @@ impl SessionState {
         Ok(open)
     }
 
+    // Only the removed v4 persistence used this; kept for parity with the
+    // shared session-state API.
+    #[allow(dead_code)]
     pub(crate) fn has_open_operation_except(
         &self,
         lane: &str,
