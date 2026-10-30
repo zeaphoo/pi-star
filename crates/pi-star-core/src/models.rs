@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Result;
 use globset::Glob;
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::config::Config;
 
@@ -477,4 +477,99 @@ mod image_limit_tests {
         );
         assert!(check_image_max_bytes(&json!({})).is_ok());
     }
+}
+
+/// Merge a models.dev catalog into pi's `models-store.json` shape. Providers
+/// named by `only` (or every provider when empty) are replaced; other stored
+/// providers stay untouched. Returns whether the visible model list changed.
+pub fn apply_catalog_to_store(
+    store: &mut Value,
+    entries: &[crate::model_catalog::CatalogEntry],
+    only: Option<&str>,
+) -> bool {
+    let before = store_signature(store);
+    let mut grouped: BTreeMap<String, Vec<&crate::model_catalog::CatalogEntry>> = BTreeMap::new();
+    for entry in entries {
+        if let Some(provider) = only.filter(|provider| !provider.is_empty()) {
+            if entry.provider_id != provider && entry.provider_name != provider {
+                continue;
+            }
+        }
+        grouped
+            .entry(entry.provider_id.clone())
+            .or_default()
+            .push(entry);
+    }
+    if store.get("__proto__").is_some() {
+        store
+            .as_object_mut()
+            .map(|object| object.remove("__proto__"));
+    }
+    if !store.is_object() {
+        *store = json!({});
+    }
+    for (provider, models) in grouped {
+        let object = store.as_object_mut().expect("store is an object");
+        let provider_entry = object.entry(provider.clone()).or_insert_with(|| json!({}));
+        if !provider_entry.is_object() {
+            *provider_entry = json!({});
+        }
+        let api = if provider.contains("anthropic") {
+            "anthropic-messages"
+        } else {
+            "openai-completions"
+        };
+        let models_json: Vec<Value> = models
+            .iter()
+            .map(|entry| {
+                let mut model = json!({
+                    "id": entry.id,
+                    "name": entry.name,
+                    "provider": entry.provider_id,
+                    "api": api,
+                    "reasoning": entry.reasoning.unwrap_or(false),
+                    "input": entry.input.clone().unwrap_or_else(|| vec!["text".to_string()]),
+                    "cost": {
+                        "input": entry.cost.input.unwrap_or(0.0),
+                        "output": entry.cost.output.unwrap_or(0.0),
+                        "cacheRead": entry.cost.cache_read.unwrap_or(0.0),
+                        "cacheWrite": entry.cost.cache_write.unwrap_or(0.0),
+                    },
+                });
+                if let Some(base_url) = &entry.provider_base_url {
+                    model["baseUrl"] = Value::String(base_url.clone());
+                }
+                if let Some(context) = entry.context_window {
+                    model["contextWindow"] = Value::from(context);
+                }
+                if let Some(max_tokens) = entry.max_tokens {
+                    model["maxTokens"] = Value::from(max_tokens);
+                }
+                model
+            })
+            .collect();
+        provider_entry["models"] = Value::Array(models_json);
+    }
+    before != store_signature(store)
+}
+
+fn store_signature(store: &Value) -> String {
+    let Some(providers) = store.as_object() else {
+        return String::new();
+    };
+    let mut rows = Vec::new();
+    for (provider, value) in providers {
+        let Some(models) = value.get("models").and_then(Value::as_array) else {
+            continue;
+        };
+        for model in models {
+            rows.push(format!(
+                "{provider}\u{0}{}\u{0}{}",
+                model.get("id").and_then(Value::as_str).unwrap_or(""),
+                model.get("name").and_then(Value::as_str).unwrap_or(""),
+            ));
+        }
+    }
+    rows.sort();
+    rows.join("\n")
 }

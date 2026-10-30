@@ -107,13 +107,102 @@ pub async fn push_subscribe(
     }
 }
 
-pub async fn app_update() -> Response {
-    no_store(json!({
-        "currentVersion": env!("CARGO_PKG_VERSION"),
-        "latestVersion": env!("CARGO_PKG_VERSION"),
-        "updateAvailable": false,
-        "releaseUrl": "",
-    }))
+fn parse_version(value: &str) -> Option<Vec<u64>> {
+    let value = value.trim().trim_start_matches('v');
+    let core = value.split(['-', '+']).next().unwrap_or(value);
+    let parts: Option<Vec<u64>> = core.split('.').map(|part| part.parse().ok()).collect();
+    parts.filter(|parts| !parts.is_empty())
+}
+
+fn is_newer_stable(candidate: &str, current: &str) -> bool {
+    let (Some(candidate), Some(current)) = (parse_version(candidate), parse_version(current))
+    else {
+        return false;
+    };
+    for index in 0..candidate.len().max(current.len()) {
+        let left = candidate.get(index).copied().unwrap_or(0);
+        let right = current.get(index).copied().unwrap_or(0);
+        if left != right {
+            return left > right;
+        }
+    }
+    false
+}
+
+pub async fn app_update(State(state): State<Arc<AppState>>) -> Response {
+    let current = env!("CARGO_PKG_VERSION");
+    let skip = std::env::var("PI_STAR_SKIP_VERSION_CHECK").ok().as_deref() == Some("1")
+        || std::env::var("PI_WEB_SKIP_VERSION_CHECK").ok().as_deref() == Some("1");
+    if skip {
+        return no_store(json!({
+            "currentVersion": current,
+            "latestVersion": current,
+            "updateAvailable": false,
+            "releaseUrl": "",
+        }));
+    }
+    {
+        let cache = state.update_cache.lock();
+        if let Some((at, value)) = cache.as_ref() {
+            if at.elapsed() < std::time::Duration::from_secs(12 * 60 * 60) {
+                return no_store(value.clone());
+            }
+        }
+    }
+    let url = std::env::var("PI_STAR_UPDATE_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .or_else(|| {
+            std::env::var("PI_WEB_UPDATE_URL")
+                .ok()
+                .filter(|value| !value.trim().is_empty())
+        })
+        .unwrap_or_else(|| {
+            "https://api.github.com/repos/zeaphoo/pi-star/releases/latest".to_string()
+        });
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()
+        .unwrap_or_default()
+        .get(&url)
+        .header("Accept", "application/json")
+        .header("User-Agent", "pi-star")
+        .send()
+        .await;
+    let value = match response {
+        Ok(response) if response.status().is_success() => {
+            let payload: Value = response.json().await.unwrap_or(Value::Null);
+            let latest = payload
+                .get("version")
+                .and_then(Value::as_str)
+                .or_else(|| payload.get("tag_name").and_then(Value::as_str))
+                .map(|value| value.trim_start_matches('v').to_string())
+                .unwrap_or_else(|| current.to_string());
+            let release_url = payload
+                .get("releaseUrl")
+                .and_then(Value::as_str)
+                .or_else(|| payload.get("html_url").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_string();
+            json!({
+                "currentVersion": current,
+                "latestVersion": latest,
+                "updateAvailable": is_newer_stable(&latest, current),
+                "releaseUrl": release_url,
+            })
+        }
+        _ => {
+            if let Some((_, value)) = state.update_cache.lock().as_ref() {
+                return no_store(value.clone());
+            }
+            return crate::routes::json_error(
+                axum::http::StatusCode::BAD_GATEWAY,
+                "Could not query the release feed",
+            );
+        }
+    };
+    *state.update_cache.lock() = Some((std::time::Instant::now(), value.clone()));
+    no_store(value)
 }
 
 pub async fn home() -> Response {

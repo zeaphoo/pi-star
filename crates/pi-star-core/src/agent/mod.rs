@@ -65,6 +65,8 @@ pub struct SessionRuntime {
     cancel: Mutex<Option<CancellationToken>>,
     last_activity: Mutex<Instant>,
     subagent_slots: Mutex<usize>,
+    mcp: tokio::sync::Mutex<Option<crate::mcp_runtime::McpRuntime>>,
+    mcp_tool_list: Mutex<Vec<(String, String, Value)>>,
     started_at: Instant,
 }
 
@@ -161,7 +163,8 @@ impl AgentRegistry {
                 })
             });
         let active_tools = tools::names();
-        let system_prompt = build_system_prompt(Path::new(session.cwd()), &active_tools);
+        let system_prompt =
+            build_system_prompt(&self.config, Path::new(session.cwd()), &active_tools);
         let runtime = Arc::new(SessionRuntime {
             id: id.clone(),
             path: path.to_path_buf(),
@@ -191,6 +194,8 @@ impl AgentRegistry {
             cancel: Mutex::new(None),
             last_activity: Mutex::new(Instant::now()),
             subagent_slots: Mutex::new(0),
+            mcp: tokio::sync::Mutex::new(None),
+            mcp_tool_list: Mutex::new(Vec::new()),
             started_at: Instant::now(),
         });
         self.runtimes.lock().insert(id, runtime.clone());
@@ -315,19 +320,26 @@ impl SessionRuntime {
 
     pub fn tool_entries(&self) -> Value {
         let state = self.state.lock();
-        Value::Array(
-            tools::schemas()
-                .into_iter()
-                .map(|tool| {
-                    json!({
-                        "name": tool.name,
-                        "description": tool.description,
-                        "active": state.active_tools.iter().any(|name| name == &tool.name),
-                        "parameters": tool.parameters,
-                    })
+        let mut entries: Vec<Value> = tools::schemas()
+            .into_iter()
+            .map(|tool| {
+                json!({
+                    "name": tool.name,
+                    "description": tool.description,
+                    "active": state.active_tools.iter().any(|name| name == &tool.name),
+                    "parameters": tool.parameters,
                 })
-                .collect(),
-        )
+            })
+            .collect();
+        for (name, description, parameters) in self.mcp_tool_list.lock().iter() {
+            entries.push(json!({
+                "name": name,
+                "description": description,
+                "active": true,
+                "parameters": parameters,
+            }));
+        }
+        Value::Array(entries)
     }
 
     pub fn session_stats(&self) -> Value {
@@ -684,10 +696,12 @@ impl SessionRuntime {
             "message": user_entry.get("message").cloned().unwrap_or(Value::Null),
         }));
 
+        self.ensure_mcp().await;
         for _ in 0..24 {
             if cancel.is_cancelled() {
                 return Ok(());
             }
+            let mcp_schemas = self.mcp_tool_schemas().await;
             let (model, system, messages, tool_schemas) = {
                 let state = self.state.lock();
                 let Some(model) = state.model.clone() else {
@@ -696,7 +710,7 @@ impl SessionRuntime {
                     ));
                 };
                 let messages = provider_messages(&state.entries);
-                let tool_schemas = tools::schemas()
+                let mut tool_schemas = tools::schemas()
                     .into_iter()
                     .filter(|tool| state.active_tools.iter().any(|name| name == &tool.name))
                     .map(|tool| ToolSchema {
@@ -705,6 +719,13 @@ impl SessionRuntime {
                         parameters: tool.parameters,
                     })
                     .collect::<Vec<_>>();
+                for (name, description, parameters) in mcp_schemas.clone() {
+                    tool_schemas.push(ToolSchema {
+                        name,
+                        description,
+                        parameters,
+                    });
+                }
                 (model, state.system_prompt.clone(), messages, tool_schemas)
             };
             let max_tokens = model.max_tokens.unwrap_or(8192);
@@ -924,6 +945,8 @@ impl SessionRuntime {
         }));
         let output = if name == "subagent" {
             self.execute_subagent(id, name, &args).await
+        } else if name.starts_with("mcp__") {
+            self.execute_mcp_tool(name, &args).await
         } else {
             tools::execute(&self.roots, &self.cwd, name, &args, |partial| {
                 self.emit(json!({
@@ -961,6 +984,54 @@ impl SessionRuntime {
             "message": entry.get("message").cloned().unwrap_or(Value::Null),
         }));
         Ok(())
+    }
+
+    async fn ensure_mcp(&self) {
+        let mut runtime = self.mcp.lock().await;
+        if runtime.is_none() {
+            let connected = crate::mcp_runtime::McpRuntime::connect(&self.config, &self.cwd).await;
+            *self.mcp_tool_list.lock() = connected.tool_schemas();
+            *runtime = Some(connected);
+        }
+    }
+
+    async fn mcp_tool_schemas(&self) -> Vec<(String, String, Value)> {
+        let mut runtime = self.mcp.lock().await;
+        if runtime.is_none() {
+            let connected = crate::mcp_runtime::McpRuntime::connect(&self.config, &self.cwd).await;
+            *self.mcp_tool_list.lock() = connected.tool_schemas();
+            *runtime = Some(connected);
+        }
+        runtime
+            .as_ref()
+            .map(crate::mcp_runtime::McpRuntime::tool_schemas)
+            .unwrap_or_default()
+    }
+
+    async fn execute_mcp_tool(&self, name: &str, args: &Value) -> tools::ToolOutput {
+        let mut runtime = self.mcp.lock().await;
+        if runtime.is_none() {
+            *runtime = Some(crate::mcp_runtime::McpRuntime::connect(&self.config, &self.cwd).await);
+        }
+        match runtime.as_mut() {
+            Some(runtime) => match runtime.call(name, args.clone()).await {
+                Ok(content) => tools::ToolOutput {
+                    content,
+                    is_error: false,
+                    details: json!({"mcp": true}),
+                },
+                Err(error) => tools::ToolOutput {
+                    content: error.to_string(),
+                    is_error: true,
+                    details: json!({"mcp": true}),
+                },
+            },
+            None => tools::ToolOutput {
+                content: "MCP is not available".into(),
+                is_error: true,
+                details: json!({}),
+            },
+        }
     }
 
     async fn execute_subagent(
@@ -1519,14 +1590,16 @@ fn prompt_content(prompt: &PromptRequest) -> Value {
     Value::Array(content)
 }
 
-fn build_system_prompt(cwd: &Path, tools: &[String]) -> String {
-    format!(
+fn build_system_prompt(config: &Config, cwd: &Path, tools: &[String]) -> String {
+    let mut prompt = format!(
         "You are pi, a coding agent working in {}. Use the available tools to inspect and modify the project. \
          Prefer reading files before editing. Keep replies concise and show the user what changed. \
          Available tools: {}.",
         cwd.display(),
         tools.join(", ")
-    )
+    );
+    prompt.push_str(&crate::skills::prompt_section(config, cwd));
+    prompt
 }
 
 pub fn new_session_id() -> String {

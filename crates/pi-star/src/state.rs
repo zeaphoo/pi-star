@@ -10,6 +10,7 @@ use anyhow::Result;
 use pi_star_core::Config;
 use pi_star_core::agent::AgentRegistry;
 use pi_star_core::file_access::AllowedRoots;
+use pi_star_core::model_catalog::CatalogEntry;
 use pi_star_core::models::{ModelsData, load_models};
 use pi_star_core::push::PushStore;
 use pi_star_core::session_index::SessionIndex;
@@ -62,6 +63,8 @@ pub struct AppState {
     pub session_index: Arc<SessionIndex>,
     pub push: Arc<PushStore>,
     pub models_cache: Mutex<Option<(Instant, ModelsData)>>,
+    pub catalog_cache: Mutex<Option<(Instant, Vec<CatalogEntry>)>>,
+    pub update_cache: Mutex<Option<(Instant, serde_json::Value)>>,
     pub started: Instant,
     /// Process start on the wall clock, for the Debug panel (epoch ms).
     pub started_epoch_ms: i64,
@@ -152,6 +155,8 @@ impl AppState {
             session_index,
             push,
             models_cache: Mutex::new(None),
+            catalog_cache: Mutex::new(None),
+            update_cache: Mutex::new(None),
             started: Instant::now(),
             started_epoch_ms: crate::debug_streams::now_ms(),
             idle_timeout_ms,

@@ -9,7 +9,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | 会话扫描/增量索引 | ✅ | 文件指纹缓存 + 并行解析 + 持久化 `pi-star-session-index.json`；命中后约 20ms |
 | 会话读取/树/上下文分页 | ✅ | 活动分支、tail/before、summary 列表、projectRoot/branch |
 | 会话写操作 | ✅ | rename、delete、delete-many、fork、stats、search、export |
-| 会话自动命名 | ◐ | auto-name 本地截取首条用户消息，尚未调用模型生成标题 |
+| 会话自动命名 | ✅ | 调用当前/默认模型生成标题；无可用模型时回退到本地截取 |
 | 侧边栏 UI 状态 | ✅ | 加锁、原子写、revision、损坏备份 |
 | 文件 | ✅ | list/read/download/meta/upload/upload-check/allow-link/watch、DOCX 预览 |
 | @ 文件索引 | ✅ | git ls-files + 忽略规则回退，模糊匹配 |
@@ -21,36 +21,31 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | 扩展 UI | ✅ | pending 请求、SSE 重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
 | Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped，项目设置覆盖全局 |
 | Provider | ✅ | OpenAI-compatible / Anthropic Messages；模型缓存、provider usage |
-| OAuth / device-code | ✅ | Anthropic 授权码 + PKCE；GitHub Copilot device-code；API Key 保存/删除/登出 |
-| 模型与 models.json | ◐ | 目录、默认/启用、CRUD、discover/test、图片大小上限校验；models.dev 自动补全与远程 catalog refresh 未实现 |
-| MCP | ✅ | 文件读写、状态/遮罩、Test（stdio JSON-RPC/HTTP）、OAuth discovery/注册/回调、mcp-auth.json |
-| Skills | ✅ | 列表/内容/开关、skills.sh 搜索、GitHub/本地包安装与更新、更新检查、lock 文件 |
+| OAuth / device-code | ◐ | Anthropic 授权码 + PKCE、GitHub Copilot device-code、API Key 保存/删除/登出；其他 provider 的 OAuth 尚未内置 |
+| 模型与 models.json | ✅ | 目录、默认/启用、CRUD、discover/test、图片大小上限校验、models.dev 自动补全、models-store 远程刷新 |
+| MCP | ✅ | 文件读写、状态/遮罩、Test、OAuth、mcp-auth.json；Agent 回合自动连接 stdio/HTTP 服务器并注册 `mcp__*` 工具 |
+| Skills | ✅ | 列表/内容/开关、skills.sh 搜索、GitHub/本地包安装与更新、更新检查、lock 文件、已启用 skill 注入系统提示 |
 | Plugins | ✅ | 列表、本地/Git/npm 安装、更新、启用/禁用/移除、npm 更新检查 |
 | 项目信任 | ✅ | 继承、决策、项目 MCP 清单 |
 | 静态服务/SPA | ✅ | 缓存头、SPA fallback、API JSON 404 |
 | 认证/安全 | ✅ | Host/Origin、body limit、cookie/Basic Auth、失败指数退避 |
 | Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
 | Debug / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
-| app-update | ◐ | 返回当前版本与“无更新”，尚未查询发布源 |
-| 测试 | ✅ | 17 个 core 单测 + 29 个服务端单测/集成测试 + 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
+| app-update | ✅ | 可配置发布源（`PI_STAR_UPDATE_URL`），12h 缓存，支持 `PI_STAR_SKIP_VERSION_CHECK=1` |
+| 测试 | ✅ | 23 个 core 单测 + 32 个服务端单测/集成测试 + 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
 
 ## 运行时边界
 
 以下不是 API 缺口，而是 Rust Agent 运行时当前的能力边界：
 
-- **Node 扩展/插件执行**：插件包可以安装、更新和列入设置，但 Rust Agent 不会执行 pi 的
-  TypeScript 扩展。`extension_ui_request` 的传输、响应和超时已实现，等待未来的 Rust
-  扩展宿主接入。
-- **MCP 会话接入**：Settings 的 MCP Test/OAuth/配置已实现；Agent 回合中自动连接
-  `mcp.json` 服务器并注册工具仍待接入。
-- **Skills 注入**：Skills 可安装、列出、编辑和搜索；把已启用 skills 的内容注入系统提示
-  仍使用基础提示词，尚未完整移植 pi 的 resource loader。
-- **Provider 覆盖**：OAuth 目前覆盖 Anthropic 和 GitHub Copilot；其他 provider 仍以
-  API Key 为主。
-- **模型目录**：`/api/models-config/catalog` 仍是空结果，Models 面板的 models.dev
-  自动补全不可用；`/api/models/refresh` 返回 `runtime`，不会拉取远程目录。
-- **会话导出/标题**：export 使用 Rust 生成的简化 HTML，不含 pi CLI 导出的树视图；
-  auto-name 使用本地截取，不调用模型。
+- **Node/TypeScript 扩展执行**：扩展包可以安装和管理，`extension_ui_request` 的传输、
+  响应和超时也已实现；但 Rust Agent 不执行 pi 的 TypeScript 扩展，扩展注册工具、命令、
+  widgets 和扩展 UI 的宿主仍未接入。
+- **Provider OAuth 覆盖**：OAuth 仍只内置 Anthropic 和 GitHub Copilot；OpenAI
+  Codex/ChatGPT、OpenRouter、Kimi、xAI、Radius 等 provider 需要各自的 OAuth 流程，
+  目前仍以 API Key 或 pi 写入的凭据为主。
+- **会话导出**：优先调用已安装的 `pi --export` 生成与 pi 相同的 HTML；`pi` 不可用时
+  回退到 Rust 生成的简化 HTML。
 
 ## 端口
 

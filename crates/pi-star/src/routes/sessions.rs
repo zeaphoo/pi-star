@@ -9,6 +9,7 @@ use base64::Engine;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
+use pi_star_core::models;
 use pi_star_core::session::{
     self, append_lines, append_session_info, build_context, build_tree, compute_stats,
     create_session_file, entry_id, entry_type, message_text, read_session, slice_active_branch,
@@ -484,13 +485,74 @@ pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<St
     no_store(json!({ "running": false }))
 }
 
+#[derive(Debug, Deserialize, Default)]
+pub struct ExportQuery {
+    inline: Option<String>,
+}
+
+async fn export_with_pi_cli(path: &Path) -> Option<String> {
+    let temp = std::env::temp_dir().join(format!("pi-star-export-{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&temp).ok()?;
+    let cli = std::env::var("PI_STAR_PI_CLI").unwrap_or_else(|_| "pi".to_string());
+    let output = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        tokio::process::Command::new(cli)
+            .arg("--export")
+            .arg(path)
+            .current_dir(&temp)
+            .env("PI_OFFLINE", "1")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .output(),
+    )
+    .await
+    .ok()?
+    .ok()?;
+    let html = if output.status.success() {
+        std::fs::read_dir(&temp).ok().and_then(|entries| {
+            entries.flatten().find_map(|entry| {
+                let name = entry.file_name().to_string_lossy().into_owned();
+                name.starts_with("pi-session-")
+                    .then(|| std::fs::read_to_string(entry.path()).ok())
+                    .flatten()
+            })
+        })
+    } else {
+        None
+    };
+    let _ = std::fs::remove_dir_all(&temp);
+    html
+}
+
 pub async fn export(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
+    Query(query): Query<ExportQuery>,
 ) -> Response {
     let Some(path) = session::resolve_session_path(&state.config, &id) else {
         return not_found("Session not found");
     };
+    if let Some(html) = export_with_pi_cli(&path).await {
+        let disposition = if query.inline.as_deref() == Some("1") {
+            "inline"
+        } else {
+            "attachment"
+        };
+        return (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
+                (
+                    header::CONTENT_DISPOSITION,
+                    format!("{disposition}; filename=\"session-{id}.html\""),
+                ),
+                (header::CACHE_CONTROL, "no-store".to_string()),
+            ],
+            html,
+        )
+            .into_response();
+    }
     let session = match read_session(&path) {
         Ok(session) => session,
         Err(error) => return internal(error),
@@ -535,7 +597,14 @@ pub async fn export(
             (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"session-{id}.html\""),
+                format!(
+                    "{}; filename=\"session-{id}.html\"",
+                    if query.inline.as_deref() == Some("1") {
+                        "inline"
+                    } else {
+                        "attachment"
+                    }
+                ),
             ),
         ],
         html,
@@ -561,6 +630,50 @@ pub async fn auto_name(
     let Ok(session) = read_session(&path) else {
         return internal("could not read session");
     };
+    let (_, session_model) = session::session_settings(&session.entries, None);
+    let default_model = state.models().ok().and_then(|data| data.default_model);
+    let model_ref = session_model
+        .map(|model| (model.provider, model.model_id))
+        .or_else(|| default_model.map(|model| (model.provider, model.model_id)));
+    if let Some((provider, model_id)) = model_ref {
+        let defs = models::model_defs(&state.config).unwrap_or_default();
+        if let Some(model) = defs.get(&format!("{provider}/{model_id}")).cloned() {
+            let generated = tokio::time::timeout(
+                std::time::Duration::from_secs(90),
+                pi_star_core::session_title::generate_title(
+                    state.agents.client.clone(),
+                    model,
+                    &session.entries,
+                ),
+            )
+            .await;
+            match generated {
+                Ok(Ok(generated)) => {
+                    if let Err(error) = append_session_info(&path, &generated.title) {
+                        return internal(error);
+                    }
+                    return no_store(json!({
+                        "title": generated.title,
+                        "usage": generated.usage,
+                    }));
+                }
+                Ok(Err(error)) => {
+                    return crate::routes::json_error(
+                        axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                        error.to_string(),
+                    );
+                }
+                Err(_) => {
+                    return crate::routes::json_error(
+                        axum::http::StatusCode::GATEWAY_TIMEOUT,
+                        "Session title generation timed out",
+                    );
+                }
+            }
+        }
+    }
+    // No configured model: keep the local fallback rather than failing the
+    // action outright. A configured model always goes through the model.
     let text = session.first_user_text();
     let title = text
         .split_whitespace()

@@ -48,6 +48,9 @@ export async function startServer({ root, uiRoot, agentDir, port, artifacts, env
     env: {
       ...process.env,
       PI_WEB_PASSWORD: "",
+      // The browser suites must not depend on the release feed; the remote
+      // feed is covered by the Rust integration test.
+      PI_STAR_SKIP_VERSION_CHECK: "1",
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],

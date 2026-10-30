@@ -280,19 +280,89 @@ pub async fn set_enabled_models(
     }
 }
 
-pub async fn refresh_models() -> Response {
-    // pi-star reads the model store directly and does not run pi's SDK model
-    // runtime, so there is no remote catalog refresh to perform. Keep the
-    // response shape the Models panel expects.
-    let reason = if std::env::var_os("PI_OFFLINE").is_some() {
-        "offline"
-    } else {
-        "runtime"
+#[derive(Debug, Deserialize, Default)]
+pub struct RefreshBody {
+    provider: Option<String>,
+}
+
+fn models_dev_url() -> String {
+    std::env::var("PI_MODELS_DEV_URL")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "https://models.dev/api.json".to_string())
+}
+
+async fn load_model_catalog(
+    state: &AppState,
+) -> Result<Vec<pi_star_core::model_catalog::CatalogEntry>, String> {
+    {
+        let cache = state.catalog_cache.lock();
+        if let Some((at, entries)) = cache.as_ref() {
+            if at.elapsed() < std::time::Duration::from_secs(60 * 60) {
+                return Ok(entries.clone());
+            }
+        }
+    }
+    let response = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(15))
+        .build()
+        .unwrap_or_default()
+        .get(models_dev_url())
+        .header("Accept", "application/json")
+        .send()
+        .await
+        .map_err(|error| error.to_string())?;
+    if !response.status().is_success() {
+        return Err(format!("models.dev returned HTTP {}", response.status()));
+    }
+    let payload: Value = response.json().await.map_err(|error| error.to_string())?;
+    let entries = pi_star_core::model_catalog::flatten_models_dev(&payload);
+    if entries.is_empty() {
+        return Err("models.dev returned an empty catalog".to_string());
+    }
+    *state.catalog_cache.lock() = Some((std::time::Instant::now(), entries.clone()));
+    Ok(entries)
+}
+
+pub async fn refresh_models(
+    State(state): State<Arc<AppState>>,
+    body: Option<Json<RefreshBody>>,
+) -> Response {
+    if std::env::var_os("PI_OFFLINE").is_some() {
+        return no_store(json!({
+            "completed": false,
+            "changed": false,
+            "reason": "offline",
+        }));
+    }
+    let provider = body
+        .and_then(|Json(body)| body.provider)
+        .filter(|value| !value.trim().is_empty());
+    let entries = match load_model_catalog(&state).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            tracing::warn!(%error, "model catalog refresh failed");
+            return no_store(json!({
+                "completed": false,
+                "changed": false,
+                "reason": "runtime",
+            }));
+        }
     };
+    let path = state.config.agent_dir.join("models-store.json");
+    let mut store = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&strip_json_comments(&text)).ok())
+        .unwrap_or_else(|| json!({}));
+    let changed =
+        pi_star_core::models::apply_catalog_to_store(&mut store, &entries, provider.as_deref());
+    if let Err(error) = settings::write_json_atomic(&path, &store, 0o600) {
+        return internal(error);
+    }
+    state.invalidate_models();
     no_store(json!({
-        "completed": false,
-        "changed": false,
-        "reason": reason,
+        "completed": true,
+        "changed": changed,
     }))
 }
 
@@ -340,8 +410,52 @@ pub async fn set_models_config(
     }
 }
 
-pub async fn catalog() -> Response {
-    no_store(json!({"models": [], "recommendation": null, "source": "https://models.dev/api.json"}))
+#[derive(Debug, Deserialize, Default)]
+pub struct CatalogQuery {
+    q: Option<String>,
+    provider: Option<String>,
+    #[serde(rename = "baseUrl")]
+    base_url: Option<String>,
+    limit: Option<usize>,
+}
+
+pub async fn catalog(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CatalogQuery>,
+) -> Response {
+    let entries = match load_model_catalog(&state).await {
+        Ok(entries) => entries,
+        Err(error) => {
+            return crate::routes::json_error(axum::http::StatusCode::BAD_GATEWAY, error);
+        }
+    };
+    let query_text = query
+        .q
+        .unwrap_or_default()
+        .chars()
+        .take(120)
+        .collect::<String>();
+    let provider = query
+        .provider
+        .unwrap_or_default()
+        .chars()
+        .take(120)
+        .collect::<String>();
+    let base_url = query
+        .base_url
+        .unwrap_or_default()
+        .chars()
+        .take(500)
+        .collect::<String>();
+    let limit = query.limit.unwrap_or(50).clamp(1, 100);
+    let models = pi_star_core::model_catalog::search(&entries, &query_text, &provider, limit);
+    let recommendation =
+        pi_star_core::model_catalog::recommend(&entries, &query_text, &provider, &base_url);
+    no_store(json!({
+        "models": models,
+        "recommendation": recommendation,
+        "source": models_dev_url(),
+    }))
 }
 
 #[derive(Debug, Deserialize)]

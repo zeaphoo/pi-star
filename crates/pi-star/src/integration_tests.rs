@@ -1281,24 +1281,6 @@ async fn models_refresh_and_tools_settings_keep_their_contract() {
     let (status, body) = call(
         app.clone(),
         Request::builder()
-            .method("POST")
-            .uri("/api/models/refresh")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from("{}"))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["completed"], false);
-    assert_eq!(body["changed"], false);
-    assert!(matches!(
-        body["reason"].as_str(),
-        Some("runtime" | "offline")
-    ));
-
-    let (status, body) = call(
-        app.clone(),
-        Request::builder()
             .method("PUT")
             .uri("/api/tools/settings")
             .header(header::CONTENT_TYPE, "application/json")
@@ -1410,6 +1392,9 @@ async fn session_rename_search_stats_export_and_delete() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["stats"][fixture.session_id.as_str()]["totalActiveMs"].is_number());
 
+    // Pin the deterministic Rust fallback: this checkout may have the pi CLI
+    // installed, whose export template is not part of the assertion.
+    unsafe { std::env::set_var("PI_STAR_PI_CLI", "/nonexistent/pi-star-pi-export") };
     let (status, text) = call_text(
         app.clone(),
         Request::builder()
@@ -1418,6 +1403,7 @@ async fn session_rename_search_stats_export_and_delete() {
             .unwrap(),
     )
     .await;
+    unsafe { std::env::remove_var("PI_STAR_PI_CLI") };
     assert_eq!(status, StatusCode::OK);
     assert!(text.contains("fixture reply"));
 
@@ -1538,18 +1524,6 @@ async fn cwd_browse_create_and_misc_reports() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["platform"].is_string());
-
-    let (status, body) = call(
-        app.clone(),
-        Request::builder()
-            .uri("/api/app-update")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["updateAvailable"], false);
-    assert!(body["currentVersion"].is_string());
 
     let (status, body) = call(
         app,
@@ -1740,4 +1714,237 @@ async fn mcp_config_is_listed_and_auth_keys_round_trip() {
     assert_eq!(status, StatusCode::OK);
     let auth = std::fs::read_to_string(fixture.agent_dir.join("auth.json")).unwrap();
     assert!(!auth.contains("sk-test-fixture"));
+}
+
+fn catalog_fixture() -> Value {
+    json!({
+        "demo": {
+            "name": "Demo",
+            "api": "https://api.demo.test",
+            "models": {
+                "demo-large": {
+                    "id": "demo-large", "name": "Demo Large", "reasoning": true,
+                    "modalities": {"input": ["text", "image"]},
+                    "limit": {"context": 128000, "output": 8192},
+                    "cost": {"input": 1, "output": 2, "cache_read": 0.1, "cache_write": 0}
+                }
+            }
+        }
+    })
+}
+
+#[tokio::test]
+async fn model_catalog_refresh_and_app_update_use_the_remote_feed() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = axum::Router::new()
+        .route(
+            "/api.json",
+            axum::routing::get(|| async { axum::Json(catalog_fixture()) }),
+        )
+        .route(
+            "/release",
+            axum::routing::get(|| async {
+                axum::Json(json!({
+                    "version": "9.9.9",
+                    "html_url": "https://example.test/releases/9.9.9"
+                }))
+            }),
+        );
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+
+    // SAFETY: this test owns the only readers of these variables while it runs;
+    // tests that read them only check their shapes.
+    unsafe {
+        std::env::set_var("PI_MODELS_DEV_URL", format!("http://{addr}/api.json"));
+        std::env::set_var("PI_STAR_UPDATE_URL", format!("http://{addr}/release"));
+    }
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/models-config/catalog?q=demo-large&provider=demo&baseUrl=https%3A%2F%2Fapi.demo.test&limit=10")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["models"][0]["key"], "demo/demo-large");
+    assert_eq!(body["recommendation"]["metadataMethod"], "provider");
+    assert_eq!(body["recommendation"]["preset"]["name"], "Demo Large");
+    assert_eq!(body["recommendation"]["price"]["status"], "reliable");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/models/refresh")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"provider": "demo"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["completed"], true);
+    assert_eq!(body["changed"], true);
+    let store = std::fs::read_to_string(fixture.agent_dir.join("models-store.json")).unwrap();
+    assert!(store.contains("demo-large"));
+    assert!(store.contains("128000"));
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/models/refresh")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"provider": "demo"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["completed"], true);
+    assert_eq!(body["changed"], false);
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/app-update")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["latestVersion"], "9.9.9");
+    assert_eq!(body["updateAvailable"], true);
+    assert_eq!(body["releaseUrl"], "https://example.test/releases/9.9.9");
+
+    unsafe {
+        std::env::remove_var("PI_MODELS_DEV_URL");
+        std::env::remove_var("PI_STAR_UPDATE_URL");
+    }
+    handle.abort();
+}
+
+#[tokio::test]
+async fn auto_name_uses_the_configured_model_and_reports_usage() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|| async {
+            (
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                "data: {\"choices\":[{\"delta\":{\"content\":\"Fixture Title\"}}]}\n\n\
+                 data: {\"choices\":[{\"delta\":{}}],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":3}}\n\n\
+                 data: [DONE]\n\n",
+            )
+        }),
+    );
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+
+    let fixture = write_fixture();
+    std::fs::write(
+        fixture.agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "test": {
+                    "api": "openai-completions",
+                    "baseUrl": format!("http://{addr}/v1"),
+                    "apiKey": "test-key",
+                    "models": [{"id": "test", "name": "Test Model"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.agent_dir.join("settings.json"),
+        json!({"defaultProvider": "test", "defaultModel": "test"}).to_string(),
+    )
+    .unwrap();
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{}/auto-name", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["title"], "Fixture Title");
+    assert_eq!(body["usage"]["input"], 12);
+    assert_eq!(body["usage"]["output"], 3);
+    handle.abort();
+}
+
+#[tokio::test]
+async fn mcp_runtime_lists_and_calls_http_tools() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = axum::Router::new().route(
+        "/",
+        axum::routing::post(|axum::Json(request): axum::Json<Value>| async move {
+            let id = request.get("id").cloned().unwrap_or(Value::Null);
+            let result = match request.get("method").and_then(Value::as_str) {
+                Some("initialize") => json!({
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": {"name": "demo", "version": "1"}
+                }),
+                Some("tools/list") => json!({
+                    "tools": [{
+                        "name": "echo",
+                        "description": "Echo text",
+                        "inputSchema": {"type": "object", "properties": {"text": {"type": "string"}}}
+                    }]
+                }),
+                Some("tools/call") => {
+                    let text = request
+                        .pointer("/params/arguments/text")
+                        .and_then(Value::as_str)
+                        .unwrap_or("");
+                    {
+                        let text = format!("echo:{text}");
+                        json!({"content": [{"type": "text", "text": text}]})
+                    }
+                }
+                _ => Value::Null,
+            };
+            axum::Json(json!({"jsonrpc": "2.0", "id": id, "result": result}))
+        }),
+    );
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+
+    let fixture = write_fixture();
+    std::fs::write(
+        fixture.agent_dir.join("mcp.json"),
+        json!({"mcpServers": {"demo": {"url": format!("http://{addr}/")}}}).to_string(),
+    )
+    .unwrap();
+    let config = pi_star_core::Config::new(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+    )
+    .unwrap();
+    let mut runtime = pi_star_core::mcp_runtime::McpRuntime::connect(&config, &fixture.cwd).await;
+    assert_eq!(runtime.tools.len(), 1);
+    assert_eq!(runtime.tools[0].name, "mcp__demo__echo");
+    assert_eq!(runtime.tools[0].description, "Echo text");
+    let output = runtime
+        .call("mcp__demo__echo", json!({"text": "hello"}))
+        .await
+        .unwrap();
+    assert_eq!(output, "echo:hello");
+    handle.abort();
 }
