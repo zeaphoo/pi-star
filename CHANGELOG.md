@@ -49,6 +49,8 @@
   `pi vpi-compatible-rust`。
 - **失效工作区**：启动时记住的新会话目录失效不再卡在“无法打开工作区”；自动丢弃记忆并回到
   默认工作区，显式 `?cwd=` 错误页提供重试与选择项目。
+- **macOS 公证**：`stapler` 取票遇到 Apple CloudKit 瞬时网络错误（Error 65/68、NSURLError
+  -1005）时自动重试 4 次、间隔 20 秒，不再让已通过公证的 dmg 因取票抖动失败。
 - **Release 构建**：Windows 下用 PowerShell 解压 Node/MinGit 的 zip，并给 GNU tar 加
   `--force-local`，避免 `D:` 被当成远程主机；pi 依赖安装加 `--legacy-peer-deps`，规避 npm 10
   的 `edgesOut` 崩溃；Windows 运行时 staging 放在仓库同盘的 `app/pi-runtime`，避免 Tauri

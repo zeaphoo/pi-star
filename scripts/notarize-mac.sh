@@ -10,6 +10,8 @@ DIST_DIR="${DIST_DIR:-$ROOT/dist/mac}"
 APP_NAME="PiStar"
 APP="$DIST_DIR/$APP_NAME.app"
 TIMEOUT="${NOTARY_TIMEOUT:-30m}"
+STAPLER_RETRIES="${STAPLER_RETRIES:-4}"
+STAPLER_RETRY_DELAY="${STAPLER_RETRY_DELAY:-20}"
 
 fail() {
     echo "$*" >&2
@@ -69,6 +71,46 @@ grep -q 'BEGIN PRIVATE KEY' "$KEY_FILE" || fail "公证密钥不是 .p8 PEM"
 
 notary_args=(--key "$KEY_FILE" --key-id "$MAC_NOTARY_API_KEY_ID" --issuer "$MAC_NOTARY_API_ISSUER_ID")
 
+# stapler talks to Apple CloudKit to fetch the ticket. A successful notarization
+# can still fail here with Error 65/68 or NSURLError -1005 ("network connection
+# was lost") when CloudKit/network is flaky. Retry only those transient cases.
+stapler_retryable() {
+    local rc="$1"
+    local output="$2"
+    if [[ "$rc" -eq 65 || "$rc" -eq 68 ]]; then
+        return 0
+    fi
+    grep -qiE 'NSURLError|connection (was )?lost|-1005|timed out|network|CloudKit' <<<"$output"
+}
+
+stapler_retry() {
+    local action="$1"
+    local target="$2"
+    local attempt=1
+    local rc=0
+    local output=""
+    while (( attempt <= STAPLER_RETRIES )); do
+        rc=0
+        output="$(xcrun stapler "$action" "$target" 2>&1)" || rc=$?
+        if (( rc == 0 )); then
+            [[ -z "$output" ]] || printf '%s\n' "$output"
+            return 0
+        fi
+        printf 'stapler %s 失败（第 %d/%d 次，rc=%d）：%s\n' \
+            "$action" "$attempt" "$STAPLER_RETRIES" "$rc" "$output" >&2
+        if ! stapler_retryable "$rc" "$output"; then
+            return "$rc"
+        fi
+        if (( attempt == STAPLER_RETRIES )); then
+            return "$rc"
+        fi
+        printf 'CloudKit/网络瞬时错误，%s 秒后重试…\n' "$STAPLER_RETRY_DELAY" >&2
+        sleep "$STAPLER_RETRY_DELAY"
+        attempt=$((attempt + 1))
+    done
+    return "$rc"
+}
+
 notarize() {
     local artifact="$1"
     local label="$2"
@@ -83,8 +125,8 @@ ZIP="$WORK/$APP_NAME.zip"
 ditto -c -k --keepParent "$APP" "$ZIP"
 notarize "$ZIP" "app zip"
 
-xcrun stapler staple "$APP"
-xcrun stapler validate "$APP"
+stapler_retry staple "$APP"
+stapler_retry validate "$APP"
 
 # 由已钉票的 .app 重建 DMG；dmg 有独立校验和，必须单独公证并钉票。
 STAGE="$WORK/dmg"
@@ -95,12 +137,12 @@ DMG="$DIST_DIR/pi-star-app_${version}_macos_${MAC_ARCH}.dmg"
 rm -f "$DMG"
 hdiutil create -volname "Pi Star" -srcfolder "$STAGE" -ov -format UDZO "$DMG" >/dev/null
 notarize "$DMG" "dmg"
-xcrun stapler staple "$DMG"
-xcrun stapler validate "$DMG"
+stapler_retry staple "$DMG"
+stapler_retry validate "$DMG"
 
 hdiutil attach -nobrowse -readonly -mountpoint "$MOUNT" "$DMG" >/dev/null
 codesign --verify --deep --strict "$MOUNT/$APP_NAME.app"
-xcrun stapler validate "$MOUNT/$APP_NAME.app"
+stapler_retry validate "$MOUNT/$APP_NAME.app"
 output="$(spctl -a -vv "$MOUNT/$APP_NAME.app" 2>&1 || true)"
 grep -q 'accepted' <<<"$output" && grep -q 'Notarized Developer ID' <<<"$output" || {
     echo "$output" >&2

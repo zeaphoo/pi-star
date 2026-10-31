@@ -116,7 +116,9 @@ Linux/Windows/macOS 做桌面壳编译检查。
 
 签名时会给内置 Node 加 JIT/unsigned-memory entitlements（见
 `packaging/macos/entitlements.plist`），并对 `pi-runtime` 下所有 Mach-O 先签名，再签外层
-`.app`；公证脚本会公证 app、钉票、重建 dmg、再公证 dmg。
+`.app`；公证脚本会公证 app、钉票、重建 dmg、再公证 dmg。`stapler` 从 Apple CloudKit 取票时
+可能遇到瞬时网络错误（Error 65/68、NSURLError -1005）；脚本默认重试 4 次、间隔 20 秒，可用
+`STAPLER_RETRIES` / `STAPLER_RETRY_DELAY` 调整。
 
 ## Windows 的 bash
 
