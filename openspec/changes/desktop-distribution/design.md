@@ -79,8 +79,9 @@ Linux 产物 rename 为 `pi-star-app_*` 并重写 deb `Package:`；Windows `PiSt
 ### 5. CI / Release
 
 - `ci.yml`：Rust workspace + app 单测/格式、UI 类型/单测/构建、三平台 `cargo check` + app 测试。
-- `release.yml`：`v*` 或手动触发；verify 校验版本/tag；Linux/Windows/macOS 矩阵构建；macOS
-  可选导入证书并公证；`softprops/action-gh-release` 汇总 artifacts。
+- `release.yml`：`v*` 或手动触发；verify 校验版本/tag 与 `CHANGELOG.md` 版本段落；
+  Linux/Windows/macOS 矩阵构建；macOS 可选导入证书并公证；`scripts/release-notes.sh` 抽取
+  CHANGELOG 作为 Release 正文，`softprops/action-gh-release` 汇总 artifacts。
 - 缓存：Rust 按 workspace，`app/pi-runtime` 按平台 + `packaging/pi-runtime.json` 哈希。
 
 ### 6. Windows bash

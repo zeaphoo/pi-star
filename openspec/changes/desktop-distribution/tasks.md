@@ -20,6 +20,7 @@
 - [x] 3.1 新增 `.github/workflows/ci.yml`：Rust workspace/app、UI、三平台编译检查
 - [x] 3.2 新增 `.github/workflows/release.yml`：版本/tag 闸门、三平台矩阵、artifact 汇总与 Release
 - [x] 3.3 `check-desktop-version.sh` 支持 tag 校验；Release verify 使用该脚本
+- [x] 3.4 新增标准 `CHANGELOG.md` 与 `scripts/release-notes.sh`；Release verify 校验版本段落，正文从 CHANGELOG 抽取
 
 ## 4. Windows bash
 

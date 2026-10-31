@@ -66,7 +66,7 @@ jobs:
       - name: Check packaging scripts
         run: |
           node --check scripts/prepare-pi-runtime.mjs
-          bash -n scripts/package-desktop.sh scripts/package-linux-app.sh             scripts/package-windows.sh scripts/package-mac.sh scripts/notarize-mac.sh             scripts/check-desktop-version.sh
+          bash -n scripts/*.sh
 
   desktop-check:
     name: Desktop compile check (${{ matrix.os }})

@@ -62,7 +62,8 @@ pi-star SHALL 从 `PI_STAR_PI_RUNTIME`、可执行文件同目录的 `pi-runtime
 ### Requirement: CI 与 Release
 
 CI SHALL 在 Linux/Windows/macOS 上校验 Rust、桌面壳与 UI；Release SHALL 由 `v*` 标签或手动触发，
-构建三平台产物并上传 GitHub Release。发布 tag MUST 与版本清单一致。
+构建三平台产物并上传 GitHub Release。发布 tag MUST 与版本清单一致，且 `CHANGELOG.md` MUST 存在
+对应 `## [<version>]` 段落，Release 正文从该段抽取。
 
 #### Scenario: 标签发布
 
@@ -71,7 +72,7 @@ CI SHALL 在 Linux/Windows/macOS 上校验 Rust、桌面壳与 UI；Release SHAL
 
 #### Scenario: 版本不一致
 
-- **WHEN** tag 与 `app/tauri.conf.json` 版本不同
+- **WHEN** tag 与 `app/tauri.conf.json` 版本不同，或 CHANGELOG 缺少该版本
 - **THEN** verify job 失败，不构建任何产物
 
 ### Requirement: macOS 签名与公证

@@ -222,8 +222,9 @@ UI 热更新：先 `cd ui && npm run dev`（30152），再在 debug 构建下设
 ./scripts/package-mac.sh              # .app + dmg
 ```
 
-脚本顺序为：准备 `pi-runtime`（Node + pi + agent-extension）→ 构建 UI → 构建内嵌 UI 的
-release `pi-star` → Tauri 安装包。`pi-star` 与 `pi-runtime/` 通过临时 `bundle.resources`
+脚本顺序为：准备 `pi-runtime`（Node + pi + agent-extension + Windows MinGit）→ 构建 UI →
+构建内嵌 UI 的 release `pi-star` → Tauri 安装包。发布前先把变更写入 `CHANGELOG.md` 的
+`## [<version>]` 段；Release 正文由该段生成。`pi-star` 与 `pi-runtime/` 通过临时 `bundle.resources`
 注入，Linux 落在 `/usr/lib/PiStar/`，macOS 落在 `Contents/Resources/`，Windows 与
 `PiStarApp.exe` 同目录。产物在 `dist/<os>/`。Linux **只发布桌面应用**，不再有单独的服务包。
 

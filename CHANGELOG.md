@@ -1,0 +1,52 @@
+# Changelog
+
+本项目的所有重要变更记录在此文件。
+
+格式遵循 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)，版本号遵循
+[语义化版本](https://semver.org/lang/zh-CN/)。发布时由 `scripts/release-notes.sh` 抽取对应
+版本段落作为 GitHub Release 正文；发布流水线会校验该段落存在。
+
+## [Unreleased]
+
+## [0.1.0] - 2026-10-31
+
+首个公开版本。
+
+### Added
+
+- **Rust 后端**：用 Axum 实现 pi-web 的会话、Agent、文件、Git、终端、模型/Provider、
+  MCP、skills、plugins、subagents、认证与安全接口，运行时使用 `~/.pi/agent` 数据。
+- **Web UI**：从 pi-web 迁移的 Vite/React 界面，保留主题、i18n、PWA、会话树、聊天、文件
+  预览、终端和设置面板。
+- **Agent 运行时**：按会话选择 `rpc`（`pi --mode rpc`）或进程内 `quick`（QuickPI）后端；
+  SSE 事件、prompt 队列、工具循环、压缩、分支、子代理、扩展 UI。
+- **桌面应用**：独立 Tauri 2 壳位于 `app/`，单实例、splash/错误页、原生主窗口、托盘、
+  开机自启动、关窗到托盘、崩溃退避重启与进程树清理。
+- **内嵌前端**：release 构建用 `rust-embed` 把 `ui/dist` 编入 `pi-star`；debug 读磁盘，
+  `--ui-dir` 可显式覆盖。
+- **自包含 pi 运行时**：安装包携带固定版本的 Node、`@earendil-works/pi-coding-agent`
+  生产依赖和 `agent-extension/`；Windows 额外携带 MinGit，目标机器无需预装 Node/pi/Git。
+- **跨平台打包**：Linux deb/AppImage、Windows NSIS/MSI/portable zip、macOS .app/dmg；
+  macOS 支持 Developer ID 签名与可选公证。
+- **CI / Release**：GitHub Actions 在 Linux/Windows/macOS 做编译与测试检查；`v*` 标签触发
+  三平台构建并创建 GitHub Release。
+- **Windows bash**：优先使用内置 MinGit，其次探测系统 Git for Windows，支持 `PI_STAR_BASH`
+  覆盖，排除 WSL 启动器，不回退 cmd.exe。
+
+### Changed
+
+- **静态资源服务**：`ServeDir` 替换为内置/磁盘双来源处理器，保留 SPA 回退、缓存头、
+  HEAD 与路径穿越防护；`/api/health` 增加 `assets` 信息。
+- **进程生命周期**：新增 `--exit-on-stdin-eof`；stdout 只输出 `pi-star:` 生命周期事件，
+  日志写 stderr；端口占用输出 `bind-failed` 并以退出码 2 退出。
+- **桌面端口**：默认固定 `30151`（可用桌面偏好覆盖），保持 webview origin 稳定。
+- **Linux 分发**：只发布桌面应用，不再单独发布 service 包。
+
+### Fixed
+
+- 桌面壳被 `SIGKILL` 时通过 stdin EOF 与进程组/Job Object 清理子进程树，避免孤儿进程。
+- 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
+- Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
+
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0

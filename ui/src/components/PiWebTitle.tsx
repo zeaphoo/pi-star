@@ -122,6 +122,17 @@ export function PiWebTitle({ onWidthChange }: {
       aria-label={t("sidebar.brandLabel", { app: appVersion ?? "0.0.0", pi: piVersion ?? "0.0.0" })}
       onClick={handleClick}
     >
+      <svg className="sidebar-brand-logo" viewBox="0 0 512 512" aria-hidden="true">
+        <rect width="512" height="512" rx="116" fill="#0e2925" />
+        <rect x="16" y="16" width="480" height="480" rx="102" fill="none" stroke="#24423d" strokeWidth="4" />
+        <path
+          d="M 256.00 74.00 L 307.25 189.54 L 432.33 202.49 L 338.97 287.05 L 365.13 410.51 L 256.00 347.00 L 146.87 410.51 L 173.03 287.05 L 79.67 202.49 L 204.75 189.54 Z"
+          fill="#f6e7bd"
+          stroke="#f6e7bd"
+          strokeWidth="20"
+          strokeLinejoin="round"
+        />
+      </svg>
       {text}
     </button>
   );

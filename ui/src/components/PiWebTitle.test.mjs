@@ -70,7 +70,13 @@ test("the brand is a button named for what its click shows, with the brand's tex
   const html = renderToStaticMarkup(React.createElement(I18nProvider, null, React.createElement(PiWebTitle)));
   const app = process.env.NEXT_PUBLIC_APP_VERSION ?? "0.0.0";
   const pi = process.env.NEXT_PUBLIC_PI_VERSION ?? "0.0.0";
-  assert.equal(html, `<button type="button" class="sidebar-brand" aria-label="Pi Star, versions: web ${app}, pi ${pi}">Pi Star</button>`);
+  assert.match(
+    html,
+    new RegExp(
+      `^<button type="button" class="sidebar-brand" aria-label="Pi Star, versions: web ${app}, pi ${pi}"><svg class="sidebar-brand-logo" viewBox="0 0 512 512" aria-hidden="true">.*</svg>Pi Star</button>$`,
+    ),
+  );
+  assert.doesNotMatch(html, /<link|preload/, "the inline mark needs no image preload");
   assert.doesNotMatch(html, /style=/, "no inline styles: its look is app/sidebar.css's");
   // In every language, with the visible name in it.
   for (const locale of ["en", "zh-CN", "zh-TW"]) {
@@ -93,11 +99,16 @@ test("the brand's text sits in the chevron column and is never cut at the sideba
   assert.match(brand, /(?:^|\s)font-family: var\(--font-mono\);/);
   assert.match(brand, /(?:^|\s)font-size: 15px;/);
   assert.match(css, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand \{\s*font-size: 11px;\s*\}/);
+  assert.match(css, /\.sidebar-brand-logo \{[^}]*width: 16px;[^}]*height: 16px;/);
+  assert.match(css, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand\.is-version \.sidebar-brand-logo \{\s*display: none;\s*\}/);
   const room = SIDEBAR_MIN_WIDTH - 1 - 36 - 36;
-  const box = (text, fontSize) => marginLeft + 2 * paddingLeft + text.length * 0.6 * fontSize;
-  assert.ok(box(BRAND_TEXT, 15) <= room, "the brand at 15px");
-  // pi-star's UI version, with room for a longer pi version.
+  const logo = 16 + 6;
+  const box = (text, fontSize, withLogo = true) =>
+    marginLeft + 2 * paddingLeft + (withLogo ? logo : 0) + text.length * 0.6 * fontSize;
+  assert.ok(box(BRAND_TEXT, 15) <= room, "the brand and logo at 15px");
+  // pi-star's UI version, with room for a longer pi version. At the narrowest
+  // header the version state hides the logo (see the CSS rule above).
   const versions = brandVersionText(packageJson.version, process.env.PI_STAR_PI_VERSION ?? "1.4.0");
-  assert.ok(box(versions, 11) <= room, `${versions} at 11px`);
-  assert.ok(box(`${versions}0`, 11) <= room, "and a digit more");
+  assert.ok(box(versions, 11, false) <= room, `${versions} at 11px`);
+  assert.ok(box(`${versions}0`, 11, false) <= room, "and a digit more");
 });

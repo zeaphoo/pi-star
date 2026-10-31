@@ -84,11 +84,20 @@ Linux/Windows/macOS 做桌面壳编译检查。
 
 `.github/workflows/release.yml` 由 `v*` 标签触发（也可手动触发）：
 
-1. 校验 tag 与版本清单；
+1. 校验 tag、版本清单，以及 `CHANGELOG.md` 中存在 `## [<version>]` 段落；
 2. Linux 产出 deb + AppImage；
 3. Windows 产出 NSIS、MSI 与 portable zip；
 4. macOS 分别在 Intel/Apple Silicon runner 产出 dmg；
-5. 汇总并创建 GitHub Release（手动触发时 `publish=false` 只上传 artifacts）。
+5. 用 `scripts/release-notes.sh` 抽取 CHANGELOG 段落作为正文，汇总并创建 GitHub Release
+   （手动触发时 `publish=false` 只上传 artifacts）。
+
+发布前先更新 `CHANGELOG.md`：
+
+```markdown
+## [0.1.0] - 2026-10-31
+### Added
+- ...
+```
 
 ### macOS 签名与公证（可选）
 

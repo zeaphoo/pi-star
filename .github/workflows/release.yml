@@ -67,6 +67,8 @@ jobs:
           fi
           echo "publish=$publish" >> "$GITHUB_OUTPUT"
           echo "version=$version tag=$tag publish=$publish"
+      - name: Check CHANGELOG has this version
+        run: ./scripts/release-notes.sh "${{ steps.version.outputs.version }}" > /dev/null
 
   linux:
     name: Linux app (deb + AppImage)
@@ -225,15 +227,18 @@ jobs:
     if: needs.verify.outputs.publish == 'true'
     runs-on: ubuntu-22.04
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with:
           path: artifacts
+      - name: Extract release notes
+        run: ./scripts/release-notes.sh "${{ needs.verify.outputs.version }}" > release-notes.md
       - name: List artifacts
         run: find artifacts -type f -printf '%p %s bytes\n' | sort
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
           name: Pi Star ${{ needs.verify.outputs.version }}
-          generate_release_notes: true
+          body_path: release-notes.md
           prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
           files: artifacts/**/*

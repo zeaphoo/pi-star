@@ -1028,8 +1028,11 @@ a.session-tree-main {
    beside the two cells at the sidebar's 180px minimum, and at 11px so do
    the versions with a digit to spare). */
 .sidebar-brand {
+  display: inline-flex;
   flex: none;
+  align-items: center;
   align-self: center;
+  gap: 6px;
   min-width: 6ch;
   margin: 0 0 0 7px;
   padding: 2px 4px;
@@ -1045,6 +1048,15 @@ a.session-tree-main {
   text-align: left;
   white-space: nowrap;
   cursor: default;
+}
+
+.sidebar-brand-logo {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  border-radius: 4px;
+  pointer-events: none;
+  user-select: none;
 }
 
 .sidebar-brand.is-version {
@@ -1095,6 +1107,12 @@ a.session-tree-main {
 
 .sidebar-header[data-fit="2"] .sidebar-brand {
   font-size: 11px;
+}
+
+/* The versions are long; at the narrowest header the logo gives way so the
+   click's text still fits beside New and Search. */
+.sidebar-header[data-fit="2"] .sidebar-brand.is-version .sidebar-brand-logo {
+  display: none;
 }
 
 .sidebar-header[data-fit="1"] .sidebar-new-label,

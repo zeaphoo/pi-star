@@ -15,7 +15,7 @@ Windows/macOS 安装包和 CI/Release 流水线。
 - **macOS 签名/公证**：有 secrets 时对内置 Node/原生模块先签名，再签 `.app`，公证 app 与 dmg；
   无 secrets 时产出未签名 dmg。
 - **CI / Release**：新增 GitHub Actions，CI 在 Linux/Windows/macOS 编译检查并跑测试；Release
-  由 `v*` 触发，汇总三平台产物并创建 GitHub Release。
+  由 `v*` 触发，校验 `CHANGELOG.md` 版本段落，汇总三平台产物并创建 GitHub Release。
 - **Windows bash**：按 PI-Desktop 的策略探测 Git for Windows（`PI_STAR_BASH` → git.exe 推导 →
   标准安装目录 → `where bash.exe` 排除 WSL），使用 `--noprofile --norc -c`。
 - **版本固定**：`packaging/pi-runtime.json` 固定 Node/pi 版本；发布 tag 必须与三个版本清单一致。
