@@ -23,6 +23,7 @@ use pi_star_agent::types::AgentToolResult;
 use pi_star_ai::model::Model;
 use pi_star_ai::provider::Provider;
 use pi_star_ai::providers::anthropic::AnthropicProvider;
+use pi_star_ai::providers::faux::{FauxProvider, FauxScript};
 use pi_star_ai::providers::openai_completions::OpenAiCompletionsProvider;
 use pi_star_ai::providers::openai_responses::OpenAiResponsesProvider;
 use pi_star_ai::types::{ImageContent, ThinkingLevel, ToolCall};
@@ -58,6 +59,7 @@ pub struct HarnessBackend {
     running: AtomicBool,
     model: parking_lot::RwLock<Option<ModelDef>>,
     thinking: parking_lot::RwLock<String>,
+    system_prompt: String,
 }
 
 impl HarnessBackend {
@@ -128,6 +130,7 @@ impl HarnessBackend {
             .collect();
         let system_prompt =
             system_prompt.unwrap_or_else(|| super::build_system_prompt(config, &cwd, &tool_names));
+        let stored_prompt = system_prompt.clone();
         let thinking = read_session(path)
             .ok()
             .and_then(|file| {
@@ -189,6 +192,7 @@ impl HarnessBackend {
             running: AtomicBool::new(false),
             model: parking_lot::RwLock::new(Some(model_def)),
             thinking: parking_lot::RwLock::new(thinking),
+            system_prompt: stored_prompt,
         }))
     }
 
@@ -212,11 +216,11 @@ impl HarnessBackend {
             .unwrap_or_default()
     }
 
-    pub fn state_json(&self) -> Value {
+    pub fn state_json(&self, include_prompt: bool) -> Value {
         let model = self.model.read().clone();
         let thinking = self.thinking.read().clone();
         let running = self.is_running();
-        json!({
+        let mut value = json!({
             "running": running,
             "sessionId": self.id,
             "sessionFile": self.path.to_string_lossy(),
@@ -237,7 +241,11 @@ impl HarnessBackend {
             "contextUsage": { "percent": Value::Null, "contextWindow": 0, "tokens": Value::Null },
             "totalActiveMs": 0,
             "lastUsage": {},
-        })
+        });
+        if include_prompt {
+            value["systemPrompt"] = Value::String(self.system_prompt.clone());
+        }
+        value
     }
 
     pub fn tool_entries(&self) -> Value {
@@ -256,7 +264,7 @@ impl HarnessBackend {
     pub async fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
         let kind = command.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
-            "get_state" => Ok(self.state_json()),
+            "get_state" => Ok(self.state_json(true)),
             "get_session_stats" => {
                 let stats = self
                     .lane
@@ -357,7 +365,6 @@ impl HarnessBackend {
                 let this = self.clone();
                 tokio::spawn(async move {
                     this.running.store(true, Ordering::SeqCst);
-                    this.emit(json!({ "type": "agent_start" }));
                     let result = this.lane.prompt_text(&text, images).await;
                     this.running.store(false, Ordering::SeqCst);
                     let aborted = result
@@ -480,7 +487,7 @@ impl HarnessBackend {
                 "enabled": command.get("enabled").and_then(Value::as_bool).unwrap_or(true),
             })),
             "abort_compaction" => Ok(json!({ "cancelled": true })),
-            "reload" => Ok(self.state_json()),
+            "reload" => Ok(self.state_json(true)),
             "extension_ui_response" | "extension_ui_input" => Ok(Value::Null),
             other => Err(anyhow!("unknown command: {other}")),
         }
@@ -629,6 +636,9 @@ fn build_providers(config: &Config, _cwd: &Path) -> Result<Vec<Arc<dyn Provider>
                 http.clone(),
                 model_list.clone(),
             )),
+            // Tests and offline harness fixtures can use the faux wire.
+            "faux" => FauxProvider::with_models(FauxScript::new(), model_list.clone())
+                as Arc<dyn Provider>,
             _ => continue,
         };
         out.push(Arc::new(NamedProvider {

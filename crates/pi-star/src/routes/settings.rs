@@ -1104,11 +1104,14 @@ pub async fn subagent_action(
             let Some(message) = body.get("message").and_then(Value::as_str) else {
                 return bad_request("message required");
             };
-            match runtime.send(&json!({
-                "type": "prompt",
-                "message": message,
-                "streamingBehavior": "steer",
-            })) {
+            match runtime
+                .send(&json!({
+                    "type": "prompt",
+                    "message": message,
+                    "streamingBehavior": "steer",
+                }))
+                .await
+            {
                 Ok(_) => no_store(json!({"ok": true})),
                 Err(error) => internal(error),
             }

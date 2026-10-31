@@ -98,17 +98,23 @@ pub async fn new_session(
         Err(error) => return internal(error),
     };
     if let (Some(provider), Some(model_id)) = (body.provider.as_ref(), body.model_id.as_ref()) {
-        let _ = runtime.send(&json!({
-            "type": "set_model",
-            "provider": provider,
-            "modelId": model_id,
-        }));
+        let _ = runtime
+            .send(&json!({
+                "type": "set_model",
+                "provider": provider,
+                "modelId": model_id,
+            }))
+            .await;
     }
     if let Some(level) = body.thinking_level {
-        let _ = runtime.send(&json!({"type": "set_thinking_level", "level": level}));
+        let _ = runtime
+            .send(&json!({"type": "set_thinking_level", "level": level}))
+            .await;
     }
     if let Some(tool_names) = body.tool_names {
-        let _ = runtime.send(&json!({"type": "set_tools", "toolNames": tool_names}));
+        let _ = runtime
+            .send(&json!({"type": "set_tools", "toolNames": tool_names}))
+            .await;
     }
     let kind = body.kind.as_deref().unwrap_or("prompt");
     let data = if kind == "ensure_session" {
@@ -125,7 +131,7 @@ pub async fn new_session(
         for (key, value) in body.rest {
             command.insert(key, value);
         }
-        match runtime.send(&Value::Object(command)) {
+        match runtime.send(&Value::Object(command)).await {
             Ok(data) => data,
             Err(error) => return internal(error),
         }
@@ -196,7 +202,7 @@ pub async fn command(
         Ok(runtime) => runtime,
         Err(_) => return not_found("Session not found"),
     };
-    match runtime.send(&body) {
+    match runtime.send(&body).await {
         Ok(data) => no_store(json!({ "success": true, "data": data })),
         Err(error) => (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
@@ -233,7 +239,10 @@ pub async fn events(
         Ok(runtime) => runtime,
         Err(_) => return not_found("Session not found"),
     };
-    let mut receiver = runtime.subscribe();
+    let mut receiver = match runtime.subscribe().await {
+        Ok(receiver) => receiver,
+        Err(error) => return internal(error),
+    };
     let streaming = runtime
         .state_json(false)
         .get("isStreaming")

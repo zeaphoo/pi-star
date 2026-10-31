@@ -13,9 +13,10 @@ use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
-use tokio::sync::{broadcast, oneshot};
+use tokio::sync::{OnceCell, broadcast, oneshot};
 use tokio_util::sync::CancellationToken;
 
+use crate::agent::harness_backend::HarnessBackend;
 use crate::config::Config;
 use crate::file_access::AllowedRoots;
 use crate::models::{ModelDef, find_model, load_models};
@@ -70,6 +71,10 @@ pub struct SessionRuntime {
     mcp: tokio::sync::Mutex<Option<crate::mcp_runtime::McpRuntime>>,
     mcp_tool_list: Mutex<Vec<(String, String, Value)>>,
     started_at: Instant,
+    /// Harness-backed engine (`PI_STAR_AGENT_BACKEND=merged`), initialized on
+    /// the first async command.
+    harness: OnceCell<Arc<HarnessBackend>>,
+    merged: bool,
 }
 
 pub struct AgentRegistry {
@@ -79,10 +84,18 @@ pub struct AgentRegistry {
     pub config: Config,
     pub roots: Arc<AllowedRoots>,
     pub client: reqwest::Client,
+    merged: bool,
 }
 
 impl AgentRegistry {
     pub fn new(config: Config, roots: Arc<AllowedRoots>) -> Self {
+        let merged = std::env::var("PI_STAR_AGENT_BACKEND")
+            .map(|value| value == "merged")
+            .unwrap_or(false);
+        Self::with_backend(config, roots, merged)
+    }
+
+    pub fn with_backend(config: Config, roots: Arc<AllowedRoots>, merged: bool) -> Self {
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(600))
             .build()
@@ -94,6 +107,7 @@ impl AgentRegistry {
             config,
             roots,
             client,
+            merged,
         }
     }
 
@@ -199,6 +213,8 @@ impl AgentRegistry {
             mcp: tokio::sync::Mutex::new(None),
             mcp_tool_list: Mutex::new(Vec::new()),
             started_at: Instant::now(),
+            harness: OnceCell::new(),
+            merged: self.merged,
         });
         self.runtimes.lock().insert(id, runtime.clone());
         Ok(runtime)
@@ -259,16 +275,33 @@ impl AgentRegistry {
 }
 
 impl SessionRuntime {
-    pub fn subscribe(&self) -> broadcast::Receiver<Value> {
-        self.sender.subscribe()
+    pub async fn subscribe(&self) -> Result<broadcast::Receiver<Value>> {
+        if self.merged {
+            return Ok(self.harness().await?.subscribe());
+        }
+        Ok(self.sender.subscribe())
+    }
+
+    async fn harness(&self) -> Result<&Arc<HarnessBackend>> {
+        self.harness
+            .get_or_try_init(|| async {
+                HarnessBackend::open(&self.config, self.roots.clone(), &self.path).await
+            })
+            .await
     }
 
     pub fn is_running(&self) -> bool {
+        if let Some(harness) = self.harness.get() {
+            return harness.is_running();
+        }
         self.running.load(Ordering::SeqCst)
     }
 
     /// The transcript the wrapper holds, which may be newer than the file.
     pub fn entries_snapshot(&self) -> Vec<Value> {
+        if let Some(harness) = self.harness.get() {
+            return harness.entries_snapshot();
+        }
         self.state.lock().entries.clone()
     }
 
@@ -279,6 +312,9 @@ impl SessionRuntime {
     }
 
     pub fn state_json(&self, include_prompt: bool) -> Value {
+        if let Some(harness) = self.harness.get() {
+            return harness.state_json(include_prompt);
+        }
         let state = self.state.lock();
         let model = state.model.as_ref().map(|model| {
             json!({
@@ -369,6 +405,9 @@ impl SessionRuntime {
     }
 
     pub fn session_name(&self) -> Option<String> {
+        if let Some(harness) = self.harness.get() {
+            return harness.session_name();
+        }
         let state = self.state.lock();
         state
             .entries
@@ -394,6 +433,15 @@ impl SessionRuntime {
     }
 
     pub fn abort(&self) -> Value {
+        if let Some(harness) = self.harness.get() {
+            let harness = harness.clone();
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                handle.spawn(async move {
+                    let _ = harness.send(&json!({"type": "abort"})).await;
+                });
+            }
+            return json!({ "steering": [], "followUp": [] });
+        }
         if let Some(cancel) = self.cancel.lock().take() {
             cancel.cancel();
         }
@@ -432,7 +480,14 @@ impl SessionRuntime {
         json!({ "steering": steering, "followUp": follow_up })
     }
 
-    pub fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
+    pub async fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
+        if self.merged {
+            return self.harness().await?.send(command).await;
+        }
+        self.send_legacy(command)
+    }
+
+    fn send_legacy(self: &Arc<Self>, command: &Value) -> Result<Value> {
         self.touch();
         let command_type = command.get("type").and_then(Value::as_str).unwrap_or("");
         match command_type {
@@ -1137,11 +1192,19 @@ impl SessionRuntime {
                 };
             }
         };
-        let mut receiver = child.subscribe();
-        let _ = child.send(&json!({
-            "type": "prompt",
-            "message": prompt,
-        }));
+        let Ok(mut receiver) = child.subscribe().await else {
+            return tools::ToolOutput {
+                content: "The subagent session could not be started.".to_string(),
+                is_error: true,
+                details: json!({}),
+            };
+        };
+        let _ = child
+            .send(&json!({
+                "type": "prompt",
+                "message": prompt,
+            }))
+            .await;
         let mut streamed = String::new();
         let deadline = tokio::time::sleep(std::time::Duration::from_secs(600));
         tokio::pin!(deadline);
@@ -1612,6 +1675,54 @@ pub fn new_session_id() -> String {
 mod tests {
     use super::*;
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn merged_backend_serves_get_state_through_the_harness() {
+        let temp = tempfile::tempdir().unwrap();
+        let config = Config::new(Some(temp.path().join("agent")), None).unwrap();
+        std::fs::create_dir_all(&config.agent_dir).unwrap();
+        std::fs::write(
+            config.models_path(),
+            json!({
+                "providers": {
+                    "faux": {
+                        "models": [{
+                            "id": "faux-model",
+                            "name": "Faux",
+                            "api": "faux",
+                            "contextWindow": 1000,
+                            "maxTokens": 100
+                        }]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            config.settings_path(),
+            json!({"defaultProvider": "faux", "defaultModel": "faux-model"}).to_string(),
+        )
+        .unwrap();
+        let cwd = temp.path().join("proj");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let registry = Arc::new(AgentRegistry::with_backend(
+            config.clone(),
+            Arc::new(AllowedRoots::new()),
+            true,
+        ));
+        let runtime = registry.create(&cwd).unwrap();
+        let state = runtime.send(&json!({"type": "get_state"})).await.unwrap();
+        assert_eq!(state["model"]["provider"], "faux");
+        assert_eq!(state["model"]["id"], "faux-model");
+        assert!(
+            state["systemPrompt"]
+                .as_str()
+                .is_some_and(|prompt| prompt.contains("coding agent"))
+        );
+        let _receiver = runtime.subscribe().await.unwrap();
+        assert!(!runtime.is_running());
+    }
+
     #[tokio::test]
     async fn extension_ui_request_resolves_with_the_browser_response() {
         let temp = tempfile::tempdir().unwrap();
@@ -1633,6 +1744,7 @@ mod tests {
         assert_eq!(runtime.pending_extension_ui_ids(), vec!["q1".to_string()]);
         runtime
             .send(&json!({"type": "extension_ui_response", "id": "q1", "confirmed": true}))
+            .await
             .unwrap();
         let response = handle.await.unwrap().unwrap();
         assert_eq!(response["confirmed"], true);
