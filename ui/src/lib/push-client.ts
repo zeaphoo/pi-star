@@ -5,6 +5,8 @@
  * path keeps working as a fallback.
  */
 
+import { isDesktop } from "./desktop";
+
 let activeSubscriptionPromise: Promise<boolean> | null = null;
 
 // Standard base64url → Uint8Array conversion for applicationServerKey.
@@ -20,7 +22,8 @@ function urlBase64ToUint8Array(base64String: string): Uint8Array<ArrayBuffer> {
 }
 
 export function isPushSupported(): boolean {
-  return typeof window !== "undefined"
+  return !isDesktop()
+    && typeof window !== "undefined"
     && "serviceWorker" in navigator
     && "PushManager" in window
     && "Notification" in window;

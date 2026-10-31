@@ -1,3 +1,4 @@
+import { isDesktop } from "./desktop";
 import { isBlockingExtensionUiRequest } from "./extension-ui-queue";
 import type { BlockingExtensionUiRequest, ExtensionUiRequest } from "./types";
 
@@ -49,7 +50,7 @@ export function claimExtensionAttentionNotification(
 function getBrowserEnvironment(): BrowserNotificationEnvironment {
   return {
     createWindowNotification: (title, options) => new Notification(title, options),
-    getServiceWorkerRegistration: "serviceWorker" in navigator
+    getServiceWorkerRegistration: !isDesktop() && "serviceWorker" in navigator
       ? () => navigator.serviceWorker.getRegistration()
       : null,
   };

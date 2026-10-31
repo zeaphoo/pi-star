@@ -4,14 +4,16 @@ mod debug_streams;
 #[cfg(test)]
 mod integration_tests;
 mod pi_rpc;
+mod protocol;
 mod routes;
 mod state;
+mod web_assets;
 
 use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
 use tokio_util::sync::CancellationToken;
 
@@ -39,9 +41,15 @@ struct Cli {
     /// Deprecated: the browser is no longer opened by default.
     #[arg(long = "no-open", hide = true)]
     _no_open: bool,
-    /// Directory containing index.html and assets (default ui/dist).
-    #[arg(long = "ui-dir", default_value = "ui/dist")]
-    ui_dir: PathBuf,
+    /// Directory containing index.html and assets.
+    ///
+    /// Omit it to use embedded assets in release builds and `ui/dist` in debug
+    /// builds. Supplying it forces disk assets in every profile.
+    #[arg(long = "ui-dir", env = "PI_STAR_UI_DIR")]
+    ui_dir: Option<PathBuf>,
+    /// Exit gracefully when stdin reaches EOF (used by the desktop shell).
+    #[arg(long = "exit-on-stdin-eof")]
+    exit_on_stdin_eof: bool,
     /// pi agent directory (default $PI_CODING_AGENT_DIR or ~/.pi/agent).
     #[arg(long = "agent-dir")]
     agent_dir: Option<PathBuf>,
@@ -49,20 +57,34 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let cli = Cli::parse();
+    let Cli {
+        port,
+        hostname,
+        open,
+        ui_dir,
+        exit_on_stdin_eof,
+        agent_dir,
+        ..
+    } = Cli::parse();
     tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "pi_star=info,tower_http=warn".into()),
         )
+        // stdout is reserved for machine-readable lifecycle events.
+        .with_writer(std::io::stderr)
         .init();
 
-    let host = cli
-        .hostname
+    let host = hostname
         .parse::<std::net::IpAddr>()
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
-    let addr = SocketAddr::new(host, cli.port);
-    let state = state::AppState::new(cli.agent_dir, cli.ui_dir, &cli.hostname).await?;
+    let addr = SocketAddr::new(host, port);
+    let state = state::AppState::new(agent_dir, ui_dir, &hostname).await?;
+    let assets = state.web_assets.describe();
+    protocol::emit(&protocol::assets_event(&assets));
+    if assets.files == 0 {
+        tracing::warn!(source = assets.source, "frontend assets are empty");
+    }
     let app = app::router(state.clone());
     let idle_timeout_ms = std::env::var("PI_WEB_IDLE_TIMEOUT_MS")
         .ok()
@@ -88,13 +110,20 @@ async fn main() -> Result<()> {
             }
         });
     }
-    let listener = tokio::net::TcpListener::bind(addr)
-        .await
-        .with_context(|| format!("bind {addr}"))?;
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            let kind = protocol::BindFailure::from_io(&error);
+            protocol::emit(&protocol::bind_failed_event(kind, addr));
+            tracing::error!(%addr, "failed to bind: {error}");
+            std::process::exit(2);
+        }
+    };
     let actual = listener.local_addr()?;
     state.set_server_port(actual.port());
+    protocol::emit(&protocol::listening_event(actual));
     tracing::info!("Pi Star is running at http://{actual}");
-    if cli.open {
+    if open {
         open_browser(&format!("http://{actual}"));
     }
 
@@ -108,6 +137,29 @@ async fn main() -> Result<()> {
             wait_for_shutdown_signal().await;
             tracing::info!("shutdown requested; closing connections");
             token.cancel();
+        });
+    }
+    if exit_on_stdin_eof {
+        let token = shutdown_token.clone();
+        tokio::spawn(async move {
+            use tokio::io::AsyncReadExt;
+            let mut stdin = tokio::io::stdin();
+            let mut buffer = [0u8; 256];
+            loop {
+                match stdin.read(&mut buffer).await {
+                    Ok(0) => {
+                        tracing::info!("stdin closed; shutting down");
+                        token.cancel();
+                        break;
+                    }
+                    Ok(_) => {}
+                    Err(error) => {
+                        tracing::warn!(%error, "stdin read failed; shutting down");
+                        token.cancel();
+                        break;
+                    }
+                }
+            }
         });
     }
     let graceful = {

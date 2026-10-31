@@ -20,6 +20,7 @@ use pi_star_core::ui_state::UiStateStore;
 
 use crate::debug_streams::DebugStreams;
 use crate::pi_rpc::PiRpcRegistry;
+use crate::web_assets::WebAssets;
 
 #[derive(Default)]
 pub struct AuthThrottle {
@@ -58,6 +59,8 @@ pub(crate) struct PendingOAuth {
 
 pub struct AppState {
     pub config: Config,
+    /// 前端静态资源来源（release 内置 / debug 磁盘 / `--ui-dir` 覆盖）。
+    pub web_assets: WebAssets,
     pub roots: Arc<AllowedRoots>,
     pub agents: Arc<AgentRegistry>,
     /// Standard pi sessions run through `pi --mode rpc`; QuickPI sessions stay
@@ -88,7 +91,7 @@ pub struct AppState {
 impl AppState {
     pub async fn new(
         agent_dir: Option<PathBuf>,
-        ui_dir: PathBuf,
+        ui_dir: Option<PathBuf>,
         hostname: &str,
     ) -> Result<Arc<Self>> {
         Self::new_with_password(agent_dir, ui_dir, hostname, None).await
@@ -96,11 +99,12 @@ impl AppState {
 
     pub(crate) async fn new_with_password(
         agent_dir: Option<PathBuf>,
-        ui_dir: PathBuf,
+        ui_dir: Option<PathBuf>,
         _hostname: &str,
         password: Option<String>,
     ) -> Result<Arc<Self>> {
-        let config = Config::new(agent_dir, Some(ui_dir))?;
+        let web_assets = WebAssets::resolve(ui_dir.as_deref()).map_err(anyhow::Error::msg)?;
+        let config = Config::new(agent_dir, ui_dir)?;
         std::fs::create_dir_all(&config.agent_dir).ok();
         let roots = Arc::new(AllowedRoots::new());
         let session_index = Arc::new(SessionIndex::new(&config));
@@ -156,6 +160,7 @@ impl AppState {
             .unwrap_or(600_000);
         Ok(Arc::new(Self {
             config,
+            web_assets,
             roots,
             agents,
             pi_rpc,

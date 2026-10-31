@@ -5,3 +5,12 @@
 .DS_Store
 
 /test-results
+
+# Tauri desktop shell (app/ has its own workspace)
+/app/target
+/app/gen
+/app/pi-star
+/app/pi-star.exe
+/app/.bundle-resources.json
+
+/app/permissions

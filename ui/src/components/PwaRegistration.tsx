@@ -1,10 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
+import { isDesktop } from "@/lib/desktop";
 
 export function PwaRegistration() {
   useEffect(() => {
-    if (!import.meta.env.PROD || !("serviceWorker" in navigator)) {
+    // The desktop shell has no service worker story (and its origin is a
+    // stable localhost port); skip registration there.
+    if (isDesktop() || !import.meta.env.PROD || !("serviceWorker" in navigator)) {
       return;
     }
 

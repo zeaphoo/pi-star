@@ -9,6 +9,8 @@ members = [
     "crates/pi-star",
 ]
 default-members = ["crates/pi-star"]
+# Tauri 桌面壳是独立 workspace，见 app/Cargo.toml。
+exclude = ["app"]
 
 [workspace.package]
 version = "0.1.0"

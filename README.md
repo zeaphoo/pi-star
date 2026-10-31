@@ -40,10 +40,14 @@ crates/pi-star-agent/   Agent loop、事件、队列、工具调用（源码融�
 crates/pi-star-tools/   内置工具与 ExecutionEnv（源码融合自 rpi）
 crates/pi-star-harness/ 会话状态机、压缩、system prompt、skills、harness loop
 crates/pi-star-core/    会话(v3)、配置、模型、文件/Git、终端、UiState、Agent 适配层
-crates/pi-star/         Axum 路由、SSE、静态资源、认证与安全中间件、CLI
-openspec/               本次迁移的 proposal/spec/design/tasks
-scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
+crates/pi-star/         Axum 路由、SSE、静态/内嵌资源、认证与安全中间件、CLI
+app/                    Tauri 2 桌面壳（独立 Cargo workspace）：启动并监督 pi-star
+openspec/               迁移与桌面化的 proposal/spec/design/tasks
+scripts/                UI 复制、桌面打包与版本一致性脚本
 ```
+
+release 构建会把 `ui/dist` 用 `rust-embed` 编进 `pi-star` 二进制；debug 构建仍读磁盘，
+方便前端迭代。桌面壳不包含业务代码，只负责启动、健康确认、监督、托盘和窗口。
 
 ### Agent 后端
 
@@ -97,14 +101,17 @@ npm install
 npm run build
 cd ..
 
-# 2. 构建并运行服务
+# 2. 构建并运行服务（release 会内嵌上一步的 ui/dist）
 cargo build --release
 ./target/release/pi-star --port 30151
 ```
 
-打开 <http://127.0.0.1:30151>。
+打开 <http://127.0.0.1:30151>。release 二进制可以单独复制到没有 `ui/dist` 的目录运行；
+debug 构建默认从仓库 `ui/dist` 读资源，改完前端只需重新 `npm run build`，不必重编 Rust。
 
-启动后只打印访问地址，不会自动打开浏览器；需要时用 `--open` 显式打开。
+启动后不会自动打开浏览器；需要时用 `--open` 显式打开。标准输出只包含以 `pi-star: ` 开头的
+生命周期事件（`assets`、`listening`、`bind-failed`），日志写标准错误；端口被占用时进程以
+退出码 2 退出。
 
 常用参数：
 
@@ -112,10 +119,14 @@ cargo build --release
 pi-star --port 8080 --hostname 0.0.0.0
 pi-star --open
 pi-star --ui-dir ui/dist --agent-dir ~/.pi/agent
+pi-star --port 0 --exit-on-stdin-eof   # 临时端口 + 父进程消失即退出
 ```
 
-对应环境变量：`PORT`、`PI_WEB_HOSTNAME`、`PI_STAR_OPEN_BROWSER`、`PI_WEB_PASSWORD`、
-`PI_WEB_ALLOWED_HOSTS`、`PI_CODING_AGENT_DIR`。
+`--ui-dir`（环境变量 `PI_STAR_UI_DIR`）是显式覆盖：给出时始终从磁盘读 UI，并在启动时校验
+`index.html`；不给出时 release 用内置资源、debug 用 `ui/dist`。
+
+对应环境变量：`PORT`、`PI_WEB_HOSTNAME`、`PI_STAR_OPEN_BROWSER`、`PI_STAR_UI_DIR`、
+`PI_WEB_PASSWORD`、`PI_WEB_ALLOWED_HOSTS`、`PI_CODING_AGENT_DIR`。
 
 ### 开发
 
@@ -137,7 +148,7 @@ cd ui && npm run typecheck && npm run build && npm test
 npm run smoke
 ```
 
-`npm test` 运行从 pi-web 迁移的 1648 个客户端单元测试（Node test runner + jiti）。
+`npm test` 运行从 pi-web 迁移的客户端单元测试（Node test runner + jiti）。
 浏览器回归测试会自己启动 `target/{debug,release}/pi-star`，先构建 UI 和二进制：
 
 ```bash
@@ -165,6 +176,55 @@ PI_WEB_DIR=/path/to/pi-web node scripts/sync-ui-from-pi-web.mjs
 
 脚本只复制从 `app/page.tsx`、`app/login/page.tsx`、`AppShell` 和 `PwaRegistration` 可达的
 客户端模块，不会把 pi-web 的 API Route 或 Node-only 模块带进来。
+
+## 桌面应用
+
+`app/` 是独立的 Tauri 2 workspace（根 workspace 已 `exclude = ["app"]`），负责：
+
+- 单实例启动，定位并启动随包分发的 `pi-star`；
+- 通过 stdout 事件 + `/api/health` 确认进程归属，监督崩溃并按 1/2/4/8/16 秒退避重启；
+- splash/错误页、原生装饰主窗口、托盘、开机自启动、关窗到托盘；
+- 退出时清理 pi-star 及其 Node/PTY 子进程树。
+
+主窗口加载 `http://127.0.0.1:<port>/`，端口默认 `30151` 并持久化在桌面偏好中。端口保持稳定是
+因为 webview 的 localStorage、cookie 和缓存都以 origin 为键；冲突时桌面壳会显示错误，不会静默
+换端口。主窗口使用系统原生装饰，且没有 Tauri IPC 权限；只有内置 splash 可以调用重试/退出/打开
+日志。
+
+开发：
+
+```bash
+# 终端 1：构建一次 debug pi-star
+cargo build -p pi-star
+# 终端 2：构建 UI（debug 壳从磁盘读）
+cd ui && npm run build && cd ..
+# 终端 3：运行桌面壳（会定位仓库 target/debug/pi-star）
+cd app && cargo tauri dev
+```
+
+UI 热更新：先 `cd ui && npm run dev`（30152），再在 debug 构建下设置
+`PI_STAR_DESKTOP_URL=http://127.0.0.1:30152/` 启动桌面壳；该模式跳过 spawn 与监督。
+
+打包（当前平台）：
+
+```bash
+./scripts/check-desktop-version.sh
+./scripts/package-desktop.sh
+# 只出 deb：TAURI_BUNDLES=deb ./scripts/package-desktop.sh
+```
+
+脚本顺序为 UI → 内嵌 UI 的 release `pi-star` → Tauri 安装包，并把 `pi-star` 通过临时
+`bundle.resources` 注入安装包。Linux deb/AppImage 产物在
+`app/target/release/bundle/`；Windows 需要 `mainBinaryName = PiStarApp` 以避免和 `pi-star.exe`
+大小写冲突。安装包当前未签名，首次运行可能提示未知发布者。
+
+桌面壳数据目录（Linux `~/.local/share/com.pistar.desktop/`）：
+
+- `desktop.toml`：`autostart`、`close_to_tray`、`port`；
+- `pi-star.log`：子进程 stderr 与事件日志（启动时超过 5 MB 轮转）；
+- `desktop.log`：壳自身的偏好/自启动错误。
+
+pi-star 的会话与设置仍在 `~/.pi/agent`，与浏览器形态、pi CLI 共用。
 
 ## 安全
 

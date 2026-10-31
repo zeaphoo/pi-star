@@ -28,6 +28,8 @@ fn write_fixture() -> Fixture {
         "<!doctype html><title>pi-star test</title>",
     )
     .unwrap();
+    std::fs::create_dir_all(ui_dir.join("assets")).unwrap();
+    std::fs::write(ui_dir.join("assets/app.js"), "console.log('fixture')\n").unwrap();
     std::fs::write(cwd.join("hello.txt"), "hello from the fixture\n").unwrap();
 
     let session_id = "test-session-0001";
@@ -69,7 +71,7 @@ async fn router(fixture: &Fixture) -> axum::Router {
 async fn router_with_password(fixture: &Fixture, password: Option<&str>) -> axum::Router {
     let state = AppState::new_with_password(
         Some(fixture.agent_dir.clone()),
-        fixture.ui_dir.clone(),
+        Some(fixture.ui_dir.clone()),
         "127.0.0.1",
         password.map(str::to_owned),
     )
@@ -107,6 +109,8 @@ async fn health_and_static_spa() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["name"], "pi-star");
+    assert_eq!(body["assets"]["source"], "disk");
+    assert!(body["assets"]["files"].as_u64().unwrap() >= 2);
 
     let (status, text) = call_text(
         app.clone(),
@@ -118,6 +122,32 @@ async fn health_and_static_spa() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(text.contains("pi-star test"));
+
+    let response = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("HEAD")
+                .uri("/login")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.is_empty());
+
+    let (status, text) = call_text(
+        app.clone(),
+        Request::builder()
+            .uri("/assets/app.js")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(text.contains("fixture"));
 
     let (status, body) = call(
         app,

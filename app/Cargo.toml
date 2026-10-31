@@ -1,0 +1,37 @@
+[package]
+name = "pi-star-app"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Pi Star desktop shell: launches and supervises pi-star, then opens its console"
+
+# 独立于仓库根的 crates workspace（根 workspace 已 exclude = ["app"]）
+[workspace]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = ["tray-icon"] }
+tauri-plugin-autostart = "2"
+tauri-plugin-single-instance = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+base64 = "0.22"
+
+# 信号处理与进程组（仅 Unix）
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+# Job Object：壳异常退出时一并结束 pi-star 子进程树（仅 Windows）
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"

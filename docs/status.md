@@ -33,7 +33,12 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
 | Debug / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
 | app-update | ✅ | 可配置发布源（`PI_STAR_UPDATE_URL`），12h 缓存，支持 `PI_STAR_SKIP_VERSION_CHECK=1` |
-| 测试 | ✅ | 全部 Rust workspace 单测/集成测试（含按会话后端切换）+ 1648 个客户端单测 + 完整浏览器 e2e（含 PTY 终端） |
+| 内嵌前端资源 | ✅ | release 用 `rust-embed` 编入 `ui/dist`；debug 读磁盘；`--ui-dir` 显式覆盖；健康响应暴露 `assets` |
+| 桌面运行契约 | ✅ | stdout `assets`/`listening`/`bind-failed` 事件、stderr 日志、bind 退出码 2、`--exit-on-stdin-eof` |
+| Tauri 桌面壳 | ✅ | 单实例、定位/启动/健康确认、退避重启、splash/错误页、托盘、自启动、关窗到托盘、进程树清理 |
+| 桌面 WebView | ✅ | 原生装饰、稳定端口、主窗口零 IPC、只读 `__PI_STAR__` 标记、桌面模式跳过 PWA/SW |
+| 桌面打包 | ✅ | `scripts/package-desktop.sh` 注入 `bundle.resources`；Linux deb 已验证携带 `PiStarApp` + `pi-star`；Windows/macOS 配置就绪 |
+| 测试 | ✅ | 全部 Rust workspace 单测/集成测试（含按会话后端切换、CLI 事件/stdin/端口）+ 1652 个客户端单测 + 完整浏览器 e2e（含 PTY 终端）+ `app/` 单测 |
 
 ## 运行时边界
 
@@ -48,6 +53,18 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 - **会话导出**：优先调用已安装的 `pi --export` 生成与 pi 相同的 HTML；`pi` 不可用时
   回退到 Rust 生成的简化 HTML。
 
+## 桌面形态
+
+`app/` 是独立的 Tauri 2 workspace：启动并监督随包分发的 `pi-star`，默认使用固定端口
+`127.0.0.1:30151`。固定端口用于保持 webview 的 origin 稳定（localStorage、cookie、缓存），
+端口冲突时失败并提示，不静默换端口。
+
+- 主窗口使用原生装饰，没有任何 Tauri IPC 权限；仅内置 splash 可调用 `desktop_action`。
+- release `pi-star` 内嵌 UI，安装包不再需要 `ui/dist`；debug 仍读磁盘。
+- 桌面偏好：`~/.local/share/com.pistar.desktop/desktop.toml`；日志：`pi-star.log`、`desktop.log`。
+- frameless 标题栏/`windowControl`、原生通知、自动更新、签名与公证仍是后续边界。
+
 ## 端口
 
 pi-star 默认监听 `127.0.0.1:30151`（Vite 开发服务器 30152），不与 pi-web 的 30141 冲突。
+桌面壳默认也使用 30151，可通过 `desktop.toml` 的 `port` 覆盖。

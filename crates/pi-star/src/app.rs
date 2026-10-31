@@ -8,7 +8,6 @@ use axum::response::IntoResponse;
 use axum::routing::{get, post, put};
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
-use tower_http::services::{ServeDir, ServeFile};
 use tower_http::trace::TraceLayer;
 
 use crate::auth::security_middleware;
@@ -185,15 +184,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         )
         .fallback(api_not_found);
 
-    let index = state.config.ui_dir.join("index.html");
-    let static_files = ServeDir::new(&state.config.ui_dir)
-        .precompressed_gzip()
-        .fallback(ServeFile::new(index));
-
     Router::new()
         .route("/manifest.webmanifest", get(routes::misc::manifest))
         .nest("/api", api)
-        .fallback_service(static_files)
+        .fallback(crate::web_assets::serve)
         .layer(middleware::from_fn(cache_headers))
         .layer(middleware::from_fn_with_state(
             state.clone(),
@@ -241,12 +235,18 @@ async fn cache_headers(
 }
 
 async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
+    let assets = state.web_assets.describe();
     axum::Json(serde_json::json!({
         "ok": true,
         "name": "pi-star",
         "version": env!("CARGO_PKG_VERSION"),
         "uptimeMs": state.started.elapsed().as_millis() as u64,
         "sessions": state.agents.running_ids().len() + state.pi_rpc.running_ids().len(),
+        "assets": {
+            "source": assets.source,
+            "path": assets.path,
+            "files": assets.files,
+        },
     }))
 }
 

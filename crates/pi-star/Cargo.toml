@@ -23,12 +23,13 @@ ignore.workspace = true
 mime_guess.workspace = true
 parking_lot.workspace = true
 reqwest.workspace = true
+rust-embed = { version = "8", features = ["interpolate-folder-path"] }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 tokio.workspace = true
 tokio-util.workspace = true
-tower-http = { version = "0.6", features = ["compression-gzip", "fs", "limit", "set-header", "trace"] }
+tower-http = { version = "0.6", features = ["compression-gzip", "limit", "set-header", "trace"] }
 tracing.workspace = true
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid.workspace = true

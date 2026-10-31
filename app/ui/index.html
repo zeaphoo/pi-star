@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Pi Star</title>
+    <style>
+      :root {
+        --bg: #0e2925;
+        --fg: #f4f1e8;
+        --muted: #9db6af;
+        --accent: #f6e7bd;
+        --danger: #ff8b8b;
+        --line: rgba(246, 231, 189, 0.16);
+      }
+      * { box-sizing: border-box; }
+      html, body { height: 100%; margin: 0; }
+      body {
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at 50% 0%, #173b34, var(--bg) 62%);
+        color: var(--fg);
+        font-family: ui-sans-serif, system-ui, "Segoe UI", "Noto Sans SC", sans-serif;
+        user-select: none;
+      }
+      main { width: min(560px, 88vw); text-align: center; padding: 18px 0; }
+      .mark { width: 64px; height: 64px; margin: 0 auto 18px; display: block; }
+      h1 { font-size: 21px; font-weight: 650; letter-spacing: 0.01em; margin: 0 0 8px; }
+      #status { margin: 0; color: var(--accent); font-size: 14px; min-height: 20px; }
+      #status.error { color: var(--danger); }
+      #hint {
+        margin: 10px 0 0;
+        color: var(--muted);
+        font-size: 13px;
+        line-height: 1.65;
+        display: none;
+        white-space: pre-wrap;
+      }
+      #hint.show { display: block; }
+      #detail {
+        margin: 16px 0 0;
+        padding: 12px 14px;
+        max-height: 34vh;
+        overflow: auto;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: rgba(0, 0, 0, 0.18);
+        color: var(--muted);
+        font: 12px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        text-align: left;
+        white-space: pre-wrap;
+        word-break: break-word;
+        display: none;
+        user-select: text;
+      }
+      #detail.show { display: block; }
+      #logPath {
+        margin-top: 12px;
+        color: var(--muted);
+        font: 11px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        word-break: break-all;
+        display: none;
+        user-select: text;
+      }
+      #logPath.show { display: block; }
+      #actions {
+        display: flex;
+        justify-content: center;
+        gap: 10px;
+        margin-top: 20px;
+        flex-wrap: wrap;
+      }
+      button {
+        appearance: none;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: rgba(246, 231, 189, 0.08);
+        color: var(--fg);
+        font: inherit;
+        font-size: 13px;
+        padding: 8px 16px;
+        cursor: pointer;
+        transition: background 0.12s, border-color 0.12s;
+      }
+      button:hover { background: rgba(246, 231, 189, 0.16); border-color: rgba(246, 231, 189, 0.34); }
+      button.primary { background: var(--accent); border-color: var(--accent); color: #14352f; font-weight: 650; }
+      button.primary:hover { background: #fff1cd; }
+      button[hidden] { display: none; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <svg class="mark" viewBox="0 0 512 512" aria-hidden="true">
+        <rect width="512" height="512" rx="116" fill="#0e2925" />
+        <rect x="16" y="16" width="480" height="480" rx="102" fill="none" stroke="#24423d" stroke-width="4" />
+        <path
+          d="M 256.00 74.00 L 307.25 189.54 L 432.33 202.49 L 338.97 287.05 L 365.13 410.51 L 256.00 347.00 L 146.87 410.51 L 173.03 287.05 L 79.67 202.49 L 204.75 189.54 Z"
+          fill="#f6e7bd" stroke="#f6e7bd" stroke-width="20" stroke-linejoin="round" />
+      </svg>
+      <h1>Pi Star</h1>
+      <p id="status">正在启动…</p>
+      <p id="hint"></p>
+      <pre id="detail"></pre>
+      <p id="logPath"></p>
+      <div id="actions">
+        <button id="retry" class="primary" type="button" hidden>重试</button>
+        <button id="openLog" type="button" hidden>打开日志</button>
+        <button id="quit" type="button">退出</button>
+      </div>
+    </main>
+
+    <script>
+      (function () {
+        var invoke = window.__TAURI__ && window.__TAURI__.core && window.__TAURI__.core.invoke
+
+        function action(name) {
+          if (!invoke) return
+          invoke('desktop_action', { action: name }).catch(function () {})
+        }
+
+        window.pistarSetStatus = function (status, hint, detail, failed, logPath) {
+          var statusEl = document.getElementById('status')
+          statusEl.textContent = status || ''
+          statusEl.classList.toggle('error', Boolean(failed))
+
+          var hintEl = document.getElementById('hint')
+          if (hint) {
+            hintEl.textContent = hint
+            hintEl.classList.add('show')
+          } else {
+            hintEl.textContent = ''
+            hintEl.classList.remove('show')
+          }
+
+          var detailEl = document.getElementById('detail')
+          if (detail) {
+            detailEl.textContent = detail
+            detailEl.classList.add('show')
+          } else {
+            detailEl.textContent = ''
+            detailEl.classList.remove('show')
+          }
+
+          var logEl = document.getElementById('logPath')
+          if (logPath) {
+            logEl.textContent = '日志：' + logPath
+            logEl.classList.add('show')
+          } else {
+            logEl.textContent = ''
+            logEl.classList.remove('show')
+          }
+
+          document.getElementById('retry').hidden = !failed
+          document.getElementById('openLog').hidden = !logPath
+        }
+
+        document.getElementById('retry').addEventListener('click', function () { action('retry') })
+        document.getElementById('openLog').addEventListener('click', function () { action('open-log') })
+        document.getElementById('quit').addEventListener('click', function () { action('quit') })
+
+        // Rust 侧可能在页面加载完成前就写好状态；页面脚本加载后再触发一次。
+        window.pistarReady && window.pistarReady()
+      })()
+    </script>
+  </body>
+</html>

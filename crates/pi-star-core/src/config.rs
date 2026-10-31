@@ -10,7 +10,10 @@ pub struct Config {
     /// pi's session files live here.
     pub sessions_dir: PathBuf,
     /// Directory containing the built UI (`index.html` + assets).
-    pub ui_dir: PathBuf,
+    ///
+    /// `None` means "use the build default": embedded assets in release, the
+    /// repository `ui/dist` in debug.
+    pub ui_dir: Option<PathBuf>,
 }
 
 impl Config {
@@ -20,7 +23,6 @@ impl Config {
             None => default_agent_dir()?,
         };
         let sessions_dir = agent_dir.join("sessions");
-        let ui_dir = ui_dir.unwrap_or_else(|| PathBuf::from("ui/dist"));
         Ok(Self {
             agent_dir,
             sessions_dir,

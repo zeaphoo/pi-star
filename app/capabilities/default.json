@@ -1,0 +1,8 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Pi Star desktop shell: only the built-in splash page may invoke shell actions",
+  "local": true,
+  "windows": ["splash"],
+  "permissions": ["allow-desktop-action"]
+}
