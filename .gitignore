@@ -14,3 +14,5 @@
 /app/.bundle-resources.json
 
 /app/permissions
+/app/pi-runtime
+/dist

@@ -1,0 +1,104 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  NODE_VERSION: '22.20.0'
+
+jobs:
+  rust:
+    name: Rust workspace + desktop shell
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ubuntu-22.04
+          workspaces: |
+            . -> target
+            app -> target
+      - name: Install Tauri system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libgtk-3-dev libxdo-dev patchelf file
+      - name: Check formatting
+        run: |
+          cargo fmt --all -- --check
+          (cd app && cargo fmt -- --check)
+      - name: Test workspace
+        run: cargo test --workspace
+      - name: Test desktop shell
+        run: cd app && cargo test
+
+  ui:
+    name: Web UI
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+      - name: Install
+        run: cd ui && npm ci
+      - name: Typecheck
+        run: cd ui && npm run typecheck
+      - name: Unit tests
+        run: cd ui && npm test
+      - name: Build
+        run: |
+          version="$(./scripts/check-desktop-version.sh)"
+          cd ui
+          PI_STAR_VERSION="$version" npm run build
+      - name: Check packaging scripts
+        run: |
+          node --check scripts/prepare-pi-runtime.mjs
+          bash -n scripts/package-desktop.sh scripts/package-linux-app.sh             scripts/package-windows.sh scripts/package-mac.sh scripts/notarize-mac.sh             scripts/check-desktop-version.sh
+
+  desktop-check:
+    name: Desktop compile check (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            label: linux
+          - os: windows-2022
+            label: windows
+          - os: macos-15
+            label: macos
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+          workspaces: |
+            . -> target
+            app -> target
+      - name: Install Tauri system dependencies (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libwebkit2gtk-4.1-dev libayatana-appindicator3-dev librsvg2-dev \
+            libgtk-3-dev libxdo-dev patchelf file
+      - name: Check and test
+        run: |
+          cargo check -p pi-star
+          cd app
+          cargo test

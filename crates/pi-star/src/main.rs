@@ -4,6 +4,7 @@ mod debug_streams;
 #[cfg(test)]
 mod integration_tests;
 mod pi_rpc;
+mod pi_runtime;
 mod protocol;
 mod routes;
 mod state;
@@ -74,6 +75,9 @@ async fn main() -> Result<()> {
         // stdout is reserved for machine-readable lifecycle events.
         .with_writer(std::io::stderr)
         .init();
+
+    // Prefer the bundled Node + pi package when the desktop installer ships it.
+    pi_runtime::apply_env();
 
     let host = hostname
         .parse::<std::net::IpAddr>()

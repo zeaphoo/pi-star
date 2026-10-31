@@ -689,11 +689,8 @@ impl PiRpcSession {
 }
 
 fn agent_extension_path() -> Option<PathBuf> {
-    if let Ok(value) = std::env::var("PI_STAR_AGENT_EXTENSION") {
-        let path = PathBuf::from(value);
-        if path.exists() {
-            return Some(path);
-        }
+    if let Some(path) = crate::pi_runtime::extension_path() {
+        return Some(path);
     }
     let mut candidates = Vec::new();
     if let Ok(exe) = std::env::current_exe() {
@@ -755,7 +752,7 @@ fn persisted_tool_selection(path: &Path) -> Option<Vec<String>> {
 pub struct PiRpcRegistry {
     pub config: Config,
     sessions: Arc<Mutex<HashMap<String, Arc<PiRpcSession>>>>,
-    cli: String,
+    command: crate::pi_runtime::PiCommand,
     extension: Option<PathBuf>,
     extra_env: Vec<(String, String)>,
     max_sessions: usize,
@@ -772,7 +769,7 @@ impl PiRpcRegistry {
         Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            cli: std::env::var("PI_STAR_PI_CLI").unwrap_or_else(|_| "pi".to_string()),
+            command: crate::pi_runtime::command(),
             extension: agent_extension_path(),
             extra_env: Vec::new(),
             max_sessions,
@@ -785,7 +782,10 @@ impl PiRpcRegistry {
         Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            cli: cli.into(),
+            command: crate::pi_runtime::PiCommand {
+                program: PathBuf::from(cli.into()),
+                prefix: Vec::new(),
+            },
             extension: agent_extension_path(),
             extra_env: Vec::new(),
             max_sessions: 8,
@@ -804,7 +804,10 @@ impl PiRpcRegistry {
         Self {
             config,
             sessions: Arc::new(Mutex::new(HashMap::new())),
-            cli: cli.into(),
+            command: crate::pi_runtime::PiCommand {
+                program: PathBuf::from(cli.into()),
+                prefix: Vec::new(),
+            },
             extension,
             extra_env,
             max_sessions,
@@ -952,8 +955,9 @@ impl PiRpcRegistry {
             .await
             .map_err(|error| anyhow!("start pi-star control channel: {error}"))?;
         let extension = self.extension.clone();
-        let mut command = Command::new(&self.cli);
+        let mut command = Command::new(&self.command.program);
         command
+            .args(&self.command.prefix)
             .arg("--mode")
             .arg("rpc")
             .arg("--session")

@@ -572,10 +572,11 @@ pub struct ExportQuery {
 async fn export_with_pi_cli(path: &Path) -> Option<String> {
     let temp = std::env::temp_dir().join(format!("pi-star-export-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&temp).ok()?;
-    let cli = std::env::var("PI_STAR_PI_CLI").unwrap_or_else(|_| "pi".to_string());
+    let pi = crate::pi_runtime::command();
     let output = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        tokio::process::Command::new(cli)
+        tokio::process::Command::new(&pi.program)
+            .args(&pi.prefix)
             .arg("--export")
             .arg(path)
             .current_dir(&temp)

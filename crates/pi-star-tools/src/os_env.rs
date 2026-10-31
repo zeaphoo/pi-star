@@ -7,12 +7,15 @@
 //! → `canonicalize`-style normalize, relative → `cwd.join`. No env-var or
 //! `~user` expansion. No symlink resolution (that's `canonical_path`).
 //!
-//! Shell detection (\[`getShellConfig`\]): explicit override → Windows
-//! git-bash probe (`ProgramFiles\Git\bin\bash.exe`, `ProgramFiles(x86)\…`) →
-//! `where bash.exe` → POSIX `/bin/bash` → `which bash` → `/bin/sh` fallback
-//! (POSIX only). **No cmd.exe fallback** on Windows — failure is
-//! `ExecutionError::ShellUnavailable`. Legacy WSL bash (`System32\bash.exe`)
-//! uses `bash -s` stdin transport to avoid argv parse bugs.
+//! Shell detection (\[`getShellConfig`\]): `with_shell_path` →
+//! `PI_STAR_BASH` / `PI_DESKTOP_BASH` → Windows Git-for-Windows probe (derive
+//! from `git.exe` on PATH, standard install dirs, then `where bash.exe`
+//! excluding the WSL launcher in `System32`) → POSIX `/bin/bash` →
+//! `which bash` → `/bin/sh` fallback (POSIX only). **No cmd.exe fallback** on
+//! Windows — failure is `ExecutionError::ShellUnavailable`. Git Bash and other
+//! native Windows bash use `--noprofile --norc -c`; legacy WSL bash
+//! (`System32\bash.exe`) keeps `bash -s` stdin transport to avoid argv parse
+//! bugs.
 //!
 //! Kill tree: Windows `taskkill /F /T /PID`; POSIX `kill -PG` (process group,
 //! since the child is spawned as its own group leader) with fallback to
@@ -199,6 +202,22 @@ impl OsExecutionEnv {
                 format!("Custom shell path not found: {}", sp.display()),
             ));
         }
+        // Environment override shared with the desktop shell / PI-Desktop.
+        for name in ["PI_STAR_BASH", "PI_DESKTOP_BASH"] {
+            if let Some(value) = std::env::var_os(name) {
+                let path = PathBuf::from(value);
+                if path.is_file() {
+                    return Ok(bash_shell_config(path));
+                }
+                return Err(ExecutionError::new(
+                    ExecutionErrorCode::ShellUnavailable,
+                    format!(
+                        "{name} points to '{}', which is not an executable file",
+                        path.display()
+                    ),
+                ));
+            }
+        }
         // Windows probe.
         #[cfg(windows)]
         {
@@ -287,12 +306,28 @@ fn file_url_to_path(url: &str) -> Option<String> {
 
 fn bash_shell_config(shell: PathBuf) -> ShellConfig {
     if is_legacy_wsl_bash_path(&shell) {
-        ShellConfig {
+        return ShellConfig {
             shell,
             args: vec!["-s".to_string()],
             transport: CommandTransport::Stdin,
+        };
+    }
+    #[cfg(windows)]
+    {
+        // Git Bash / MSYS2 / Cygwin: skip profiles so the app does not inherit
+        // an interactive shell's aliases or startup output.
+        ShellConfig {
+            shell,
+            args: vec![
+                "--noprofile".to_string(),
+                "--norc".to_string(),
+                "-c".to_string(),
+            ],
+            transport: CommandTransport::Argv,
         }
-    } else {
+    }
+    #[cfg(not(windows))]
+    {
         ShellConfig {
             shell,
             args: vec!["-c".to_string()],
@@ -309,21 +344,42 @@ fn is_legacy_wsl_bash_path(p: &Path) -> bool {
 
 #[cfg(windows)]
 async fn windows_probe_bash() -> Option<ShellConfig> {
-    let pf = std::env::var("ProgramFiles").ok();
-    let pf86 = std::env::var("ProgramFiles(x86)").ok();
     let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Some(p) = pf {
-        candidates.push(PathBuf::from(p).join("Git").join("bin").join("bash.exe"));
-    }
-    if let Some(p) = pf86 {
-        candidates.push(PathBuf::from(p).join("Git").join("bin").join("bash.exe"));
-    }
-    for c in &candidates {
-        if tokio::fs::metadata(c).await.is_ok() {
-            return Some(bash_shell_config(c.clone()));
+
+    // 1. Prefer Git for Windows relative to the git.exe already on PATH.
+    if let Some(found) = run_command(
+        "where",
+        &["git.exe"],
+        std::time::Duration::from_millis(5000),
+    )
+    .await
+    {
+        for line in found.lines() {
+            let git = PathBuf::from(line.trim());
+            if let Some(root) = git_root_from_git_exe(&git) {
+                candidates.push(root.join("bin").join("bash.exe"));
+                candidates.push(root.join("usr").join("bin").join("bash.exe"));
+            }
         }
     }
-    // `where bash.exe`.
+
+    // 2. Standard Git for Windows install locations.
+    for base in ["ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"] {
+        if let Some(dir) = std::env::var_os(base) {
+            candidates.push(PathBuf::from(dir).join("Git").join("bin").join("bash.exe"));
+        }
+    }
+    if let Some(dir) = std::env::var_os("LocalAppData") {
+        candidates.push(
+            PathBuf::from(dir)
+                .join("Programs")
+                .join("Git")
+                .join("bin")
+                .join("bash.exe"),
+        );
+    }
+
+    // 3. `where bash.exe`, excluding the WSL launcher in System32.
     if let Some(found) = run_command(
         "where",
         &["bash.exe"],
@@ -331,12 +387,29 @@ async fn windows_probe_bash() -> Option<ShellConfig> {
     )
     .await
     {
-        let first = found.lines().next().unwrap_or("").trim().to_string();
-        if !first.is_empty() && tokio::fs::metadata(&first).await.is_ok() {
-            return Some(bash_shell_config(PathBuf::from(first)));
+        for line in found.lines() {
+            let path = PathBuf::from(line.trim());
+            if !is_legacy_wsl_bash_path(&path) {
+                candidates.push(path);
+            }
         }
     }
-    None
+
+    candidates
+        .into_iter()
+        .find(|candidate| candidate.is_file())
+        .map(bash_shell_config)
+}
+
+/// `C:\Program Files\Git\cmd\git.exe` or `...\bin\git.exe` → the Git root.
+#[cfg(windows)]
+fn git_root_from_git_exe(git: &Path) -> Option<PathBuf> {
+    let dir = git.parent()?;
+    let name = dir.file_name()?.to_string_lossy().to_ascii_lowercase();
+    if name != "cmd" && name != "bin" {
+        return None;
+    }
+    dir.parent().map(Path::to_path_buf)
 }
 
 /// Run a quick command, capture stdout, with a timeout. Mirrors `runCommand`
@@ -1212,5 +1285,26 @@ fn resolve_timeout(timeout: Option<f64>) -> Result<Option<std::time::Duration>, 
             }
             Ok(Some(std::time::Duration::from_secs_f64(secs)))
         }
+    }
+}
+
+#[cfg(test)]
+mod shell_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_wsl_bash_is_recognized() {
+        assert!(is_legacy_wsl_bash_path(Path::new(
+            r"C:\Windows\System32\bash.exe"
+        )));
+        assert!(is_legacy_wsl_bash_path(Path::new(
+            "c:/windows/sysnative/bash.exe"
+        )));
+        assert!(!is_legacy_wsl_bash_path(Path::new(
+            r"C:\Program Files\Git\bin\bash.exe"
+        )));
+        assert!(!is_legacy_wsl_bash_path(Path::new(
+            r"D:\tools\msys64\usr\bin\bash.exe"
+        )));
     }
 }

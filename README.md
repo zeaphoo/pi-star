@@ -2,7 +2,8 @@
 
 pi-star 是 [pi coding agent](https://github.com/earendil-works/pi) 的本地 Web 工作台：
 UI 直接来自 [pi-web](https://github.com/agegr/pi-web)（MIT），服务端用 **Rust + Axum** 重新实现，
-运行时不依赖 Node.js。
+前端资源与服务端不需要 Node.js；桌面安装包自带 Node 和 pi，单独运行 `pi-star` 时默认 `rpc`
+后端仍可使用系统安装的 pi（或用 QuickPI）。
 
 目标很直接：保留 pi-web 的全部界面与交互，同时把会话、Agent、文件、Git、终端、模型和设置能力
 放到一个可独立发布的 Rust 二进制里，并继续使用 `~/.pi/agent` 下的 pi 数据。
@@ -92,7 +93,7 @@ pi-star 与 pi CLI / pi-web 可以读取同一批会话；停止 pi-star 后可�
 
 ## 构建与运行
 
-要求：Rust stable（1.85+）和 Node.js 22+（仅构建 UI 需要）。
+要求：Rust stable（1.85+）和 Node.js 22+（构建 UI、桌面打包和准备内置 pi 运行时需要）。
 
 ```bash
 # 1. 构建 UI
@@ -126,7 +127,9 @@ pi-star --port 0 --exit-on-stdin-eof   # 临时端口 + 父进程消失即退出
 `index.html`；不给出时 release 用内置资源、debug 用 `ui/dist`。
 
 对应环境变量：`PORT`、`PI_WEB_HOSTNAME`、`PI_STAR_OPEN_BROWSER`、`PI_STAR_UI_DIR`、
-`PI_WEB_PASSWORD`、`PI_WEB_ALLOWED_HOSTS`、`PI_CODING_AGENT_DIR`。
+`PI_WEB_PASSWORD`、`PI_WEB_ALLOWED_HOSTS`、`PI_CODING_AGENT_DIR`。桌面安装包还会设置
+`PI_STAR_PI_RUNTIME`（内置 Node + pi）、`PI_STAR_AGENT_EXTENSION` 和 `PI_PACKAGE_DIR`；
+`PI_STAR_PI_CLI` 可显式改用用户自己的 pi，Windows 的 bash 路径可用 `PI_STAR_BASH` 覆盖。
 
 ### 开发
 
@@ -186,6 +189,9 @@ PI_WEB_DIR=/path/to/pi-web node scripts/sync-ui-from-pi-web.mjs
 - splash/错误页、原生装饰主窗口、托盘、开机自启动、关窗到托盘；
 - 退出时清理 pi-star 及其 Node/PTY 子进程树。
 
+安装包同时内置 Node、pi CLI（`@earendil-works/pi-coding-agent`）和 `agent-extension/`，
+安装后不需要单独安装 Node 或 pi。版本固定在 `packaging/pi-runtime.json`。
+
 主窗口加载 `http://127.0.0.1:<port>/`，端口默认 `30151` 并持久化在桌面偏好中。端口保持稳定是
 因为 webview 的 localStorage、cookie 和缓存都以 origin 为键；冲突时桌面壳会显示错误，不会静默
 换端口。主窗口使用系统原生装饰，且没有 Tauri IPC 权限；只有内置 splash 可以调用重试/退出/打开
@@ -209,14 +215,21 @@ UI 热更新：先 `cd ui && npm run dev`（30152），再在 debug 构建下设
 
 ```bash
 ./scripts/check-desktop-version.sh
-./scripts/package-desktop.sh
-# 只出 deb：TAURI_BUNDLES=deb ./scripts/package-desktop.sh
+./scripts/package-desktop.sh          # 当前平台
+./scripts/package-linux-app.sh        # deb + AppImage
+./scripts/package-windows.sh          # NSIS + MSI + portable zip（Git Bash）
+./scripts/package-mac.sh              # .app + dmg
 ```
 
-脚本顺序为 UI → 内嵌 UI 的 release `pi-star` → Tauri 安装包，并把 `pi-star` 通过临时
-`bundle.resources` 注入安装包。Linux deb/AppImage 产物在
-`app/target/release/bundle/`；Windows 需要 `mainBinaryName = PiStarApp` 以避免和 `pi-star.exe`
-大小写冲突。安装包当前未签名，首次运行可能提示未知发布者。
+脚本顺序为：准备 `pi-runtime`（Node + pi + agent-extension）→ 构建 UI → 构建内嵌 UI 的
+release `pi-star` → Tauri 安装包。`pi-star` 与 `pi-runtime/` 通过临时 `bundle.resources`
+注入，Linux 落在 `/usr/lib/PiStar/`，macOS 落在 `Contents/Resources/`，Windows 与
+`PiStarApp.exe` 同目录。产物在 `dist/<os>/`。Linux **只发布桌面应用**，不再有单独的服务包。
+
+Windows 的 `bash` 工具需要 Git for Windows（不会回退 cmd.exe，也不用 WSL 的
+`System32\bash.exe`）；探测顺序和 `PI_STAR_BASH` 覆盖见 [`packaging/README.md`](packaging/README.md)。
+安装包默认未签名；macOS 配置签名 secrets 后会自动签名/公证。CI 与 Release 配置见
+`.github/workflows/`。
 
 桌面壳数据目录（Linux `~/.local/share/com.pistar.desktop/`）：
 

@@ -28,7 +28,8 @@
     "longDescription": "Pi Star desktop shell: launches and supervises the local pi-star server, then opens its console in the system webview.",
     "copyright": "Copyright © 2026 pi-star",
     "macOS": {
-      "minimumSystemVersion": "10.13"
+      "minimumSystemVersion": "11.0",
+      "infoPlist": "Info.plist"
     },
     "windows": {
       "webviewInstallMode": {

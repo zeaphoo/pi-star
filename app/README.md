@@ -45,12 +45,20 @@ UI 热更新：`cd ui && npm run dev`，然后在 debug 构建下设置
 
 ```bash
 ./scripts/check-desktop-version.sh
-./scripts/package-desktop.sh
+./scripts/package-desktop.sh          # 当前平台
+./scripts/package-linux-app.sh        # deb + AppImage
+./scripts/package-windows.sh          # NSIS + MSI + portable zip（Git Bash）
+./scripts/package-mac.sh              # .app + dmg
 ```
 
-脚本会先构建 UI，再构建内嵌 UI 的 release `pi-star`，复制到 `app/pi-star`，用临时
-`--config` 注入 `bundle.resources`，最后调用 `cargo tauri build`。`app/pi-star`、
-`app/pi-star.exe`、`app/.bundle-resources.json` 都是打包临时文件，已在根 `.gitignore` 中忽略。
+脚本会先准备 `app/pi-runtime/`（Node + pi + agent-extension），构建 UI 和内嵌 UI 的 release
+`pi-star`，复制到 `app/pi-star`，用临时 `--config` 注入 `bundle.resources`，最后调用
+`cargo tauri build`。`app/pi-star`、`app/pi-runtime`、`app/.bundle-resources.json` 都是打包
+临时文件，已在根 `.gitignore` 中忽略。
+
+安装包内 `pi-star` 与 `pi-runtime/` 位于同一资源目录；`pi-star` 启动时自动发现并设置
+`PI_STAR_PI_NODE`、`PI_STAR_PI_JS`、`PI_STAR_AGENT_EXTENSION`、`PI_PACKAGE_DIR`。用户仍可用
+`PI_STAR_PI_CLI` 指向自己的 pi。
 
 ## 数据目录
 
