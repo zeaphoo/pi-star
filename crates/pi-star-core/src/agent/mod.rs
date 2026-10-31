@@ -5,6 +5,7 @@
 //! [`HarnessBackend`]. `pi-rpc` is selected in the server state before this
 //! registry is used, so no second in-process runtime lives here.
 
+pub mod backend;
 pub mod harness_backend;
 pub mod harness_env;
 pub mod provider;
