@@ -459,6 +459,7 @@ mod tests {
             summary: "s".into(),
             details: Some(details),
             usage: None,
+            from_hook: None,
         });
         let p = prepare_branch_entries(&[b], 0);
         assert!(p.file_ops.read.contains("/r"));

@@ -136,6 +136,134 @@ fn context_entries(path_entries: &[Entry], options: &SessionContextBuildOptions)
     entries
 }
 
+/// Edits carried by `context_edit` entries, keyed by target entry id.
+/// `None` means "drop the target's messages"; `Some(replacement)` replaces its
+/// model-visible content. pi collects these from the selected context entries.
+fn collect_context_edits<'a>(
+    entries: impl Iterator<Item = &'a Entry>,
+) -> std::collections::HashMap<String, Option<serde_json::Value>> {
+    let mut edits = std::collections::HashMap::new();
+    for entry in entries {
+        let Entry::Raw(raw) = entry else { continue };
+        if raw.base.entry_type != "context_edit" {
+            continue;
+        }
+        let Some(target) = raw.value.get("targetId").and_then(|v| v.as_str()) else {
+            continue;
+        };
+        let replacement = match raw.value.get("replacement") {
+            None | Some(serde_json::Value::Null) => None,
+            Some(value) => Some(value.clone()),
+        };
+        edits.insert(target.to_string(), replacement);
+    }
+    edits
+}
+
+/// Apply one `context_edit` replacement to an entry's projected messages.
+fn apply_context_edit(
+    id: &str,
+    messages: &mut Vec<AgentMessage>,
+    edits: &std::collections::HashMap<String, Option<serde_json::Value>>,
+) {
+    let Some(edit) = edits.get(id) else { return };
+    let Some(replacement) = edit else {
+        messages.clear();
+        return;
+    };
+    let content = replacement
+        .get("content")
+        .cloned()
+        .unwrap_or(serde_json::Value::Null);
+    let blocks = |value: &serde_json::Value| -> Option<Vec<pi_star_ai::types::Content>> {
+        match value {
+            serde_json::Value::String(text) => Some(vec![pi_star_ai::types::Content::text(text)]),
+            serde_json::Value::Array(_) => serde_json::from_value(value.clone()).ok(),
+            _ => None,
+        }
+    };
+    for message in messages.iter_mut() {
+        match message {
+            AgentMessage::Assistant(a) => {
+                if let Some(blocks) = blocks(&content) {
+                    a.content = blocks;
+                }
+            }
+            AgentMessage::ToolResult(t) => {
+                if let Some(blocks) = blocks(&content) {
+                    t.content = blocks;
+                }
+            }
+            AgentMessage::User(u) => {
+                u.content = match &content {
+                    serde_json::Value::String(text) => {
+                        pi_star_ai::types::UserContent::Text(text.clone())
+                    }
+                    value => match blocks(value) {
+                        Some(blocks) => pi_star_ai::types::UserContent::Blocks(blocks),
+                        None => u.content.clone(),
+                    },
+                };
+            }
+            AgentMessage::Custom(c) => {
+                if let Some(blocks) = blocks(&content) {
+                    c.content = blocks;
+                }
+            }
+        }
+    }
+}
+
+/// pi's `custom_message` / `system` entries reach the model as messages even
+/// though this runtime keeps them as opaque `Raw` entries.
+fn raw_to_context_messages(raw: &crate::session::types::RawEntry) -> Vec<AgentMessage> {
+    let timestamp = raw
+        .value
+        .get("timestamp")
+        .and_then(|v| v.as_i64())
+        .unwrap_or(raw.base.timestamp);
+    match raw.base.entry_type.as_str() {
+        "custom_message" => {
+            let role = raw
+                .value
+                .get("customType")
+                .and_then(|v| v.as_str())
+                .unwrap_or("custom");
+            let content = raw.value.get("content").cloned().unwrap_or_default();
+            let content = match content {
+                serde_json::Value::String(text) => vec![pi_star_ai::types::Content::text(text)],
+                value => serde_json::from_value(value).unwrap_or_default(),
+            };
+            vec![AgentMessage::Custom(
+                pi_star_agent::message::CustomMessage {
+                    role: role.to_string(),
+                    content,
+                    data: raw.value.get("details").cloned().unwrap_or_default(),
+                    timestamp,
+                },
+            )]
+        }
+        "message"
+            if raw.value.pointer("/message/role").and_then(|v| v.as_str()) == Some("system") =>
+        {
+            let content = raw
+                .value
+                .pointer("/message/content")
+                .and_then(|v| v.as_str())
+                .unwrap_or_default();
+            vec![AgentMessage::Custom(
+                pi_star_agent::message::CustomMessage {
+                    role: "system".to_string(),
+                    content: vec![pi_star_ai::types::Content::text(content)],
+                    data: raw.value.get("message").cloned().unwrap_or_default(),
+                    timestamp,
+                },
+            )]
+        }
+        _ => Vec::new(),
+    }
+}
+
 /// Build the default context by consuming an owned branch path.
 ///
 /// The borrowed builder remains the compatibility path for callers
@@ -161,39 +289,17 @@ pub(crate) fn build_session_context_owned(
     let mut ctx = derive_session_context_state(path_entries.iter().rev());
     let indices = context_entry_indices(&path_entries);
     let context_entry_count = indices.len();
+    let edits = collect_context_edits(indices.iter().filter_map(|&i| path_entries.get(i)));
     let mut slots: Vec<Option<Entry>> = path_entries.into_iter().map(Some).collect();
     let mut messages = Vec::new();
 
     for index in indices {
         let entry = slots[index].take().expect("each index is selected once");
-        match entry {
-            Entry::Message(message) => {
-                if !matches!(
-                    &message.message,
-                    AgentMessage::Assistant(assistant)
-                        if assistant.stop_reason == StopReason::Deferred
-                ) {
-                    messages.push(message.message);
-                }
-            }
-            Entry::Compaction(compaction) => {
-                messages.push(create_compaction_summary_message(
-                    &compaction.summary,
-                    compaction.tokens_before,
-                    compaction.base.timestamp,
-                ));
-            }
-            Entry::BranchSummary(summary) if !summary.summary.is_empty() => {
-                messages.push(create_branch_summary_message(
-                    &summary.summary,
-                    &summary.from_id,
-                    summary.base.timestamp,
-                ));
-            }
-            // Custom entries have no registered projector on this fast path;
-            // all other entry kinds are state-only and model-invisible.
-            _ => {}
-        }
+        let id = entry.id().to_string();
+        let mut entry_messages =
+            session_entry_to_context_messages(&entry, index, &[], &Default::default());
+        apply_context_edit(&id, &mut entry_messages, &edits);
+        messages.extend(entry_messages);
     }
     ctx.messages = messages;
     if let Some(started) = started {
@@ -218,35 +324,15 @@ pub(crate) fn build_session_context_from_borrowed(path_entries: &[&Entry]) -> Se
     let owned: Vec<Entry> = path_entries.iter().map(|entry| (*entry).clone()).collect();
     let indices = context_entry_indices(&owned);
     let context_entry_count = indices.len();
+    let edits = collect_context_edits(indices.iter().filter_map(|&i| owned.get(i)));
     let mut messages = Vec::new();
     for index in indices {
         let entry = path_entries[index];
-        match entry {
-            Entry::Message(message) => {
-                if !matches!(
-                    &message.message,
-                    AgentMessage::Assistant(assistant)
-                        if assistant.stop_reason == StopReason::Deferred
-                ) {
-                    messages.push(message.message.clone());
-                }
-            }
-            Entry::Compaction(compaction) => {
-                messages.push(create_compaction_summary_message(
-                    &compaction.summary,
-                    compaction.tokens_before,
-                    compaction.base.timestamp,
-                ));
-            }
-            Entry::BranchSummary(summary) if !summary.summary.is_empty() => {
-                messages.push(create_branch_summary_message(
-                    &summary.summary,
-                    &summary.from_id,
-                    summary.base.timestamp,
-                ));
-            }
-            _ => {}
-        }
+        let id = entry.id().to_string();
+        let mut entry_messages =
+            session_entry_to_context_messages(entry, index, &[], &Default::default());
+        apply_context_edit(&id, &mut entry_messages, &edits);
+        messages.extend(entry_messages);
     }
     ctx.messages = messages;
     if let Some(started) = started {
@@ -290,6 +376,7 @@ pub fn session_entry_to_context_messages(
         Entry::Compaction(c) => compaction_to_context_messages(c),
         Entry::BranchSummary(b) => branch_summary_to_context_messages(b),
         Entry::Custom(c) => custom_to_context_messages(c, index, entries, options),
+        Entry::Raw(raw) => raw_to_context_messages(raw),
         // model_change / thinking_level_change / active_tools_change → no context
         // message (they only shape the derived state).
         _ => Vec::new(),
@@ -383,14 +470,13 @@ pub fn build_session_context(
     let mut ctx = derive_session_context_state(path_entries.iter().rev());
     let context_entries = context_entries(path_entries, options);
     let context_entry_count = context_entries.len();
+    let edits = collect_context_edits(context_entries.iter());
     let mut messages = Vec::new();
     for (index, entry) in context_entries.iter().enumerate() {
-        messages.extend(session_entry_to_context_messages(
-            entry,
-            index,
-            &context_entries,
-            options,
-        ));
+        let mut entry_messages =
+            session_entry_to_context_messages(entry, index, &context_entries, options);
+        apply_context_edit(entry.id(), &mut entry_messages, &edits);
+        messages.extend(entry_messages);
     }
     ctx.messages = messages;
     if let Some(started) = started {
@@ -525,6 +611,7 @@ mod tests {
             summary: summary.into(),
             details: None,
             usage: None,
+            from_hook: None,
         })
     }
 
@@ -584,6 +671,104 @@ mod tests {
         assert_eq!(
             derive_session_context_state(entries.iter().rev()).model,
             Some(("new".into(), "new-model".into()))
+        );
+    }
+
+    fn raw(id: &str, parent: Option<&str>, ty: &str, extra: serde_json::Value, seq: u64) -> Entry {
+        use crate::session::types::{EntryBase, RawEntry};
+        let mut value = serde_json::json!({
+            "type": ty,
+            "id": id,
+            "parentId": parent,
+            "timestamp": seq as i64,
+        });
+        if let (Some(obj), Some(extra)) = (value.as_object_mut(), extra.as_object()) {
+            for (k, v) in extra {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+        Entry::Raw(RawEntry {
+            base: EntryBase {
+                entry_type: ty.into(),
+                id: id.into(),
+                seq,
+                parent_id: parent.map(str::to_owned),
+                timestamp: seq as i64,
+            },
+            value,
+        })
+    }
+
+    #[test]
+    fn projects_custom_messages_and_system_messages_from_raw_entries() {
+        let entries = vec![
+            raw(
+                "custom",
+                None,
+                "custom_message",
+                serde_json::json!({
+                    "customType": "note",
+                    "content": [{"type": "text", "text": "from-extension"}],
+                    "details": {"x": 1}
+                }),
+                1,
+            ),
+            raw(
+                "system",
+                Some("custom"),
+                "message",
+                serde_json::json!({"message": {"role": "system", "content": "be nice"}}),
+                2,
+            ),
+        ];
+        let ctx = build_session_context(&entries, &SessionContextBuildOptions::default());
+        let roles: Vec<String> = ctx
+            .messages
+            .iter()
+            .map(|m| m.role().as_str().to_string())
+            .collect();
+        assert_eq!(roles, ["note", "system"]);
+        assert_eq!(
+            ctx.messages[0],
+            AgentMessage::Custom(pi_star_agent::message::CustomMessage {
+                role: "note".into(),
+                content: vec![pi_star_ai::types::Content::text("from-extension")],
+                data: serde_json::json!({"x": 1}),
+                timestamp: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn applies_context_edits_and_deletions() {
+        let entries = vec![
+            msg_entry("u", None, user("hello"), 1),
+            raw(
+                "edit-u",
+                Some("u"),
+                "context_edit",
+                serde_json::json!({"targetId": "u", "replacement": {"content": "rewritten"}}),
+                2,
+            ),
+            msg_entry_p("a", "edit-u", assistant("answer"), 3),
+            raw(
+                "edit-a",
+                Some("a"),
+                "context_edit",
+                serde_json::json!({"targetId": "a", "replacement": null}),
+                4,
+            ),
+        ];
+        let ctx = build_session_context(&entries, &SessionContextBuildOptions::default());
+        assert_eq!(
+            ctx.messages.len(),
+            1,
+            "assistant edit must delete its message"
+        );
+        assert_eq!(ctx.messages[0].role().as_str(), "user");
+        assert_eq!(
+            ctx.messages[0],
+            AgentMessage::User(pi_star_ai::types::UserMessage::new("rewritten", 1))
         );
     }
 

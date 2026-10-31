@@ -58,6 +58,7 @@ pub fn provisioned_from_entry(entry: &Entry) -> ProvisionedEntry {
             summary: m.summary.clone(),
             details: m.details.clone(),
             usage: m.usage.clone(),
+            from_hook: m.from_hook,
         },
         Entry::Custom(m) => ProvisionedKind::Custom {
             custom_type: m.custom_type.clone(),
@@ -210,6 +211,8 @@ pub struct BranchSummaryEntry {
     pub details: Option<JsonValue>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<Usage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from_hook: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -476,6 +479,7 @@ impl<'de> Deserialize<'de> for Entry {
                 usage: obj
                     .get("usage")
                     .and_then(|v| serde_json::from_value(v.clone()).ok()),
+                from_hook: obj.get("fromHook").and_then(|v| v.as_bool()),
             }),
             "custom" => Entry::Custom(CustomEntry {
                 base,
@@ -571,6 +575,7 @@ pub enum ProvisionedKind {
         summary: String,
         details: Option<JsonValue>,
         usage: Option<Usage>,
+        from_hook: Option<bool>,
     },
     Custom {
         custom_type: String,
@@ -662,12 +667,14 @@ pub fn provisioned_into_entry(
             summary,
             details,
             usage,
+            from_hook,
         } => Entry::BranchSummary(BranchSummaryEntry {
             base,
             from_id,
             summary,
             details,
             usage,
+            from_hook,
         }),
         ProvisionedKind::Custom { custom_type, data } => Entry::Custom(CustomEntry {
             base,

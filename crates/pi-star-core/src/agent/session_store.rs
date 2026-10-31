@@ -568,6 +568,9 @@ fn entry_to_v3(entry: &Entry) -> Result<Value, String> {
                     serde_json::to_value(usage).map_err(|error| error.to_string())?,
                 );
             }
+            if let Some(from_hook) = summary.from_hook {
+                obj.insert("fromHook".into(), Value::Bool(from_hook));
+            }
         }
         Entry::Custom(custom) => {
             obj.insert(
@@ -598,6 +601,21 @@ pub(crate) fn message_to_v3(message: &AgentMessage) -> Value {
             .and_then(|role| role.as_str().map(str::to_owned))
             .unwrap_or_else(|| "custom".to_string());
         let content = obj.remove("content").unwrap_or(Value::Null);
+        // pi custom messages only carry text/image content.
+        let content = match content {
+            Value::Array(items) => Value::Array(
+                items
+                    .into_iter()
+                    .filter(|block| {
+                        matches!(
+                            block.get("type").and_then(Value::as_str),
+                            Some("text" | "image")
+                        )
+                    })
+                    .collect(),
+            ),
+            other => other,
+        };
         let data = obj.remove("data").unwrap_or(Value::Null);
         let timestamp = obj.remove("timestamp").unwrap_or(Value::Null);
         if role == "bashExecution" {
