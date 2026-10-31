@@ -317,7 +317,8 @@ async fn agent_ensure_session_creates_a_file() {
             .body(Body::from(
                 json!({
                     "cwd": fixture.cwd.to_string_lossy(),
-                    "type": "ensure_session"
+                    "type": "ensure_session",
+                    "backend": "quick"
                 })
                 .to_string(),
             ))
@@ -337,6 +338,113 @@ async fn agent_ensure_session_creates_a_file() {
         )
         .is_some()
     );
+}
+
+#[tokio::test]
+async fn agent_backends_are_listed_in_product_order() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/agent/backends")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body[0]["id"], "rpc");
+    assert_eq!(body[0]["name"], "标准 PI (Node.js)");
+    assert_eq!(body[1]["id"], "quick");
+    assert_eq!(body[1]["name"], "极速 PI (QuickPI)");
+}
+
+#[tokio::test]
+async fn switching_the_backend_persists_and_routes_to_the_other_registry() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let (status, created) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/agent/new")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "cwd": fixture.cwd.to_string_lossy(),
+                    "type": "ensure_session",
+                    "backend": "quick"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(created["backend"], "quick");
+    let id = created["sessionId"].as_str().unwrap().to_string();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/agent/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["backend"], "quick");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/agent/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"type":"set_backend","backend":"rpc"}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["data"]["backend"], "rpc");
+
+    let config = pi_star_core::Config::new(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+    )
+    .unwrap();
+    let path = pi_star_core::session::resolve_session_path(&config, &id).unwrap();
+    assert_eq!(
+        pi_star_core::agent::backend::session_backend(&path),
+        pi_star_core::agent::backend::BackendKind::Rpc
+    );
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/agent/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["backend"], "rpc");
+
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/agent/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"type":"set_backend","backend":"nope"}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

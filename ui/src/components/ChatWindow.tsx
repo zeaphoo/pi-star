@@ -290,6 +290,8 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     isAutoThinkingSelection,
     defaultModel,
     savedDefaultThinkingLevel,
+    backend,
+    backendOptions,
     agentPhase,
     isNew,
     editEntryId,
@@ -301,7 +303,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
     dismissCompactError,
     handleRecallQueue,
     handleBuiltinSlashCommand,
-    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadSlashCommands, scrollUserMsgToTop,
+    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, handleBackendChange, loadSlashCommands, scrollUserMsgToTop,
     loadContext, activeLeafId, scrollToBottom, scrollToMessage,
   } = useAgentSession({
     session, sessionRunning, newSessionCwd, newSessionDraftKey, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd: wrappedOnAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked,
@@ -973,6 +975,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
       modelSwitching={modelSwitching}
       defaultModel={defaultModel}
       onSetDefaultModel={handleSetDefaultModel}
+      backend={backend}
+      backendOptions={backendOptions}
+      onBackendChange={handleBackendChange}
       onCompact={session || isNew ? handleCompact : undefined}
       onAbortCompaction={handleAbortCompaction}
       isCompacting={isCompacting}

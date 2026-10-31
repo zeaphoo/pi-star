@@ -250,6 +250,7 @@ export type DebugStreamCloseReason =
   | "grace_end"
   | "send_failed"
   | "set_tools"
+  | "backend"
   | "rebuilt"
   | "deselected"
   | "stuck"

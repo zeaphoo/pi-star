@@ -16,6 +16,8 @@ use pi_star_core::session::{
     total_active_ms,
 };
 
+use pi_star_core::agent::backend::BackendKind;
+
 use crate::routes::{bad_request, internal, json_error, no_store, not_found};
 use crate::state::AppState;
 
@@ -36,10 +38,8 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
         .unwrap_or_default();
     let mut running = state.agents.running_ids();
     let mut awaiting = state.agents.awaiting_input_ids();
-    if let Some(pi) = &state.pi_rpc {
-        running.extend(pi.running_ids());
-        awaiting.extend(pi.awaiting_input_ids());
-    }
+    running.extend(state.pi_rpc.running_ids());
+    awaiting.extend(state.pi_rpc.awaiting_input_ids());
     no_store(json!({
         "sessions": sessions,
         "sessionListVersion": version,
@@ -165,8 +165,8 @@ pub async fn rename(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<RenameBody>,
 ) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(active) = pi.get(&id) {
+    if state.route_backend(&id) == BackendKind::Rpc {
+        if let Some(active) = state.pi_rpc.get(&id) {
             return match active
                 .send(&json!({"type": "set_session_name", "name": body.name.trim()}))
                 .await
@@ -193,9 +193,7 @@ pub async fn delete(
         return not_found("Session not found");
     };
     state.agents.remove(&id);
-    if let Some(pi) = &state.pi_rpc {
-        pi.remove(&id);
-    }
+    state.pi_rpc.remove(&id);
     let deleted = delete_session_file(&state, &path);
     no_store(json!({ "ok": true, "deleted": deleted }))
 }
@@ -215,9 +213,7 @@ pub async fn delete_many(
         match session::resolve_session_path(&state.config, &id) {
             Some(path) => {
                 state.agents.remove(&id);
-                if let Some(pi) = &state.pi_rpc {
-                    pi.remove(&id);
-                }
+                state.pi_rpc.remove(&id);
                 delete_session_file(&state, &path);
                 deleted.push(id);
             }
@@ -392,8 +388,8 @@ pub async fn fork_session(
 }
 
 async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(active) = pi.get(id) {
+    if state.route_backend(id) == BackendKind::Rpc {
+        if let Some(active) = state.pi_rpc.get(id) {
             let entry = match entry_id {
                 Some(entry) => entry.to_string(),
                 None => {
@@ -539,18 +535,33 @@ pub async fn context(
 }
 
 pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(session) = pi.get(&id) {
-            return no_store(json!({ "running": true, "state": session.state_json() }));
+    let backend = state.route_backend(&id);
+    if let Some(session) = state.pi_rpc.get(&id) {
+        let mut state_json = session.state_json();
+        if let Some(object) = state_json.as_object_mut() {
+            object.insert("backend".into(), Value::String(backend.id().into()));
         }
+        return no_store(json!({
+            "running": true,
+            "backend": backend.id(),
+            "state": state_json,
+        }));
     }
     if let Some(runtime) = state.agents.get(&id) {
-        return no_store(json!({ "running": true, "state": runtime.state_json(true) }));
+        let mut state_json = runtime.state_json(true);
+        if let Some(object) = state_json.as_object_mut() {
+            object.insert("backend".into(), Value::String(backend.id().into()));
+        }
+        return no_store(json!({
+            "running": true,
+            "backend": backend.id(),
+            "state": state_json,
+        }));
     }
     if session::resolve_session_path(&state.config, &id).is_none() {
         return not_found("Session not found");
     }
-    no_store(json!({ "running": false }))
+    no_store(json!({ "running": false, "backend": backend.id() }))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -753,8 +764,8 @@ pub async fn auto_name(
     } else {
         title
     };
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(active) = pi.get(&id) {
+    if state.route_backend(&id) == BackendKind::Rpc {
+        if let Some(active) = state.pi_rpc.get(&id) {
             if let Err(error) = active
                 .send(&json!({"type": "set_session_name", "name": title}))
                 .await

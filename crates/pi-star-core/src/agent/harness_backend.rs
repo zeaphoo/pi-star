@@ -1,12 +1,11 @@
-//! AgentHarness-backed runtime (the "merged" backend).
+//! AgentHarness-backed runtime: the QuickPI (`quick`) agent backend.
 //!
-//! This is the new engine for pi-star: it drives `pi_star_harness::AgentHarness`
-//! over the pi v3 session backend and translates the harness's `AgentEvent`s
-//! into the JSON events pi-web already consumes.
-//!
-//! It is intentionally separate from [`super::SessionRuntime`] while the route
-//! wiring is migrated: the façade keeps its command/state contract and will
-//! delegate here once `PI_STAR_AGENT_BACKEND=merged` is enabled.
+//! This is the in-process engine for pi-star: it drives
+//! `pi_star_harness::AgentHarness` over the pi v3 session backend and
+//! translates the harness's `AgentEvent`s into the JSON events pi-web already
+//! consumes. [`super::SessionRuntime`] keeps the command/state façade and
+//! delegates here; the standard Node.js pi (`rpc`) backend lives in the
+//! `pi-star` crate's `pi_rpc` module.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};

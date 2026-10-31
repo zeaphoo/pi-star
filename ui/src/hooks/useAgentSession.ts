@@ -106,6 +106,8 @@ interface LastAssistantTextResponse {
 }
 
 type AgentStateResponse = {
+  /** `rpc` (standard Node.js pi) or `quick` (QuickPI). */
+  backend?: string;
   model?: { provider: string; id: string };
   contextUsage?: { percent: number | null; contextWindow: number; tokens: number | null } | null;
   /** Active time over the live wrapper's entries (the snapshot carries the same field). */
@@ -250,7 +252,18 @@ type ConcreteThinkingLevel = Exclude<ThinkingLevelOption, "auto">;
 export interface NewSessionChoices {
   model: { provider: string; modelId: string } | null;
   thinkingLevel: ConcreteThinkingLevel | null;
+  backend: string;
 }
+
+export interface AgentBackendOption {
+  id: string;
+  name: string;
+}
+
+const DEFAULT_BACKEND_OPTIONS: AgentBackendOption[] = [
+  { id: "rpc", name: "标准 PI (Node.js)" },
+  { id: "quick", name: "极速 PI (QuickPI)" },
+];
 
 function asConcreteThinkingLevel(value?: string | null): ConcreteThinkingLevel | null {
   if (!value || value === "auto") return null;
@@ -452,6 +465,17 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [toolPreset, setToolPreset] = useState<ToolPreset>(CONFIGURED_TOOL_PRESET);
   const [newSessionThinkingLevel, setNewSessionThinkingLevel] = useState<ConcreteThinkingLevel | null>(() => initialChoices?.thinkingLevel ?? null);
   const [newSessionDefaultThinkingLevel, setNewSessionDefaultThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
+  // The backend belongs to the session, not to this page: the server persists
+  // the pick in the session file and every state read says which one it is.
+  const [backendOptions, setBackendOptions] = useState<AgentBackendOption[]>(DEFAULT_BACKEND_OPTIONS);
+  const [backend, setBackend] = useState<string>(initialChoices?.backend ?? "rpc");
+  const backendRef = useRef(backend);
+  backendRef.current = backend;
+  const selectBackend = useCallback((value?: string | null) => {
+    if (!value) return;
+    backendRef.current = value;
+    setBackend((current) => current === value ? current : value);
+  }, []);
   const [savedDefaultThinkingLevel, setSavedDefaultThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
   const [currentThinkingOverride, setCurrentThinkingOverride] = useState<ConcreteThinkingLevel | null>(null);
   const [liveThinkingLevel, setLiveThinkingLevel] = useState<ConcreteThinkingLevel | null>(null);
@@ -629,8 +653,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   const onNewSessionChoicesChange = opts.onNewSessionChoicesChange;
   useEffect(() => {
-    if (isNew) onNewSessionChoicesChange?.({ model: newSessionModel, thinkingLevel: newSessionThinkingLevel });
-  }, [isNew, newSessionModel, newSessionThinkingLevel, onNewSessionChoicesChange]);
+    if (isNew) onNewSessionChoicesChange?.({ model: newSessionModel, thinkingLevel: newSessionThinkingLevel, backend });
+  }, [isNew, newSessionModel, newSessionThinkingLevel, backend, onNewSessionChoicesChange]);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/agent/backends")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data: AgentBackendOption[] | null) => {
+        if (!cancelled && Array.isArray(data) && data.length > 0) setBackendOptions(data);
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
     const container = scrollContainerRef.current;
@@ -904,9 +941,10 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         const usageRequestId = ++contextUsageRequestIdRef.current;
         const stateRes = await fetch(`/api/sessions/${encodeURIComponent(sid)}/state`);
         if (!stateRes.ok) throw new Error(`HTTP ${stateRes.status}`);
-        const agentState = await stateRes.json() as { running: boolean; state?: AgentStateResponse };
+        const agentState = await stateRes.json() as { running: boolean; backend?: string; state?: AgentStateResponse };
         if (sessionIdRef.current !== sid) return null;
 
+        selectBackend(agentState.backend ?? agentState.state?.backend);
         const liveState = agentState.state;
         syncLiveModel(liveState);
         if (liveState) {
@@ -1040,6 +1078,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         body: JSON.stringify({
           cwd: newSessionCwd,
           type: "ensure_session",
+          backend: backendRef.current,
           ...(toolNames !== undefined ? { toolNames } : {}),
           ...(selectedModel ? { provider: selectedModel.provider, modelId: selectedModel.modelId } : {}),
           ...(selectedThinkingLevel
@@ -1057,11 +1096,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
       const result = await res.json() as {
         sessionId: string;
+        backend?: string;
         model?: SelectedModel | null;
         thinkingLevel?: ThinkingLevelOption;
       };
       const realId = result.sessionId;
       sessionIdRef.current = realId;
+      selectBackend(result.backend);
       if (result.model && newSessionModelOverrideRef.current === selectedModel) {
         setPendingModel(result.model);
         if (!selectedModel) setNewSessionDefaultModel(result.model);
@@ -1084,7 +1125,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } finally {
       ensuringNewSessionRef.current = null;
     }
-  }, [isNew, newSessionCwd, toolPreset]);
+  }, [isNew, newSessionCwd, toolPreset, selectBackend]);
 
   // Opening the System or Tools panel may initialize an otherwise dormant
   // session. This is deliberately a non-prompt command: it creates no message
@@ -2043,6 +2084,31 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   }, [addNotice, applyLiveUsage, cancelEventStreamGrace, dispatch, handleExtensionUiRequest, loadSession, markPromptLanded, notifyPromptStage, onAgentEnd, onToolEnd, refreshContextUsage, scheduleEventStreamClose, scrollToBottom, settleUiStage, syncLiveModel]);
   handleAgentEventRef.current = handleAgentEvent;
 
+  const handleBackendChange = useCallback(async (next: string) => {
+    if (next === backendRef.current) return;
+    const sid = sessionIdRef.current ?? session?.id ?? null;
+    // A fresh composer keeps the pick locally until its session file exists.
+    if (!sid) {
+      selectBackend(next);
+      return;
+    }
+    if (agentRunningRef.current || bashRunningRef.current) return;
+    try {
+      await sendAgentCommand<{ backend?: string }>(sid, { type: "set_backend", backend: next });
+      selectBackend(next);
+      // The open SSE stream points at the wrapper that has just been dropped;
+      // reconnect it so the next turn's events come from the new backend.
+      const hadStream = eventConnectionRef.current?.snapshot().state !== "idle";
+      closeEvents("backend");
+      if (hadStream) maintainEventsConnected(sid);
+    } catch (error) {
+      addNotice({
+        type: "error",
+        message: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }, [addNotice, closeEvents, maintainEventsConnected, selectBackend, session?.id]);
+
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     const trimmedMessage = message.trim();
     if (!trimmedMessage && !images?.length) return;
@@ -2902,7 +2968,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   // under way on the server: a run or command, a `!` command, a compaction. The
   // mount and a hidden page's return show it the same way.
   const applyLoadedAgentState = useCallback((sid: string, loadedAgentState: unknown) => {
-    const agentState = loadedAgentState as { running: boolean; state?: AgentStateResponse } | null;
+    const agentState = loadedAgentState as { running: boolean; backend?: string; state?: AgentStateResponse } | null;
+    selectBackend(agentState?.backend ?? agentState?.state?.backend);
     if (agentState?.running) {
       loadTools(sid);
       if (agentState.state?.isStreaming || agentState.state?.isPromptRunning) {
@@ -2929,7 +2996,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       if (agentState.state.extensionWidgets !== undefined) setExtensionWidgets(agentState.state.extensionWidgets ?? []);
       if (agentState.state.queuedMessages !== undefined) setQueuedMessages(normalizeQueuedMessages(agentState.state.queuedMessages));
     }
-  }, [dispatch, loadTools, waitForBashSettlement, waitForPromptSettlement]);
+  }, [dispatch, loadTools, selectBackend, waitForBashSettlement, waitForPromptSettlement]);
 
   // Open a released stream again and read what it missed (a run another tab, a
   // device or an extension started or finished, statuses), shown as the mount
@@ -3270,6 +3337,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     isAutoThinkingSelection: isNew && newSessionThinkingLevel === null,
     defaultModel: newSessionDefaultModel,
     savedDefaultThinkingLevel,
+    backend,
+    backendOptions,
     agentPhase,
     isNew,
     editEntryId,
@@ -3289,7 +3358,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     cancelEdit: editEntryId ? cancelEdit : undefined,
     addNotice,
     setNoticePaused: setPausedNoticeId,
-    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
+    handleToolPresetChange, handleThinkingLevelChange, handleSetDefaultModel, handleSetDefaultThinkingLevel, handleBackendChange, loadTools, loadSlashCommands, setActiveLeafId, setData, setMessages, loadContext,
     scrollToBottom, scrollUserMsgToTop, scrollToMessage,
     dispatch, setAgentRunning, setForkingEntryId,
     bashRunning, pendingBash,

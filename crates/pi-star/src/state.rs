@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 use parking_lot::Mutex;
 
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 use pi_star_core::Config;
 use pi_star_core::agent::AgentRegistry;
+use pi_star_core::agent::backend::{self, BackendKind};
 use pi_star_core::file_access::AllowedRoots;
 use pi_star_core::model_catalog::CatalogEntry;
 use pi_star_core::models::{ModelsData, load_models};
@@ -59,8 +60,9 @@ pub struct AppState {
     pub config: Config,
     pub roots: Arc<AllowedRoots>,
     pub agents: Arc<AgentRegistry>,
-    /// Present when sessions run through `pi --mode rpc` instead of the Rust Agent.
-    pub pi_rpc: Option<Arc<PiRpcRegistry>>,
+    /// Standard pi sessions run through `pi --mode rpc`; QuickPI sessions stay
+    /// in `agents`. The per-session choice lives in the session file.
+    pub pi_rpc: Arc<PiRpcRegistry>,
     pub terminals: Arc<TerminalManager>,
     pub ui_state: Arc<UiStateStore>,
     pub session_index: Arc<SessionIndex>,
@@ -110,10 +112,7 @@ impl AppState {
         }
         let push = Arc::new(PushStore::load(config.agent_dir.join("web-push.json")));
         let agents = Arc::new(AgentRegistry::new(config.clone(), roots.clone()));
-        let pi_rpc = match std::env::var("PI_STAR_AGENT_BACKEND").ok().as_deref() {
-            Some("pi-rpc" | "pi") => Some(Arc::new(PiRpcRegistry::new(config.clone()))),
-            _ => None,
-        };
+        let pi_rpc = Arc::new(PiRpcRegistry::new(config.clone()));
         agents.set_max_subagents(
             pi_star_core::settings::subagent_settings(&config).max_concurrent as usize,
         );
@@ -130,9 +129,7 @@ impl AppState {
             })
         };
         agents.set_completion_callback(completion.clone());
-        if let Some(pi_rpc) = &pi_rpc {
-            pi_rpc.set_completion_callback(completion);
-        }
+        pi_rpc.set_completion_callback(completion);
         let ui_state = Arc::new(UiStateStore::new(config.ui_state_path()));
         let terminals = Arc::new(TerminalManager::new());
         let password = password
@@ -188,6 +185,66 @@ impl AppState {
         }))
     }
 
+    /// The backend persisted for `id`; missing sessions and missing entries
+    /// both mean the standard Node.js pi backend.
+    pub fn backend_for(&self, id: &str) -> BackendKind {
+        self.session_path(id)
+            .map(|path| backend::session_backend(&path))
+            .unwrap_or_default()
+    }
+
+    pub fn session_path(&self, id: &str) -> Option<PathBuf> {
+        pi_star_core::session::resolve_session_path(&self.config, id)
+    }
+
+    /// The registry a live wrapper belongs to, if one exists. Subagent
+    /// sessions have no persisted choice of their own, so the live runtime is
+    /// what says which backend owns them.
+    pub fn active_backend(&self, id: &str) -> Option<BackendKind> {
+        if self.pi_rpc.get(id).is_some() {
+            Some(BackendKind::Rpc)
+        } else if self.agents.get(id).is_some() {
+            Some(BackendKind::Quick)
+        } else {
+            None
+        }
+    }
+
+    /// The backend that owns this session now: a live wrapper first, then the
+    /// persisted choice, then the standard pi default.
+    pub fn route_backend(&self, id: &str) -> BackendKind {
+        self.active_backend(id)
+            .unwrap_or_else(|| self.backend_for(id))
+    }
+
+    /// Whether either registry has work under way for this session.
+    pub fn session_running(&self, id: &str) -> bool {
+        self.agents
+            .get(id)
+            .is_some_and(|runtime| runtime.is_running())
+            || self
+                .pi_rpc
+                .get(id)
+                .is_some_and(|session| session.is_running())
+    }
+
+    /// Persist a new backend for a session that is not running, dropping any
+    /// idle wrapper so the next command starts in the selected registry.
+    pub fn set_backend(&self, id: &str, kind: BackendKind) -> Result<BackendKind> {
+        if self.session_running(id) {
+            return Err(anyhow!(
+                "Cannot change the agent backend while the session is running"
+            ));
+        }
+        let path = self
+            .session_path(id)
+            .ok_or_else(|| anyhow!("Session not found"))?;
+        backend::set_session_backend(&path, kind)?;
+        self.agents.remove(id);
+        self.pi_rpc.remove(id);
+        Ok(kind)
+    }
+
     pub fn set_server_port(&self, port: u16) {
         self.server_port.store(port, Ordering::Relaxed);
     }
@@ -216,9 +273,7 @@ impl AppState {
 
     pub fn shutdown(&self) {
         self.agents.shutdown();
-        if let Some(pi_rpc) = &self.pi_rpc {
-            pi_rpc.shutdown();
-        }
+        self.pi_rpc.shutdown();
         self.terminals.kill_all();
     }
 }

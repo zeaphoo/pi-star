@@ -50,6 +50,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(routes::sessions::thinking),
         )
         .route("/agent/new", post(routes::agent::new_session))
+        .route("/agent/backends", get(agent_backends))
         .route("/agent/running", get(routes::agent::running))
         .route("/agent/debug", get(routes::agent::debug))
         .route(
@@ -245,8 +246,12 @@ async fn health(State(state): State<Arc<AppState>>) -> impl IntoResponse {
         "name": "pi-star",
         "version": env!("CARGO_PKG_VERSION"),
         "uptimeMs": state.started.elapsed().as_millis() as u64,
-        "sessions": state.agents.running_ids().len() + state.pi_rpc.as_ref().map(|backend| backend.running_ids().len()).unwrap_or(0),
+        "sessions": state.agents.running_ids().len() + state.pi_rpc.running_ids().len(),
     }))
+}
+
+async fn agent_backends() -> impl IntoResponse {
+    axum::Json(pi_star_core::agent::backend::options())
 }
 
 async fn api_not_found() -> impl IntoResponse {

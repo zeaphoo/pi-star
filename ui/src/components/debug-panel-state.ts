@@ -111,6 +111,7 @@ export const DEBUG_CLOSE_REASON_KEYS: Record<DebugStreamCloseReason, string> = {
   grace_end: "debug.stream.close.graceEnd",
   send_failed: "debug.stream.close.sendFailed",
   set_tools: "debug.stream.close.setTools",
+  backend: "debug.stream.close.backend",
   rebuilt: "debug.stream.close.rebuilt",
   deselected: "debug.stream.close.deselected",
   stuck: "debug.stream.close.stuck",

@@ -72,11 +72,11 @@ async fn main() -> Result<()> {
                 let mut reaped = reaper
                     .agents
                     .reap_idle(std::time::Duration::from_millis(idle_timeout_ms));
-                if let Some(pi_rpc) = &reaper.pi_rpc {
-                    reaped.extend(
-                        pi_rpc.reap_idle(std::time::Duration::from_millis(idle_timeout_ms)),
-                    );
-                }
+                reaped.extend(
+                    reaper
+                        .pi_rpc
+                        .reap_idle(std::time::Duration::from_millis(idle_timeout_ms)),
+                );
                 for id in reaped {
                     tracing::info!(session = %id, "closed an idle agent session");
                 }

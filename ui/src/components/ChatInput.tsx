@@ -35,6 +35,7 @@ import { useFontPreferences } from "@/hooks/useFontPreferences";
 import type { ToolPreset } from "@/lib/tool-presets";
 import { SelectorRow } from "./SelectorRow";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
+import { AgentBackendSelector, type AgentBackendOption } from "./AgentBackendSelector";
 
 export { filterModelOptions } from "./ModelSelector";
 
@@ -66,6 +67,10 @@ interface Props {
   modelSwitching?: boolean;
   /** The model new sessions start with, starred in the model selector. */
   defaultModel?: { provider: string; modelId: string } | null;
+  /** The session's agent backend (`rpc` or `quick`) and the selectable list. */
+  backend?: string | null;
+  backendOptions?: AgentBackendOption[];
+  onBackendChange?: (backend: string) => void;
   /** Saves a model as the default for new sessions and selects it here. */
   onSetDefaultModel?: (provider: string, modelId: string) => void;
   onCompact?: () => void;
@@ -680,6 +685,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, onModelChange, modelSwitching,
   defaultModel, onSetDefaultModel,
   onCompact, onAbortCompaction, isCompacting, compactError, onDismissCompactError, compactResult, toolPreset, onToolPresetChange,
+  backend, backendOptions, onBackendChange,
   thinkingLevel, isAutoThinkingSelection = false, onThinkingLevelChange, availableThinkingLevels, thinkingLevelMap,
   savedDefaultThinkingLevel, onSetDefaultThinkingLevel,
   retryInfo, queuedMessages, inputHistory = [], onRecallQueue,
@@ -2483,6 +2489,14 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                 isAutoSelection={isAutoModelSelection}
                 defaultValue={defaultModel}
                 onSetDefault={onSetDefaultModel}
+              />
+            )}
+            {backend && onBackendChange && (
+              <AgentBackendSelector
+                options={backendOptions ?? []}
+                value={backend}
+                onChange={onBackendChange}
+                disabled={isStreaming}
               />
             )}
           </div>

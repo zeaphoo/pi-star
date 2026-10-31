@@ -769,6 +769,7 @@ impl PiRpcRegistry {
         idle
     }
 
+    #[allow(dead_code)] // used by the RPC integration tests
     pub async fn create(&self, cwd: &Path, options: PiSpawnOptions) -> Result<Arc<PiRpcSession>> {
         let path = create_session_file(&self.config, cwd)?;
         self.open_path(&path, options).await
@@ -787,7 +788,11 @@ impl PiRpcRegistry {
         self.open(id, PiSpawnOptions::default()).await
     }
 
-    async fn open_path(&self, path: &Path, options: PiSpawnOptions) -> Result<Arc<PiRpcSession>> {
+    pub(crate) async fn open_path(
+        &self,
+        path: &Path,
+        options: PiSpawnOptions,
+    ) -> Result<Arc<PiRpcSession>> {
         self.make_room()?;
         let session = read_session(path)?;
         let id = session.id().to_string();

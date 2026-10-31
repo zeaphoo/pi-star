@@ -47,20 +47,29 @@ scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
 
 ### Agent 后端
 
-默认使用融合后的 `AgentHarness` 内核（`crates/pi-star-agent/tools/harness/ai`），
-会话仍写 pi 的 v3 JSONL。也可以让会话交给 `pi --mode rpc` 子进程执行（TS 扩展兼容路径）：
+后端按会话选择，默认是标准 PI（Node.js），由 `pi --mode rpc` 子进程执行：
 
-```bash
-PI_STAR_AGENT_BACKEND=pi-rpc ./target/release/pi-star --port 30151
-```
+| id | 名称 | 实现 |
+| --- | --- | --- |
+| `rpc` | 标准 PI (Node.js) | `PiRpcBackend`，`pi --mode rpc`，兼容 TypeScript 扩展 |
+| `quick` | 极速 PI (QuickPI) | 进程内 `AgentHarness`（`crates/pi-star-agent/tools/harness/ai`） |
 
-可用 `PI_STAR_PI_CLI` 指定 pi 可执行文件，`PI_STAR_AGENT_EXTENSION` 指定
+选择写在会话文件的 `pi-star:agent-backend` custom entry 中，随会话文件走，pi 会忽略它；
+没有该 entry 时按标准 PI 处理。两种后端共享同一批会话文件和配置，但一个会话同一时间只能由一个
+后端写入。
+
+- `GET /api/agent/backends` 返回可选项。
+- `POST /api/agent/new` 可用 `backend: "rpc" | "quick"` 指定新会话的后端。
+- 会话命令 `{"type":"set_backend","backend":"rpc|quick"}` 在会话空闲时切换，运行中返回 409。
+- 聊天输入区的 Agent 下拉与 `/api/agent/:id` 的 `backend` 字段使用同一份状态。
+
+`PI_STAR_PI_CLI` 指定 pi 可执行文件，`PI_STAR_AGENT_EXTENSION` 指定
 `agent-extension/index.ts`，`PI_STAR_PI_RPC_MAX_SESSIONS` 限制同时存活的 pi RPC 会话数
-（默认 8，超出时先回收空闲会话）。两种后端共享同一批会话文件和配置，但一个会话同一时间只能由一个
-后端写入。PiRpcBackend 覆盖 prompt、steer、follow-up、abort、队列、模型/thinking、压缩、重试、
-会话统计、fork/clone、命令、扩展 UI 和事件流；`get_tools`、`set_tools`、`navigate_tree`、
-`fork_branch`、`reload` 由 `agent-extension/` 通过 pi 扩展 API 补偿。该扩展还注册基础的
-`Agent`、`get_subagent_result`、`steer_subagent` 工具，子代理是独立的 pi RPC 会话。
+（默认 8，超出时先回收空闲会话）。PiRpcBackend 覆盖 prompt、steer、follow-up、abort、队列、
+模型/thinking、压缩、重试、会话统计、fork/clone、命令、扩展 UI 和事件流；`get_tools`、
+`set_tools`、`navigate_tree`、`fork_branch`、`reload` 由 `agent-extension/` 通过 pi 扩展 API
+补偿。该扩展还注册基础的 `Agent`、`get_subagent_result`、`steer_subagent` 工具，子代理是
+独立的 pi RPC 会话。
 
 数据仍以文件为唯一事实来源：
 

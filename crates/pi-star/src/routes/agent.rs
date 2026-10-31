@@ -13,6 +13,7 @@ use crate::debug_streams::StreamKind;
 use crate::pi_rpc::PiSpawnOptions;
 use crate::routes::{bad_request, internal, no_store, not_found};
 use crate::state::AppState;
+use pi_star_core::agent::backend::BackendKind;
 
 #[derive(Debug, Deserialize, Default)]
 pub struct NewSessionBody {
@@ -28,6 +29,8 @@ pub struct NewSessionBody {
     thinking_level: Option<String>,
     #[serde(rename = "toolNames")]
     tool_names: Option<Vec<String>>,
+    /// `rpc` (default) or `quick`, persisted on the new session.
+    backend: Option<String>,
     #[serde(flatten)]
     rest: serde_json::Map<String, Value>,
 }
@@ -51,99 +54,126 @@ pub async fn new_session(
         )
             .into_response();
     }
+    let backend = match body.backend.as_deref() {
+        None | Some("") => BackendKind::Rpc,
+        Some(value) => match BackendKind::parse(value) {
+            Some(kind) => kind,
+            None => return bad_request("backend must be rpc or quick"),
+        },
+    };
     state.roots.add(&cwd);
-    if let Some(pi) = &state.pi_rpc {
-        let options = PiSpawnOptions {
-            provider: body.provider.clone(),
-            model_id: body.model_id.clone(),
-            thinking_level: body.thinking_level.clone(),
-            tool_names: body.tool_names.clone(),
-            name: None,
-        };
-        let session = match pi.create(&cwd, options).await {
-            Ok(session) => session,
-            Err(error) => return internal(error),
-        };
-        let kind = body.kind.as_deref().unwrap_or("prompt");
-        let data = if kind == "ensure_session" {
-            Value::Null
-        } else {
-            let mut command = serde_json::Map::new();
-            command.insert("type".into(), Value::String("prompt".into()));
-            if let Some(message) = body.message {
-                command.insert("message".into(), message);
-            }
-            if let Some(images) = body.images {
-                command.insert("images".into(), images);
-            }
-            for (key, value) in body.rest {
-                command.insert(key, value);
-            }
-            match session.send(&Value::Object(command)).await {
-                Ok(data) => data,
-                Err(error) => return internal(error),
-            }
-        };
-        let state_json = session.state_json();
-        return no_store(json!({
-            "success": true,
-            "sessionId": session.id(),
-            "data": data,
-            "model": state_json.get("model").cloned().unwrap_or(Value::Null),
-            "thinkingLevel": state_json.get("thinkingLevel").cloned().unwrap_or(Value::Null),
-        }));
-    }
-    let runtime = match state.agents.create(&cwd) {
-        Ok(runtime) => runtime,
+
+    // Write the choice before any backend process opens the file: pi ignores
+    // the custom entry, and QuickPI's harness reads it when it lazily starts.
+    let path = match pi_star_core::session::create_session_file(&state.config, &cwd) {
+        Ok(path) => path,
         Err(error) => return internal(error),
     };
-    if let (Some(provider), Some(model_id)) = (body.provider.as_ref(), body.model_id.as_ref()) {
-        let _ = runtime
-            .send(&json!({
-                "type": "set_model",
-                "provider": provider,
-                "modelId": model_id,
-            }))
-            .await;
+    if let Err(error) = pi_star_core::agent::backend::set_session_backend(&path, backend) {
+        return internal(error);
     }
-    if let Some(level) = body.thinking_level {
-        let _ = runtime
-            .send(&json!({"type": "set_thinking_level", "level": level}))
-            .await;
-    }
-    if let Some(tool_names) = body.tool_names {
-        let _ = runtime
-            .send(&json!({"type": "set_tools", "toolNames": tool_names}))
-            .await;
-    }
+
     let kind = body.kind.as_deref().unwrap_or("prompt");
-    let data = if kind == "ensure_session" {
+    let command = if kind == "ensure_session" {
         Value::Null
     } else {
         let mut command = serde_json::Map::new();
         command.insert("type".into(), Value::String("prompt".into()));
-        if let Some(message) = body.message {
+        if let Some(message) = body.message.clone() {
             command.insert("message".into(), message);
         }
-        if let Some(images) = body.images {
+        if let Some(images) = body.images.clone() {
             command.insert("images".into(), images);
         }
-        for (key, value) in body.rest {
+        for (key, value) in body.rest.clone() {
             command.insert(key, value);
         }
-        match runtime.send(&Value::Object(command)).await {
-            Ok(data) => data,
-            Err(error) => return internal(error),
-        }
+        Value::Object(command)
     };
-    let state_json = runtime.state_json(false);
-    no_store(json!({
-        "success": true,
-        "sessionId": runtime.id,
-        "data": data,
-        "model": state_json.get("model").cloned().unwrap_or(Value::Null),
-        "thinkingLevel": state_json.get("thinkingLevel").cloned().unwrap_or(Value::Null),
-    }))
+
+    match backend {
+        BackendKind::Rpc => {
+            let options = PiSpawnOptions {
+                provider: body.provider.clone(),
+                model_id: body.model_id.clone(),
+                thinking_level: body.thinking_level.clone(),
+                tool_names: body.tool_names.clone(),
+                name: None,
+            };
+            let session = match state.pi_rpc.open_path(&path, options).await {
+                Ok(session) => session,
+                Err(error) => return internal(error),
+            };
+            let data = if command.is_null() {
+                Value::Null
+            } else {
+                match session.send(&command).await {
+                    Ok(data) => data,
+                    Err(error) => return internal(error),
+                }
+            };
+            let state_json = session.state_json();
+            no_store(json!({
+                "success": true,
+                "sessionId": session.id(),
+                "backend": backend.id(),
+                "data": data,
+                "model": state_json.get("model").cloned().unwrap_or(Value::Null),
+                "thinkingLevel": state_json.get("thinkingLevel").cloned().unwrap_or(Value::Null),
+            }))
+        }
+        BackendKind::Quick => {
+            let runtime = match state.agents.open_path(&path) {
+                Ok(runtime) => runtime,
+                Err(error) => return internal(error),
+            };
+            if let (Some(provider), Some(model_id)) =
+                (body.provider.as_ref(), body.model_id.as_ref())
+            {
+                let _ = runtime
+                    .send(&json!({
+                        "type": "set_model",
+                        "provider": provider,
+                        "modelId": model_id,
+                    }))
+                    .await;
+            }
+            if let Some(level) = body.thinking_level.clone() {
+                let _ = runtime
+                    .send(&json!({"type": "set_thinking_level", "level": level}))
+                    .await;
+            }
+            if let Some(tool_names) = body.tool_names.clone() {
+                let _ = runtime
+                    .send(&json!({"type": "set_tools", "toolNames": tool_names}))
+                    .await;
+            }
+            let data = if command.is_null() {
+                Value::Null
+            } else {
+                match runtime.send(&command).await {
+                    Ok(data) => data,
+                    Err(error) => return internal(error),
+                }
+            };
+            let state_json = runtime.state_json(false);
+            no_store(json!({
+                "success": true,
+                "sessionId": runtime.id,
+                "backend": backend.id(),
+                "data": data,
+                "model": state_json.get("model").cloned().unwrap_or(Value::Null),
+                "thinkingLevel": state_json.get("thinkingLevel").cloned().unwrap_or(Value::Null),
+            }))
+        }
+    }
+}
+
+fn with_backend(mut value: Value, backend: BackendKind) -> Value {
+    if let Some(object) = value.as_object_mut() {
+        object.insert("backend".into(), Value::String(backend.id().into()));
+    }
+    value
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -157,21 +187,25 @@ pub async fn get_state(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<StateQuery>,
 ) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(session) = pi.get(&id) {
-            return no_store(json!({
-                "running": true,
-                "state": session.state_json(),
-            }));
-        }
+    let backend = state.route_backend(&id);
+    if let Some(session) = state.pi_rpc.get(&id) {
+        return no_store(json!({
+            "running": true,
+            "backend": backend.id(),
+            "state": with_backend(session.state_json(), backend),
+        }));
     }
     if let Some(runtime) = state.agents.get(&id) {
         return no_store(json!({
             "running": true,
-            "state": runtime.state_json(query.system_prompt.as_deref() != Some("0")),
+            "backend": backend.id(),
+            "state": with_backend(
+                runtime.state_json(query.system_prompt.as_deref() != Some("0")),
+                backend,
+            ),
         }));
     }
-    no_store(json!({ "running": false }))
+    no_store(json!({ "running": false, "backend": backend.id() }))
 }
 
 pub async fn command(
@@ -179,36 +213,73 @@ pub async fn command(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        let session = match pi.open_or_create(&id).await {
-            Ok(session) => session,
-            Err(_) => return not_found("Session not found"),
+    if body.get("type").and_then(Value::as_str) == Some("set_backend") {
+        let Some(requested) = body.get("backend").and_then(Value::as_str) else {
+            return bad_request("backend is required");
         };
-        return match session.send(&body).await {
-            Ok(data) => no_store(json!({ "success": true, "data": data })),
-            Err(error) => (
-                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                axum::Json(json!({ "error": error })),
-            )
-                .into_response(),
+        let Some(kind) = BackendKind::parse(requested) else {
+            return bad_request("backend must be rpc or quick");
+        };
+        return match state.set_backend(&id, kind) {
+            Ok(kind) => no_store(json!({
+                "success": true,
+                "data": { "backend": kind.id() },
+            })),
+            Err(error) => {
+                crate::routes::json_error(axum::http::StatusCode::CONFLICT, error.to_string())
+            }
         };
     }
-    let runtime = state
-        .agents
-        .get(&id)
-        .map(Ok)
-        .unwrap_or_else(|| state.agents.open_or_create(&id));
-    let runtime = match runtime {
-        Ok(runtime) => runtime,
-        Err(_) => return not_found("Session not found"),
-    };
-    match runtime.send(&body).await {
-        Ok(data) => no_store(json!({ "success": true, "data": data })),
-        Err(error) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            axum::Json(json!({ "error": error.to_string() })),
-        )
-            .into_response(),
+
+    let backend = state.route_backend(&id);
+    match backend {
+        BackendKind::Rpc => {
+            let session = match state.pi_rpc.open_or_create(&id).await {
+                Ok(session) => session,
+                Err(_) => return not_found("Session not found"),
+            };
+            match session.send(&body).await {
+                Ok(data) => no_store(json!({
+                    "success": true,
+                    "data": backend_command_data(data, &body, backend),
+                })),
+                Err(error) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({ "error": error })),
+                )
+                    .into_response(),
+            }
+        }
+        BackendKind::Quick => {
+            let runtime = state
+                .agents
+                .get(&id)
+                .map(Ok)
+                .unwrap_or_else(|| state.agents.open_or_create(&id));
+            let runtime = match runtime {
+                Ok(runtime) => runtime,
+                Err(_) => return not_found("Session not found"),
+            };
+            match runtime.send(&body).await {
+                Ok(data) => no_store(json!({
+                    "success": true,
+                    "data": backend_command_data(data, &body, backend),
+                })),
+                Err(error) => (
+                    axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                    axum::Json(json!({ "error": error.to_string() })),
+                )
+                    .into_response(),
+            }
+        }
+    }
+}
+
+fn backend_command_data(data: Value, command: &Value, backend: BackendKind) -> Value {
+    if command.get("type").and_then(Value::as_str) == Some("get_state") {
+        with_backend(data, backend)
+    } else {
+        data
     }
 }
 
@@ -223,8 +294,8 @@ pub async fn events(
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        let session = match pi.open_or_create(&id).await {
+    if state.route_backend(&id) == BackendKind::Rpc {
+        let session = match state.pi_rpc.open_or_create(&id).await {
             Ok(session) => session,
             Err(_) => return not_found("Session not found"),
         };
@@ -375,10 +446,8 @@ fn filter_event(event: Value) -> Option<Value> {
 pub async fn running(State(state): State<Arc<AppState>>) -> Response {
     let mut running = state.agents.running_ids();
     let mut awaiting = state.agents.awaiting_input_ids();
-    if let Some(pi) = &state.pi_rpc {
-        running.extend(pi.running_ids());
-        awaiting.extend(pi.awaiting_input_ids());
-    }
+    running.extend(state.pi_rpc.running_ids());
+    awaiting.extend(state.pi_rpc.awaiting_input_ids());
     no_store(json!({
         "sessionListVersion": state.started.elapsed().as_millis() as u64,
         "runningSessionIds": running,
@@ -390,31 +459,32 @@ pub async fn running(State(state): State<Arc<AppState>>) -> Response {
 }
 
 pub async fn lease(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
-    if let Some(pi) = &state.pi_rpc {
-        if let Some(session) = pi.get(&id) {
-            session.touch();
-            return no_store(json!({
-                "running": session.is_running(),
-                "awaitingInput": !session.pending_extension_ui_ids().is_empty(),
-                "subagentsActive": false,
-                "state": session.state_json(),
-            }));
-        }
+    let backend = state.route_backend(&id);
+    if let Some(session) = state.pi_rpc.get(&id) {
+        session.touch();
+        return no_store(json!({
+            "running": session.is_running(),
+            "awaitingInput": !session.pending_extension_ui_ids().is_empty(),
+            "subagentsActive": false,
+            "backend": backend.id(),
+            "state": with_backend(session.state_json(), backend),
+        }));
     }
     if let Some(runtime) = state.agents.get(&id) {
         runtime.touch();
-        let state = runtime.state_json(false);
         return no_store(json!({
             "running": runtime.is_running(),
             "awaitingInput": false,
             "subagentsActive": false,
-            "state": state,
+            "backend": backend.id(),
+            "state": with_backend(runtime.state_json(false), backend),
         }));
     }
     no_store(json!({
         "running": false,
         "awaitingInput": false,
         "subagentsActive": false,
+        "backend": backend.id(),
     }))
 }
 
@@ -565,13 +635,11 @@ pub async fn debug(
         },
         "sessions": sessions,
         "session": session,
-        "piRpc": state.pi_rpc.as_ref().map(|pi| {
-            pi.ids()
-                .into_iter()
-                .filter_map(|id| pi.get(&id))
-                .map(|session| session.debug_snapshot())
-                .collect::<Vec<_>>()
-        }).unwrap_or_default(),
+        "piRpc": state.pi_rpc.ids()
+            .into_iter()
+            .filter_map(|id| state.pi_rpc.get(&id))
+            .map(|session| session.debug_snapshot())
+            .collect::<Vec<_>>(),
     }))
 }
 

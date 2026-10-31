@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use pi_star_core::agent::backend::BackendKind;
 use pi_star_core::models::{self, model_defs, read_json, strip_json_comments};
 use pi_star_core::settings;
 
@@ -1089,6 +1090,33 @@ pub async fn subagent_action(
     Json(body): Json<Value>,
 ) -> Response {
     let action = body.get("action").and_then(Value::as_str).unwrap_or("");
+    if state.route_backend(&id) == BackendKind::Rpc {
+        let Some(session) = state.pi_rpc.get(&id) else {
+            return crate::routes::json_error(
+                axum::http::StatusCode::CONFLICT,
+                "Subagent is not running",
+            );
+        };
+        let command = match action {
+            "abort" => json!({"type": "abort"}),
+            "steer" => {
+                let Some(message) = body.get("message").and_then(Value::as_str) else {
+                    return bad_request("message required");
+                };
+                json!({
+                    "type": "prompt",
+                    "message": message,
+                    "streamingBehavior": "steer",
+                })
+            }
+            _ => return bad_request("action must be steer or abort"),
+        };
+        return match session.send(&command).await {
+            Ok(_) => no_store(json!({"ok": true})),
+            Err(error) => internal(error),
+        };
+    }
+
     let Some(runtime) = state.agents.get(&id) else {
         return crate::routes::json_error(
             axum::http::StatusCode::CONFLICT,
