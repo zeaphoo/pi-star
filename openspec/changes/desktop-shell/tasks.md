@@ -35,6 +35,7 @@
 - [ ] 4.4 接通 `tauri-plugin-autostart` 与 `--hidden`：默认关闭、托盘勾选后注册、失败回滚勾选且不写偏好；手动验证登录项注册/注销与静默启动
 - [x] 4.5 实现退出清理：Unix `setsid` + 进程组 SIGTERM→5 秒→SIGKILL，Windows Job Object + `CREATE_NO_WINDOW`；安装信号处理器；集成测试退出后 `pgrep` 无 pi-star/子进程且端口可再次绑定
 - [ ] 4.6 接入 `tauri-plugin-single-instance`（第二个实例聚焦主窗口）、`ExitRequested` 的 `close_to_tray` 分支、macOS Dock policy 与 `Reopen`；手动验证单实例、关窗留托盘和显式退出
+- [x] 4.7 主窗口 `on_new_window`：同源 `window.open` 创建原生窗口，外部链接交系统浏览器；健康检查 I/O 超时改为可重试
 
 ## 5. Web UI 桌面适配
 

@@ -292,9 +292,7 @@ impl Supervisor {
                 return;
             }
         }
-        if let Some(window) = app.get_webview_window(MAIN) {
-            let _ = window.close();
-        }
+        crate::window::close_console_windows(app);
         self.main_ready.store(false, Ordering::SeqCst);
         self.quitting.store(false, Ordering::SeqCst);
 
@@ -691,7 +689,7 @@ impl Supervisor {
             inner.addr = None;
             inner.generation
         };
-        crate::window::close_main(app);
+        crate::window::close_console_windows(app);
         // 超时/健康失败时子进程可能还活着；在后台清理，避免阻塞主线程。
         // 只清理本次 generation，避免用户点重试后误杀新启动的子进程。
         let supervisor = Arc::clone(self);

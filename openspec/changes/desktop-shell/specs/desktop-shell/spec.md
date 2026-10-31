@@ -173,6 +173,27 @@ MUST 清零退避次数。
 - **WHEN** 主窗口页面尝试调用任意 Tauri command
 - **THEN** 调用被 ACL 拒绝，页面无法访问文件系统、shell 或窗口控制
 
+### Requirement: 页面新窗口请求
+
+桌面壳 SHALL 把同源 `http://127.0.0.1:<port>/...` 的 `window.open` 请求转换为新的原生窗口，
+新窗口 MUST 使用原生装饰且不获得任何 Tauri IPC 权限。非同一 origin 的链接 MUST 交给系统浏览器，
+MUST NOT 在应用内创建 webview。普通浏览器行为不变。
+
+#### Scenario: 查看完整历史
+
+- **WHEN** 用户在会话中点击“完整历史”
+- **THEN** 桌面壳打开一个新的原生窗口加载 `/api/sessions/<id>/export?inline=1`，主窗口保持不动
+
+#### Scenario: 会话/项目在新窗口打开
+
+- **WHEN** 用户选择“在新标签页打开”会话或项目
+- **THEN** 桌面壳创建一个同源原生窗口加载 `?session=...` 或 `?cwd=...`
+
+#### Scenario: 外部链接
+
+- **WHEN** 页面打开 OAuth、文档或其他非本地 origin 的链接
+- **THEN** 系统浏览器打开该 URL，应用内不创建 webview
+
 ### Requirement: 托盘与菜单
 
 桌面壳 SHALL 提供状态、打开 Pi Star、重启 Pi Star、开机自启动、关闭窗口时最小化到托盘和退出

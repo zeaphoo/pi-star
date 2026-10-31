@@ -212,13 +212,16 @@ pub fn check_health(addr: &str, password: Option<&str>) -> Health {
     }
 
     let mut response = Vec::new();
+    // A slow/busy server is not a foreign server. Only a complete HTTP response
+    // containing another app's health body is foreign; I/O errors/timeouts stay
+    // retryable until the startup deadline.
     if stream.read_to_end(&mut response).is_err() {
-        return Health::Foreign {
-            detail: "健康响应读取失败".to_string(),
-        };
+        return Health::Unreachable;
     }
     let text = String::from_utf8_lossy(&response);
-    let (head, body) = text.split_once("\r\n\r\n").unwrap_or((&text, ""));
+    let Some((head, body)) = text.split_once("\r\n\r\n") else {
+        return Health::Unreachable;
+    };
     if !head.starts_with("HTTP/1.1 200") && !head.starts_with("HTTP/1.0 200") {
         return Health::Foreign {
             detail: format!(
@@ -360,6 +363,22 @@ mod tests {
         );
         let health = check_health(&addr, None);
         assert!(matches!(health, Health::Foreign { .. }), "{health:?}");
+        let _ = handle.join();
+    }
+
+    #[test]
+    fn health_check_treats_incomplete_response_as_retryable() {
+        use std::io::Read;
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let handle = std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().expect("accept");
+            let mut request = [0u8; 1024];
+            let _ = stream.read(&mut request);
+            // Close without a response (connection reset / empty body).
+        });
+        let health = check_health(&addr.to_string(), None);
+        assert_eq!(health, Health::Unreachable);
         let _ = handle.join();
     }
 

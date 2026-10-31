@@ -268,6 +268,21 @@ Windows 主程序名必须与 `pi-star` 在忽略大小写后不同，否则同�
 `libwebkit2gtk-4.1-0`、`libgtk-3-0`、`libayatana-appindicator3-1`；AppImage 自带 webkit。
 图标从 `ui/public/icons/icon-512.png` 用 `cargo tauri icon` 生成。
 
+### 13. 页面新窗口
+
+主窗口注册 `on_new_window`，不依赖浏览器的 tab：
+
+- 同一 origin（`http://127.0.0.1:<port>`）的 `window.open` → 创建新的 Tauri 窗口，使用
+  `window_features(features)` 继承大小/位置与平台 webview 配置，注入同一个只读
+  `__PI_STAR__`，不授予任何 capability。
+- 其他 URL → 交给 `open`/`xdg-open`/`cmd start`，返回 `Deny`，不在应用内创建 webview。
+- 新窗口同样注册 `on_new_window`，支持嵌套打开。
+- 重启/失败时关闭所有 console 窗口（保留 splash/notice）。
+- 健康检查读取失败/超时视为 `Unreachable` 并重试到启动期限，不再误判成“外部服务”而杀掉
+  pi-star。
+
+这样 Web 端的“完整历史 / 在新标签页打开”语义在桌面端变成独立原生窗口，且不影响主窗口。
+
 ### 13. 构建顺序与版本
 
 ```text
