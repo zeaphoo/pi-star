@@ -10,23 +10,25 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Weak};
 
 use anyhow::{Result, anyhow};
 use serde_json::{Value, json};
 use tokio::sync::broadcast;
 
+use pi_star_agent::agent_tool::AgentTool;
+use pi_star_agent::error::AgentError;
 use pi_star_agent::events::{AgentEmitter, AgentEvent};
 use pi_star_agent::message::AgentMessage;
-use pi_star_agent::types::AgentToolResult;
+use pi_star_agent::types::{AgentToolResult, TextContentOrImage};
 use pi_star_ai::model::Model;
 use pi_star_ai::provider::Provider;
 use pi_star_ai::providers::anthropic::AnthropicProvider;
 use pi_star_ai::providers::faux::{FauxProvider, FauxScript};
 use pi_star_ai::providers::openai_completions::OpenAiCompletionsProvider;
 use pi_star_ai::providers::openai_responses::OpenAiResponsesProvider;
-use pi_star_ai::types::{ImageContent, ThinkingLevel, ToolCall};
+use pi_star_ai::types::{ImageContent, Schema, TextContent, ThinkingLevel, Tool, ToolCall};
 use pi_star_harness::agent_harness::{AgentHarness, AgentLane};
 use pi_star_harness::session::Session;
 use pi_star_harness::session::types::SessionMetadata;
@@ -36,6 +38,7 @@ use pi_star_harness::types::{
 };
 use pi_star_tools::tools::ExecutionToolContext;
 
+use crate::agent::AgentRegistry;
 use crate::agent::harness_env::AllowedEnv;
 use crate::agent::session_store::{V3SessionRepo, message_to_v3};
 use crate::config::Config;
@@ -64,7 +67,12 @@ pub struct HarnessBackend {
 
 impl HarnessBackend {
     /// Open an existing session file with the configured/default model.
-    pub async fn open(config: &Config, roots: Arc<AllowedRoots>, path: &Path) -> Result<Arc<Self>> {
+    pub async fn open(
+        config: &Config,
+        roots: Arc<AllowedRoots>,
+        path: &Path,
+        registry: Weak<AgentRegistry>,
+    ) -> Result<Arc<Self>> {
         let header = read_header(path)?;
         let session_file = read_session(path)?;
         let cwd = PathBuf::from(&header.cwd);
@@ -73,7 +81,10 @@ impl HarnessBackend {
             anyhow!("No model selected. Configure a provider in Settings › Models.")
         })?;
         let providers = build_providers(config, &cwd)?;
-        Self::build(config, roots, path, cwd, header.id, model, providers, None).await
+        Self::build(
+            config, roots, path, cwd, header.id, model, providers, None, registry,
+        )
+        .await
     }
 
     /// Create a new v3 session in `cwd` and open it.
@@ -81,6 +92,7 @@ impl HarnessBackend {
         config: &Config,
         roots: Arc<AllowedRoots>,
         cwd: &Path,
+        registry: Weak<AgentRegistry>,
     ) -> Result<Arc<Self>> {
         roots.add(cwd);
         let repo = V3SessionRepo::new(config.clone(), cwd);
@@ -94,7 +106,7 @@ impl HarnessBackend {
         drop(storage);
         let path = crate::config::session_file_for_id(&config.sessions_dir, &metadata.id)
             .ok_or_else(|| anyhow!("created session file was not found"))?;
-        Self::open(config, roots, &path).await
+        Self::open(config, roots, &path, registry).await
     }
 
     /// Build from explicit model + providers (used by tests and, later, by the
@@ -109,6 +121,7 @@ impl HarnessBackend {
         model_def: ModelDef,
         providers: Vec<Arc<dyn Provider>>,
         system_prompt: Option<String>,
+        registry: Weak<AgentRegistry>,
     ) -> Result<Arc<Self>> {
         let repo = V3SessionRepo::new(config.clone(), &cwd);
         use pi_star_harness::session::types::SessionRepo;
@@ -123,7 +136,7 @@ impl HarnessBackend {
             .map_err(|error| anyhow!(error.to_string()))?;
         let session = Session::new(Arc::new(storage), None);
 
-        let tools = build_tools(&cwd, roots.clone());
+        let tools = build_tools(&cwd, roots.clone(), config, path, registry).await;
         let tool_names: Vec<String> = tools
             .iter()
             .map(|tool| tool.tool.schema().name.clone())
@@ -654,10 +667,16 @@ fn build_providers(config: &Config, _cwd: &Path) -> Result<Vec<Arc<dyn Provider>
 // Tools
 // ---------------------------------------------------------------------------
 
-fn build_tools(cwd: &Path, roots: Arc<AllowedRoots>) -> Vec<HarnessTool> {
+async fn build_tools(
+    cwd: &Path,
+    roots: Arc<AllowedRoots>,
+    config: &Config,
+    parent_path: &Path,
+    registry: Weak<AgentRegistry>,
+) -> Vec<HarnessTool> {
     let env = Arc::new(AllowedEnv::new(cwd.to_path_buf(), roots));
     let context = ExecutionToolContext::new(env.clone(), Some(env.clone()));
-    vec![
+    let mut tools = vec![
         HarnessTool::new(pi_star_tools::create_read_tool(&context, None)),
         HarnessTool::new(pi_star_tools::create_write_tool(&context)),
         HarnessTool::new(pi_star_tools::create_edit_tool(&context)),
@@ -665,7 +684,327 @@ fn build_tools(cwd: &Path, roots: Arc<AllowedRoots>) -> Vec<HarnessTool> {
         HarnessTool::new(pi_star_tools::create_find_tool(&context, None)),
         HarnessTool::new(pi_star_tools::create_grep_tool(&context, None)),
         HarnessTool::new(pi_star_tools::create_ls_tool(&context, None)),
-    ]
+    ];
+
+    let bridge = Arc::new(McpBridge::new(config.clone(), cwd.to_path_buf()));
+    for (name, description, parameters) in bridge.tools().await {
+        tools.push(HarnessTool::new(Arc::new(McpTool {
+            schema: Tool {
+                name,
+                description,
+                parameters: Schema::new(parameters),
+                constrained_sampling: None,
+            },
+            bridge: bridge.clone(),
+        })));
+    }
+
+    tools.push(HarnessTool::new(Arc::new(SubagentTool::new(
+        config.clone(),
+        cwd.to_path_buf(),
+        parent_path.to_path_buf(),
+        registry,
+    ))));
+    tools
+}
+
+// ---------------------------------------------------------------------------
+// MCP tools
+// ---------------------------------------------------------------------------
+
+struct McpBridge {
+    config: Config,
+    cwd: PathBuf,
+    runtime: tokio::sync::Mutex<Option<crate::mcp_runtime::McpRuntime>>,
+}
+
+impl McpBridge {
+    fn new(config: Config, cwd: PathBuf) -> Self {
+        Self {
+            config,
+            cwd,
+            runtime: tokio::sync::Mutex::new(None),
+        }
+    }
+
+    async fn ensure(&self) {
+        let mut guard = self.runtime.lock().await;
+        if guard.is_none() {
+            *guard = Some(crate::mcp_runtime::McpRuntime::connect(&self.config, &self.cwd).await);
+        }
+    }
+
+    async fn tools(&self) -> Vec<(String, String, Value)> {
+        if !crate::mcp_runtime::has_configured_servers(&self.config, &self.cwd) {
+            return Vec::new();
+        }
+        self.ensure().await;
+        let guard = self.runtime.lock().await;
+        guard
+            .as_ref()
+            .map(crate::mcp_runtime::McpRuntime::tool_schemas)
+            .unwrap_or_default()
+    }
+
+    async fn call(&self, name: &str, arguments: Value) -> Result<String> {
+        self.ensure().await;
+        let mut guard = self.runtime.lock().await;
+        match guard.as_mut() {
+            Some(runtime) => runtime.call(name, arguments).await,
+            None => Err(anyhow!("MCP is not available")),
+        }
+    }
+}
+
+struct McpTool {
+    schema: Tool,
+    bridge: Arc<McpBridge>,
+}
+
+#[async_trait::async_trait]
+impl AgentTool for McpTool {
+    fn schema(&self) -> &Tool {
+        &self.schema
+    }
+
+    fn label(&self) -> &str {
+        &self.schema.name
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        params: Value,
+        _signal: tokio_util::sync::CancellationToken,
+        _on_update: Arc<dyn Fn(pi_star_agent::types::ToolResultPartial) + Send + Sync>,
+    ) -> Result<AgentToolResult, AgentError> {
+        let text = self
+            .bridge
+            .call(&self.schema.name, params)
+            .await
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+        Ok(AgentToolResult {
+            content: vec![TextContentOrImage::Text(TextContent {
+                kind: Default::default(),
+                text,
+                text_signature: None,
+            })],
+            details: json!({ "mcp": true }),
+            usage: None,
+            added_tool_names: Vec::new(),
+            terminate: false,
+        })
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Subagent tool
+// ---------------------------------------------------------------------------
+
+struct SubagentTool {
+    schema: Tool,
+    config: Config,
+    cwd: PathBuf,
+    parent_path: PathBuf,
+    registry: Weak<AgentRegistry>,
+    slots: Arc<AtomicUsize>,
+}
+
+impl SubagentTool {
+    fn new(
+        config: Config,
+        cwd: PathBuf,
+        parent_path: PathBuf,
+        registry: Weak<AgentRegistry>,
+    ) -> Self {
+        Self {
+            schema: Tool {
+                name: "subagent".into(),
+                description: "Run a child coding agent and return its final answer.".into(),
+                parameters: Schema::new(json!({
+                    "type": "object",
+                    "properties": {
+                        "description": {
+                            "type": "string",
+                            "description": "Short label shown in the session tree"
+                        },
+                        "prompt": {
+                            "type": "string",
+                            "description": "Complete instruction for the child agent"
+                        }
+                    },
+                    "required": ["description", "prompt"]
+                })),
+                constrained_sampling: None,
+            },
+            config,
+            cwd,
+            parent_path,
+            registry,
+            slots: Arc::new(AtomicUsize::new(0)),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentTool for SubagentTool {
+    fn schema(&self) -> &Tool {
+        &self.schema
+    }
+
+    fn label(&self) -> &str {
+        "subagent"
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        params: Value,
+        signal: tokio_util::sync::CancellationToken,
+        _on_update: Arc<dyn Fn(pi_star_agent::types::ToolResultPartial) + Send + Sync>,
+    ) -> Result<AgentToolResult, AgentError> {
+        let description = params
+            .get("description")
+            .and_then(Value::as_str)
+            .unwrap_or("Subagent")
+            .chars()
+            .take(200)
+            .collect::<String>();
+        let prompt = params
+            .get("prompt")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if prompt.is_empty() {
+            return Err(AgentError::tool("prompt is required"));
+        }
+        let registry = self
+            .registry
+            .upgrade()
+            .ok_or_else(|| AgentError::tool("the agent registry is unavailable"))?;
+        let max = registry.max_subagents();
+        let active = self.slots.fetch_add(1, Ordering::SeqCst);
+        if active >= max {
+            self.slots.fetch_sub(1, Ordering::SeqCst);
+            return Err(AgentError::tool(format!(
+                "too many subagents are already running (max {max})"
+            )));
+        }
+        let _slot = SlotGuard(self.slots.clone());
+
+        let path = crate::session::create_session_file_with_parent(
+            &self.config,
+            &self.cwd,
+            Some(&self.parent_path),
+        )
+        .map_err(|error| AgentError::tool(error.to_string()))?;
+        let child = crate::session::read_session(&path)
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+        let parent_id = crate::session::read_session(&self.parent_path)
+            .map(|session| session.header.id.clone())
+            .unwrap_or_default();
+        let meta = crate::session::new_entry(
+            "custom",
+            None,
+            [
+                (
+                    "customType".to_string(),
+                    Value::String("pi-web:subagent".into()),
+                ),
+                (
+                    "data".to_string(),
+                    json!({
+                        "parentSessionId": parent_id,
+                        "profile": "default",
+                        "description": description,
+                        "status": "running",
+                    }),
+                ),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let _ = crate::session::append_lines(&path, &[meta]);
+        let child_id = child.header.id.clone();
+
+        let runtime = registry
+            .open_path(&path)
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+        let mut receiver = runtime
+            .subscribe()
+            .await
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+        runtime
+            .send(&json!({"type": "prompt", "message": prompt}))
+            .await
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+
+        let deadline = tokio::time::sleep(std::time::Duration::from_secs(600));
+        tokio::pin!(deadline);
+        loop {
+            tokio::select! {
+                _ = signal.cancelled() => {
+                    runtime.abort();
+                    return Err(AgentError::Abort);
+                }
+                _ = &mut deadline => {
+                    runtime.abort();
+                    return Err(AgentError::tool("subagent timed out"));
+                }
+                event = receiver.recv() => {
+                    let Ok(event) = event else { break };
+                    if event.get("type").and_then(Value::as_str) == Some("prompt_done") {
+                        break;
+                    }
+                }
+            }
+        }
+
+        let text = last_assistant_text(&path).unwrap_or_default();
+        Ok(AgentToolResult {
+            content: vec![TextContentOrImage::Text(TextContent {
+                kind: Default::default(),
+                text,
+                text_signature: None,
+            })],
+            details: json!({ "subagentSessionId": child_id }),
+            usage: None,
+            added_tool_names: Vec::new(),
+            terminate: false,
+        })
+    }
+}
+
+struct SlotGuard(Arc<AtomicUsize>);
+
+impl Drop for SlotGuard {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
+fn last_assistant_text(path: &Path) -> Option<String> {
+    let session = crate::session::read_session(path).ok()?;
+    session.entries.iter().rev().find_map(|entry| {
+        (entry.get("type").and_then(Value::as_str) == Some("message")
+            && entry.pointer("/message/role").and_then(Value::as_str) == Some("assistant"))
+        .then(|| {
+            entry
+                .pointer("/message/content")
+                .and_then(Value::as_array)
+                .map(|blocks| {
+                    blocks
+                        .iter()
+                        .filter_map(|block| {
+                            block.get("text").and_then(Value::as_str).map(str::to_owned)
+                        })
+                        .collect::<Vec<_>>()
+                        .join("")
+                })
+                .unwrap_or_default()
+        })
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -947,9 +1286,20 @@ mod tests {
             model_def,
             vec![provider as Arc<dyn Provider>],
             Some("test prompt".into()),
+            Weak::new(),
         )
         .await
         .unwrap();
+
+        let tools = backend.harness.get_tools().await.unwrap();
+        let names: Vec<&str> = tools
+            .iter()
+            .map(|tool| tool.tool.schema().name.as_str())
+            .collect();
+        assert!(names.contains(&"read"));
+        assert!(names.contains(&"bash"));
+        assert!(names.contains(&"subagent"));
+        assert!(!names.iter().any(|name| name.starts_with("mcp__")));
 
         let mut events = backend.subscribe();
         let response = backend

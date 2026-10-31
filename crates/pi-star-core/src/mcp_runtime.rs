@@ -129,6 +129,10 @@ fn configured_servers(config: &Config, cwd: &Path) -> BTreeMap<String, ServerCon
     servers
 }
 
+pub(crate) fn has_configured_servers(config: &Config, cwd: &Path) -> bool {
+    !configured_servers(config, cwd).is_empty()
+}
+
 fn tool_name(server: &str, tool: &str) -> String {
     let sanitize = |value: &str| {
         value

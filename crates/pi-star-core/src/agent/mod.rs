@@ -263,6 +263,10 @@ impl AgentRegistry {
         idle
     }
 
+    pub fn max_subagents(&self) -> usize {
+        *self.max_subagents.lock()
+    }
+
     pub fn set_max_subagents(&self, max: usize) {
         let max = max.max(1);
         *self.max_subagents.lock() = max;
@@ -286,7 +290,13 @@ impl SessionRuntime {
     async fn harness(&self) -> Result<&Arc<HarnessBackend>> {
         self.harness
             .get_or_try_init(|| async {
-                HarnessBackend::open(&self.config, self.roots.clone(), &self.path).await
+                HarnessBackend::open(
+                    &self.config,
+                    self.roots.clone(),
+                    &self.path,
+                    self.registry.clone(),
+                )
+                .await
             })
             .await
     }
