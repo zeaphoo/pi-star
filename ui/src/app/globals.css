@@ -1969,7 +1969,7 @@ pre, code {
   white-space: nowrap;
 }
 
-/* "web v<app> → v<latest> ↗ · pi v<pi>", on one line: where it is narrow,
+/* "v<app> → v<latest> ↗ · pi v<pi>", on one line: where it is narrow,
    pi's version gives way (its ellipsis); the version in use and the update
    link are never cut. */
 .new-session-meta {

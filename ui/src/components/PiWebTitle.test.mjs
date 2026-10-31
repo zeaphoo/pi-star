@@ -73,7 +73,7 @@ test("the brand is a button named for what its click shows, with the brand's tex
   assert.match(
     html,
     new RegExp(
-      `^<button type="button" class="sidebar-brand" aria-label="Pi Star, versions: web ${app}, pi ${pi}"><svg class="sidebar-brand-logo" viewBox="0 0 512 512" aria-hidden="true">.*</svg>Pi Star</button>$`,
+      `^<button type="button" class="sidebar-brand" aria-label="Pi Star, versions: ${app}, pi ${pi}"><svg class="sidebar-brand-logo" viewBox="0 0 512 512" aria-hidden="true">.*</svg>Pi Star</button>$`,
     ),
   );
   assert.doesNotMatch(html, /<link|preload/, "the inline mark needs no image preload");

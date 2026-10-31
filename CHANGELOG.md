@@ -32,6 +32,7 @@
   三平台构建并创建 GitHub Release。
 - **Windows bash**：优先使用内置 MinGit，其次探测系统 Git for Windows，支持 `PI_STAR_BASH`
   覆盖，排除 WSL 启动器，不回退 cmd.exe。
+- **侧边栏品牌**：左侧栏顶部品牌区增加 Pi Star logo。
 
 ### Changed
 
@@ -44,6 +45,8 @@
 
 ### Fixed
 
+- **版本信息**：欢迎页显示实际版本号与内置 pi 版本（`v0.1.0 · pi v0.99.1`），不再显示
+  `pi vpi-compatible-rust`。
 - 桌面壳被 `SIGKILL` 时通过 stdin EOF 与进程组/Job Object 清理子进程树，避免孤儿进程。
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。

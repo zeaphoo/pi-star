@@ -1505,7 +1505,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                 <div className="new-session-brand-text">
                   <span className="new-session-brand-name">Pi Star</span>
                   <span className="new-session-meta">
-                    <span>web v{import.meta.env.VITE_APP_VERSION ?? "0.0.0"}</span>
+                    <span>v{import.meta.env.VITE_APP_VERSION ?? "0.0.0"}</span>
                     <NewSessionUpdateLink label={(version) => t("appUpdate.releaseNotes", { version })} />
                     <span aria-hidden="true">·</span>
                     <span className="new-session-meta-pi">pi v{import.meta.env.VITE_PI_VERSION ?? "0.0.0"}</span>

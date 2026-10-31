@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import tailwindcss from "@tailwindcss/vite";
@@ -6,10 +7,21 @@ import { defineConfig } from "vite";
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 
+// The desktop installer pins the bundled pi version. Keep the UI's displayed
+// version in sync with that pin instead of a hard-coded compatibility string.
+function bundledPiVersion() {
+  try {
+    const pins = JSON.parse(readFileSync(path.resolve(root, "../packaging/pi-runtime.json"), "utf8"));
+    return typeof pins.pi === "string" && pins.pi ? pins.pi : "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 export default defineConfig({
   define: {
     "import.meta.env.VITE_APP_VERSION": JSON.stringify(process.env.PI_STAR_VERSION ?? "0.1.0"),
-    "import.meta.env.VITE_PI_VERSION": JSON.stringify("pi-compatible-rust"),
+    "import.meta.env.VITE_PI_VERSION": JSON.stringify(process.env.PI_STAR_PI_VERSION ?? bundledPiVersion()),
   },
   plugins: [react(), tailwindcss()],
   resolve: {
