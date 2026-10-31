@@ -70,25 +70,26 @@ fi
 
 node -e '
 const fs = require("fs")
+const path = require("path")
 const [root, runtime, out, msi] = process.argv.slice(1)
-const p = (value) => value.replace(/\\/g, "/")
-const fsExists = (p) => fs.existsSync(p)
+const source = (...parts) => path.join(...parts)
 const resources = {
-  [p(`${root}/app/pi-star.exe`)]: "pi-star.exe",
-  [p(`${runtime}/node.exe`)]: "pi-runtime/node.exe",
-  [p(`${runtime}/pi`)]: "pi-runtime/pi",
-  [p(`${runtime}/agent-extension`)]: "pi-runtime/agent-extension",
-  [p(`${runtime}/pi-runtime.json`)]: "pi-runtime/pi-runtime.json",
-  [p(`${runtime}/NODE-LICENSE`)]: "pi-runtime/NODE-LICENSE",
-  [p(`${runtime}/PI-NOTICE`)]: "pi-runtime/PI-NOTICE",
+  [source(root, "app", "pi-star.exe")]: "pi-star.exe",
+  [source(runtime, "node.exe")]: "pi-runtime/node.exe",
+  [source(runtime, "pi")]: "pi-runtime/pi",
+  [source(runtime, "agent-extension")]: "pi-runtime/agent-extension",
+  [source(runtime, "pi-runtime.json")]: "pi-runtime/pi-runtime.json",
+  [source(runtime, "NODE-LICENSE")]: "pi-runtime/NODE-LICENSE",
+  [source(runtime, "PI-NOTICE")]: "pi-runtime/PI-NOTICE",
 }
 for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
-  if (fsExists(`${runtime}/${extra}`)) resources[p(`${runtime}/${extra}`)] = `pi-runtime/${extra}`
+  const candidate = source(runtime, extra)
+  if (fs.existsSync(candidate)) resources[candidate] = `pi-runtime/${extra}`
 }
 const config = { bundle: { resources } }
 if (msi) config.bundle.windows = { wix: { version: msi } }
 fs.writeFileSync(out, JSON.stringify(config))
-' "$(cygpath -m "$ROOT")" "$(cygpath -m "$RUNTIME_DIR")" "$(cygpath -w "$INJECT_CONFIG")" "$MSI_VERSION"
+' "$(cygpath -w "$ROOT")" "$(cygpath -w "$RUNTIME_DIR")" "$(cygpath -w "$INJECT_CONFIG")" "$MSI_VERSION"
 
 (cd "$ROOT/app" && cargo tauri build --config "$(cygpath -w "$INJECT_CONFIG")" --bundles "$BUNDLES")
 rm -f "$INJECT_CONFIG"
