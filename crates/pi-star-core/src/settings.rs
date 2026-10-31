@@ -51,7 +51,9 @@ pub struct SubagentSettings {
 impl Default for SubagentSettings {
     fn default() -> Self {
         Self {
-            built_in_enabled: true,
+            // Matches pi-web: file profiles are always available; enabling the
+            // built-in general-purpose/explore/plan profiles is opt-in.
+            built_in_enabled: false,
             disabled_built_ins: Vec::new(),
             max_concurrent: 10,
         }
@@ -230,7 +232,7 @@ pub fn subagent_settings(config: &Config) -> SubagentSettings {
         built_in_enabled: value
             .get("builtInEnabled")
             .and_then(Value::as_bool)
-            .unwrap_or(true),
+            .unwrap_or(false),
         disabled_built_ins: value
             .get("disabledBuiltIns")
             .and_then(Value::as_array)

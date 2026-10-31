@@ -521,10 +521,15 @@ fn entry_to_v3(entry: &Entry) -> Result<Value, String> {
                 "customType".into(),
                 Value::String("pi-web:tool-selection".into()),
             );
-            obj.insert(
-                "data".into(),
-                json!({ "version": 1, "tools": tools.active_tool_names }),
-            );
+            // The harness uses a marker for "no tools" because it treats an
+            // empty active list as "all tools". Never write that marker into
+            // the pi-compatible file; an empty list is what pi-web stores.
+            let names: Vec<&String> = tools
+                .active_tool_names
+                .iter()
+                .filter(|name| name.as_str() != "__pi_star_no_tools__")
+                .collect();
+            obj.insert("data".into(), json!({ "version": 1, "tools": names }));
         }
         Entry::Compaction(compaction) => {
             obj.insert("summary".into(), Value::String(compaction.summary.clone()));
@@ -672,6 +677,18 @@ pub(crate) fn v3_to_entry(value: &Value, seq: u64) -> SessionResult<Entry> {
         let custom_type = obj.get("customType").and_then(Value::as_str).unwrap_or("");
         if custom_type == "pi-web:tool-selection" {
             if let Some(tools) = obj.get("data").and_then(|data| data.get("tools")).cloned() {
+                let tools = tools
+                    .as_array()
+                    .map(|items| {
+                        Value::Array(
+                            items
+                                .iter()
+                                .filter(|item| item.as_str() != Some("__pi_star_no_tools__"))
+                                .cloned()
+                                .collect(),
+                        )
+                    })
+                    .unwrap_or(tools);
                 normalized.insert("type".into(), Value::String("active_tools_change".into()));
                 normalized.insert("activeToolNames".into(), tools);
             }

@@ -12,6 +12,7 @@ pub struct ParsedSource {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum SourceKind {
     Npm(String),
     Git {
@@ -107,21 +108,8 @@ pub fn install_path(
     scope: &str,
     cwd: Option<&Path>,
 ) -> Option<PathBuf> {
-    let parsed = parse_source(source).ok()?;
-    let root = root_for(state, scope, cwd)?;
-    match parsed.kind {
-        SourceKind::Npm(name) => Some(root.join("npm").join("node_modules").join(name)),
-        SourceKind::Git { host, path, .. } => Some(root.join("git").join(host).join(path)),
-        SourceKind::Local(path) => Some(root.join("git").join("local").join(path.file_name()?)),
-    }
-}
-
-fn root_for(state: &AppState, scope: &str, cwd: Option<&Path>) -> Option<PathBuf> {
-    if scope == "project" {
-        Some(cwd?.to_path_buf())
-    } else {
-        Some(state.config.agent_dir.clone())
-    }
+    let cwd = cwd.unwrap_or_else(|| Path::new("."));
+    pi_star_core::resources::install_path(&state.config, cwd, scope, source)
 }
 
 pub async fn install(
@@ -142,14 +130,19 @@ pub async fn install(
     }
     match &parsed.kind {
         SourceKind::Npm(name) => {
+            // target is <base>/npm/node_modules/<name>; npm runs in <base>/npm.
             let root = target
                 .parent()
-                .and_then(Path::parent)
                 .and_then(Path::parent)
                 .ok_or_else(|| anyhow!("invalid npm install path"))?
                 .to_path_buf();
             ensure_npm_project(&root)?;
-            run("npm", &["install", "--no-audit", "--no-fund", name], None).await?;
+            run(
+                "npm",
+                &["install", "--no-audit", "--no-fund", name],
+                Some(&root),
+            )
+            .await?;
             // The package name may include a scope; npm still installs it under
             // <root>/node_modules/<name>, which is what target already names.
         }
@@ -179,20 +172,9 @@ pub async fn install(
             }
         }
         SourceKind::Local(path) => {
+            // pi references a local package in place; it does not copy it.
             if !path.exists() {
                 return Err(anyhow!("local package path does not exist"));
-            }
-            if target.exists() {
-                std::fs::remove_dir_all(&target)?;
-            }
-            copy_dir(path, &target)?;
-            if target.join("package.json").is_file() {
-                let _ = run(
-                    "npm",
-                    &["install", "--omit=dev", "--no-audit", "--no-fund"],
-                    Some(&target),
-                )
-                .await;
             }
         }
     }
@@ -206,6 +188,12 @@ pub async fn update(
     scope: &str,
     cwd: Option<&Path>,
 ) -> Result<PathBuf> {
+    let parsed = parse_source(source)?;
+    if matches!(parsed.kind, SourceKind::Local(_)) {
+        // A local package is used in place; there is nothing to update.
+        return install_path(state, source, scope, cwd)
+            .ok_or_else(|| anyhow!("cwd is required for a project package"));
+    }
     if let Some(target) = install_path(state, source, scope, cwd) {
         if target.exists() {
             let _ = std::fs::remove_dir_all(&target);
@@ -215,12 +203,38 @@ pub async fn update(
 }
 
 pub fn remove(state: &AppState, source: &str, scope: &str, cwd: Option<&Path>) -> Result<()> {
-    if let Some(target) = install_path(state, source, scope, cwd) {
-        if target.exists() {
-            std::fs::remove_dir_all(&target)?;
+    let parsed = parse_source(source)?;
+    let local = matches!(parsed.kind, SourceKind::Local(_));
+    if !local {
+        if let Some(target) = install_path(state, source, scope, cwd) {
+            if target.exists() {
+                std::fs::remove_dir_all(&target)?;
+            }
+        }
+    }
+    // Old pi-star builds installed project packages under the project root
+    // instead of `.pi`, and copied local packages there. Remove those copies
+    // (never the local source itself) so a reinstall cannot resurrect them.
+    if let Some(cwd) = cwd {
+        if let Some(legacy) = pi_star_core::resources::installed_packages(&state.config, cwd)
+            .into_iter()
+            .find(|package| package.source == source && api_scope(&package.scope) == scope)
+            .and_then(|package| package.legacy_path)
+        {
+            if legacy.exists() {
+                std::fs::remove_dir_all(&legacy)?;
+            }
         }
     }
     remove_setting_package(state, source, scope, cwd)
+}
+
+fn api_scope(scope: &str) -> &str {
+    if scope == "project" {
+        "project"
+    } else {
+        "global"
+    }
 }
 
 fn ensure_npm_project(root: &Path) -> Result<()> {
@@ -247,21 +261,6 @@ async fn run(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<()> {
             "{}",
             String::from_utf8_lossy(&output.stderr).trim()
         ));
-    }
-    Ok(())
-}
-
-fn copy_dir(source: &Path, target: &Path) -> Result<()> {
-    std::fs::create_dir_all(target)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let path = entry.path();
-        let destination = target.join(entry.file_name());
-        if path.is_dir() {
-            copy_dir(&path, &destination)?;
-        } else if path.is_file() {
-            std::fs::copy(&path, &destination)?;
-        }
     }
     Ok(())
 }

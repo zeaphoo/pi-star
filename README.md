@@ -71,6 +71,12 @@ scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
 补偿。该扩展还注册基础的 `Agent`、`get_subagent_result`、`steer_subagent` 工具，子代理是
 独立的 pi RPC 会话。
 
+QuickPI 的系统提示按 pi 的 sections（preamble/tools/rules/docs/addendum/project_context/skills/cwd）渲染，
+并读取 `SYSTEM.md`、`APPEND_SYSTEM.md`、`AGENTS.md`/`CLAUDE.md` 与 `settings.json` 的 `defaultTools`；
+`pi-web:tool-selection` custom entry 会在重开会话时恢复工具选择。Settings › Skills、Sub-agents、
+Plugins 使用与 pi 相同的资源发现规则：settings 路径、包内资源、`~/.agents`、项目 `.pi` 与
+`npm/git` 安装目录。
+
 数据仍以文件为唯一事实来源：
 
 - 会话：`~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`

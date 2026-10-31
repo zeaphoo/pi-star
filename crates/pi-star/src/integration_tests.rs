@@ -306,10 +306,39 @@ async fn files_list_read_and_index() {
 
 #[tokio::test]
 async fn agent_ensure_session_creates_a_file() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|| async { "data: [DONE]\n\n" }),
+    );
+    tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
     let fixture = write_fixture();
+    std::fs::write(
+        fixture.agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "test": {
+                    "api": "openai-completions",
+                    "baseUrl": format!("http://{addr}/v1"),
+                    "apiKey": "test-key",
+                    "models": [{"id": "test", "name": "Test Model"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.agent_dir.join("settings.json"),
+        json!({"defaultProvider": "test", "defaultModel": "test"}).to_string(),
+    )
+    .unwrap();
     let app = router(&fixture).await;
     let (status, body) = call(
-        app,
+        app.clone(),
         Request::builder()
             .method("POST")
             .uri("/api/agent/new")
@@ -326,7 +355,7 @@ async fn agent_ensure_session_creates_a_file() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    let id = body["sessionId"].as_str().unwrap();
+    let id = body["sessionId"].as_str().unwrap().to_string();
     assert!(
         pi_star_core::session::resolve_session_path(
             &pi_star_core::Config::new(
@@ -334,10 +363,74 @@ async fn agent_ensure_session_creates_a_file() {
                 Some(fixture.ui_dir.clone())
             )
             .unwrap(),
-            id
+            &id
         )
         .is_some()
     );
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/agent/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["backend"], "quick");
+    let prompt = body["state"]["systemPrompt"].as_str().unwrap();
+    assert!(prompt.contains("<tools>"), "{prompt}");
+    assert!(prompt.contains("<cwd>"), "{prompt}");
+    assert!(prompt.contains("- read: Read file contents"), "{prompt}");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/agent/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"type": "set_tools", "toolNames": ["read"]}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+
+    // Dropping the idle wrapper makes the next get_tools rebuild the harness
+    // from the pi-web:tool-selection entry it just persisted.
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/agent/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"type": "set_backend", "backend": "quick"}).to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/agent/{id}"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"type": "get_tools"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let tools = body["data"].as_array().unwrap();
+    let active: Vec<&str> = tools
+        .iter()
+        .filter(|tool| tool["active"] == true)
+        .filter_map(|tool| tool["name"].as_str())
+        .collect();
+    assert_eq!(active, vec!["read"]);
 }
 
 #[tokio::test]
@@ -850,6 +943,12 @@ async fn plugins_install_update_and_remove_a_local_package() {
     std::fs::create_dir_all(&plugin).unwrap();
     std::fs::write(plugin.join("index.js"), "export default {};\n").unwrap();
     let source = plugin.to_string_lossy().into_owned();
+    let config = pi_star_core::Config::new(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+    )
+    .unwrap();
+    pi_star_core::settings::set_project_trust(&config, &fixture.cwd, true).unwrap();
     let app = router(&fixture).await;
 
     let (status, body) = call(
@@ -871,7 +970,7 @@ async fn plugins_install_update_and_remove_a_local_package() {
     )
     .await;
     assert_eq!(status, StatusCode::OK, "{body}");
-    assert!(fixture.cwd.join("git/local/my-plugin/index.js").exists());
+    assert!(plugin.join("index.js").exists());
     assert!(fixture.cwd.join(".pi/settings.json").exists());
 
     let (status, body) = call(
@@ -930,8 +1029,300 @@ async fn plugins_install_update_and_remove_a_local_package() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(!fixture.cwd.join("git/local/my-plugin").exists());
+    assert!(plugin.join("index.js").exists());
     assert!(body["packages"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn skills_discover_settings_package_and_auto_sources() {
+    let fixture = write_fixture();
+    let external = fixture.cwd.join("external-skills");
+    std::fs::create_dir_all(external.join("configured")).unwrap();
+    std::fs::write(
+        external.join("configured/SKILL.md"),
+        "---\nname: configured\ndescription: From a settings path\n---\nbody\n",
+    )
+    .unwrap();
+    let project_skill = fixture.cwd.join(".pi/skills/project-one");
+    std::fs::create_dir_all(&project_skill).unwrap();
+    std::fs::write(
+        project_skill.join("SKILL.md"),
+        "---\nname: project-one\ndescription: Project skill\n---\nbody\n",
+    )
+    .unwrap();
+    let package_skill = fixture
+        .agent_dir
+        .join("npm/node_modules/demo-package/skills/packaged");
+    std::fs::create_dir_all(&package_skill).unwrap();
+    std::fs::write(
+        package_skill.join("SKILL.md"),
+        "---\nname: packaged\ndescription: Package skill\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.agent_dir.join("settings.json"),
+        json!({
+            "skills": [external.to_string_lossy()],
+            "packages": ["npm:demo-package"]
+        })
+        .to_string(),
+    )
+    .unwrap();
+
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/skills?cwd={}", urlencoding(&fixture.cwd)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let skills = body["skills"].as_array().unwrap();
+    let configured = skills
+        .iter()
+        .find(|skill| skill["name"] == "configured")
+        .expect("settings skill path");
+    assert_eq!(configured["sourceInfo"]["source"], "local");
+    let project = skills
+        .iter()
+        .find(|skill| skill["name"] == "project-one")
+        .expect("project skill");
+    assert_eq!(project["sourceInfo"]["scope"], "project");
+    let packaged = skills
+        .iter()
+        .find(|skill| skill["name"] == "packaged")
+        .expect("package skill");
+    assert_eq!(packaged["sourceInfo"]["source"], "npm:demo-package");
+    assert_eq!(packaged["sourceInfo"]["origin"], "package");
+    assert_eq!(body["projectResourcesLoaded"], true);
+}
+
+#[tokio::test]
+async fn subagent_settings_builtins_workspace_and_profile_fields_match_pi_web() {
+    let fixture = write_fixture();
+    let workspace = fixture.cwd.join(".agents/agents");
+    std::fs::create_dir_all(&workspace).unwrap();
+    std::fs::write(
+        workspace.join("workspace-review.md"),
+        "---\nname: workspace-review\ndisplay_name: Workspace review\ndescription: Reviews in the workspace\nload_skills: true\ncodemode: inherit\nmax_turns: 4\nallowed_subagents: [general-purpose]\n---\n\nReview carefully.\n",
+    )
+    .unwrap();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/subagents/settings")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["enabled"], false);
+    assert_eq!(body["maxConcurrent"], 10);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/subagents/settings")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"enabled": true}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["enabled"], true);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/subagents/profiles?cwd={}",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let profiles = body["profiles"].as_array().unwrap();
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile["name"] == "general-purpose" && profile["scope"] == "builtin")
+    );
+    assert!(
+        profiles
+            .iter()
+            .any(|profile| profile["name"] == "explore" && profile["scope"] == "builtin")
+    );
+    let workspace_profile = profiles
+        .iter()
+        .find(|profile| profile["name"] == "workspace-review")
+        .expect("workspace profile");
+    assert_eq!(workspace_profile["scope"], "workspace");
+    assert_eq!(workspace_profile["displayName"], "Workspace review");
+    assert_eq!(workspace_profile["loadSkills"], true);
+    assert_eq!(workspace_profile["codemode"], "inherit");
+    assert_eq!(workspace_profile["maxTurns"], 4);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PATCH")
+            .uri("/api/subagents/profiles")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({"cwd": fixture.cwd, "scope": "builtin", "name": "explore", "enabled": false})
+                    .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["profile"]["enabled"], false);
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/api/subagents/profiles?cwd={}",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let explore = body["profiles"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|profile| profile["name"] == "explore")
+        .unwrap();
+    assert_eq!(explore["enabled"], false);
+}
+
+#[tokio::test]
+async fn plugins_discover_resources_and_toggle_in_bulk() {
+    let fixture = write_fixture();
+    let package = fixture.agent_dir.join("npm/node_modules/demo-plugin");
+    std::fs::create_dir_all(package.join("skills/one")).unwrap();
+    std::fs::create_dir_all(package.join("extensions")).unwrap();
+    std::fs::write(
+        package.join("package.json"),
+        json!({"name": "demo-plugin", "version": "1.2.3", "description": "Demo plugin"})
+            .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        package.join("skills/one/SKILL.md"),
+        "---\nname: one\ndescription: One\n---\nbody\n",
+    )
+    .unwrap();
+    std::fs::write(package.join("extensions/hello.js"), "export default {};\n").unwrap();
+    std::fs::create_dir_all(fixture.agent_dir.join("extensions")).unwrap();
+    std::fs::write(
+        fixture.agent_dir.join("extensions/standalone.js"),
+        "export default {};\n",
+    )
+    .unwrap();
+    std::fs::write(
+        fixture.agent_dir.join("settings.json"),
+        json!({"packages": ["npm:demo-plugin"]}).to_string(),
+    )
+    .unwrap();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/plugins?cwd={}", urlencoding(&fixture.cwd)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let package = body["packages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|package| package["source"] == "npm:demo-plugin")
+        .expect("configured package");
+    assert_eq!(package["status"], "loaded");
+    assert_eq!(package["packageName"], "demo-plugin");
+    assert_eq!(package["version"], "1.2.3");
+    assert_eq!(package["counts"]["skills"], 1);
+    assert_eq!(package["counts"]["extensions"], 1);
+    assert!(
+        package["resources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|resource| resource["kind"] == "skill" && resource["name"] == "one")
+    );
+    assert!(
+        body["standaloneExtensions"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|extension| extension["name"] == "standalone")
+    );
+    assert_eq!(body["totals"]["skills"], 1);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/plugins")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "cwd": fixture.cwd,
+                    "action": "disable",
+                    "packages": [{"source": "npm:demo-plugin", "scope": "global"}]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["results"][0]["source"], "npm:demo-plugin");
+    assert_eq!(body["packages"][0]["disabled"], true,);
+    let stored: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.agent_dir.join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["packages"][0]["extensions"], json!([]));
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/plugins")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "cwd": fixture.cwd,
+                    "action": "enable",
+                    "packages": [{"source": "npm:demo-plugin", "scope": "global"}]
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["packages"][0]["disabled"], false);
+    let stored: Value = serde_json::from_str(
+        &std::fs::read_to_string(fixture.agent_dir.join("settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(stored["packages"][0], json!("npm:demo-plugin"));
 }
 
 #[tokio::test]

@@ -18,7 +18,9 @@ use tokio::process::{Child, Command};
 use tokio::sync::{broadcast, oneshot};
 
 use pi_star_core::Config;
-use pi_star_core::session::{create_session_file, read_session, resolve_session_path};
+use pi_star_core::session::{
+    append_lines, create_session_file, new_entry, read_session, resolve_session_path,
+};
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(120);
 const MAX_RPC_LINE_BYTES: usize = 16 * 1024 * 1024;
@@ -152,6 +154,7 @@ pub struct PiRpcSession {
     completion: Mutex<Option<Arc<dyn Fn(&str, Option<&str>) + Send + Sync>>>,
     rekey: Mutex<Option<Arc<dyn Fn(&str, &str, &Path) + Send + Sync>>>,
     started_at: Instant,
+    config: Config,
 }
 
 impl PiRpcSession {
@@ -165,6 +168,7 @@ impl PiRpcSession {
         stderr: tokio::process::ChildStderr,
         control: Arc<PiControl>,
         extension_available: bool,
+        config: Config,
     ) -> Arc<Self> {
         let (events, _) = broadcast::channel(2048);
         let session = Arc::new(Self {
@@ -187,6 +191,7 @@ impl PiRpcSession {
             completion: Mutex::new(None),
             rekey: Mutex::new(None),
             started_at: Instant::now(),
+            config,
         });
         let reader_session = session.clone();
         tokio::spawn(async move { reader_session.read_loop(stdout).await });
@@ -398,6 +403,34 @@ impl PiRpcSession {
         self.identity.lock().path.clone()
     }
 
+    /// Persist the active tool selection in the same `pi-web:tool-selection`
+    /// custom entry pi-web uses. `None` records a cleared selection so a later
+    /// reopen follows settings.json `defaultTools` again.
+    pub fn append_tool_selection(&self, tools: Option<&[String]>) {
+        let path = self.path();
+        let Ok(session) = read_session(&path) else {
+            return;
+        };
+        let data = match tools {
+            Some(tools) => json!({"version": 1, "tools": tools}),
+            None => json!({"version": 1, "cleared": true}),
+        };
+        let entry = new_entry(
+            "custom",
+            session.leaf_id().as_deref(),
+            [
+                (
+                    "customType".to_string(),
+                    Value::String("pi-web:tool-selection".into()),
+                ),
+                ("data".to_string(), data),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        let _ = append_lines(&path, &[entry]);
+    }
+
     pub fn set_rekey(&self, callback: Arc<dyn Fn(&str, &str, &Path) + Send + Sync>) {
         *self.rekey.lock() = Some(callback);
     }
@@ -489,8 +522,29 @@ impl PiRpcSession {
             "extension_ui_response" => self.send_extension_ui_response(command.clone()).await,
             "get_tools" => self.host_command("get_tools", json!({})).await,
             "set_tools" => {
-                let params = json!({"toolNames": command.get("toolNames").cloned().unwrap_or_else(|| json!([]))});
-                self.host_command("set_tools", params).await
+                let requested = command.get("toolNames").and_then(Value::as_array);
+                let names: Vec<String> = match requested {
+                    Some(items) => items
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .map(str::to_owned)
+                        .collect(),
+                    // No selection means "back to settings.json defaults", not
+                    // "turn every tool off": resolve the same default loadout
+                    // pi does and record a cleared marker for future opens.
+                    None => pi_star_core::prompt::default_tool_names(&self.config, &self.cwd),
+                };
+                let result = self
+                    .host_command("set_tools", json!({"toolNames": names}))
+                    .await;
+                if result.is_ok() {
+                    if requested.is_some() {
+                        self.append_tool_selection(Some(&names));
+                    } else {
+                        self.append_tool_selection(None);
+                    }
+                }
+                result
             }
             "navigate_tree" => self.host_command("navigate_tree", command.clone()).await,
             "fork_branch" => self.host_command("fork_branch", command.clone()).await,
@@ -614,6 +668,42 @@ fn agent_extension_path() -> Option<PathBuf> {
         );
     }
     candidates.into_iter().find(|path| path.exists())
+}
+
+/// The newest valid `pi-web:tool-selection` entry, or `None` when the session
+/// follows settings.json defaults (no entry, or a later cleared marker).
+fn persisted_tool_selection(path: &Path) -> Option<Vec<String>> {
+    let session = read_session(path).ok()?;
+    for entry in session.entries.iter().rev() {
+        if entry.get("type").and_then(Value::as_str) != Some("custom")
+            || entry.get("customType").and_then(Value::as_str) != Some("pi-web:tool-selection")
+        {
+            continue;
+        }
+        let Some(data) = entry.get("data") else {
+            continue;
+        };
+        if data.get("version").and_then(Value::as_u64) != Some(1) {
+            continue;
+        }
+        if data.get("cleared").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let Some(tools) = data.get("tools").and_then(Value::as_array) else {
+            continue;
+        };
+        if !tools.iter().all(Value::is_string) {
+            continue;
+        }
+        return Some(
+            tools
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+    None
 }
 
 pub struct PiRpcRegistry {
@@ -793,6 +883,7 @@ impl PiRpcRegistry {
         path: &Path,
         options: PiSpawnOptions,
     ) -> Result<Arc<PiRpcSession>> {
+        let requested_tools = options.tool_names.clone();
         self.make_room()?;
         let session = read_session(path)?;
         let id = session.id().to_string();
@@ -870,6 +961,7 @@ impl PiRpcRegistry {
             stderr,
             control,
             extension.is_some(),
+            self.config.clone(),
         );
         if let Some(provider) = options.provider {
             if let Some(model_id) = options.model_id {
@@ -902,6 +994,15 @@ impl PiRpcRegistry {
         let _ = session
             .request(json!({"type":"get_state"}), REQUEST_TIMEOUT)
             .await;
+        if let Some(tools) = requested_tools {
+            session.append_tool_selection(Some(&tools));
+        } else if let Some(selection) = persisted_tool_selection(path) {
+            // Apply the pi-web custom entry to the live loadout. The entry may
+            // be an empty list, which pi-web stores for a Chat-only session.
+            let _ = session
+                .host_command("set_tools", json!({"toolNames": selection}))
+                .await;
+        }
         let id = session.id();
         self.sessions.lock().insert(id, session.clone());
         Ok(session)

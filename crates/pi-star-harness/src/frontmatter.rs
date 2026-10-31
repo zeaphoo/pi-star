@@ -19,7 +19,7 @@ use serde_json::{Map, Value};
 /// - No closing `\n---` → same as no-frontmatter.
 /// - Otherwise yaml = between the fences; body = after the closing fence,
 ///   trimmed.
-pub(crate) fn parse_frontmatter(content: &str) -> Result<(Value, String), String> {
+pub fn parse_frontmatter(content: &str) -> Result<(Value, String), String> {
     let normalized = content.replace("\r\n", "\n").replace('\r', "\n");
     if !normalized.starts_with("---") {
         return Ok((Value::Object(Map::new()), normalized));

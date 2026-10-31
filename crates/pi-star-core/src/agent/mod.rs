@@ -398,15 +398,11 @@ fn tool_names() -> Vec<String> {
 }
 
 pub(crate) fn build_system_prompt(config: &Config, cwd: &Path, tools: &[String]) -> String {
-    let mut prompt = format!(
-        "You are pi, a coding agent working in {}. Use the available tools to inspect and modify the project. \
-         Prefer reading files before editing. Keep replies concise and show the user what changed. \
-         Available tools: {}.",
-        cwd.display(),
-        tools.join(", ")
-    );
-    prompt.push_str(&crate::skills::prompt_section(config, cwd));
-    prompt
+    crate::prompt::build_system_prompt(config, cwd, tools)
+}
+
+pub(crate) fn prompt_tool_guidelines(name: &str) -> &'static [&'static str] {
+    crate::prompt::tool_guidelines(name)
 }
 
 fn last_assistant_text(path: &Path) -> Option<String> {

@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -787,62 +787,95 @@ pub async fn set_cache_miss(
 }
 
 pub async fn subagent_settings(State(state): State<Arc<AppState>>) -> Response {
-    no_store(settings::subagent_settings(&state.config))
+    let settings = settings::subagent_settings(&state.config);
+    no_store(json!({
+        "enabled": settings.built_in_enabled,
+        "maxConcurrent": settings.max_concurrent,
+    }))
 }
 
 pub async fn set_subagent_settings(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
-    match settings::set_subagent_settings(&state.config, &body) {
-        Ok(settings) => no_store(settings),
-        Err(error) => internal(error),
+    let enabled = body
+        .get("enabled")
+        .or_else(|| body.get("builtInEnabled"))
+        .and_then(Value::as_bool);
+    let max_concurrent = body.get("maxConcurrent").and_then(Value::as_u64);
+    if enabled.is_none() && max_concurrent.is_none() {
+        return bad_request("enabled or maxConcurrent is required");
     }
+    if let Some(enabled) = enabled {
+        if let Err(error) = pi_star_core::subagents::set_builtin_enabled(&state.config, enabled) {
+            return internal(error);
+        }
+    }
+    if let Some(max) = max_concurrent {
+        if !(1..=32).contains(&max) {
+            return bad_request("maxConcurrent must be an integer between 1 and 32");
+        }
+        if let Err(error) = pi_star_core::subagents::set_max_concurrent(&state.config, max as u32) {
+            return internal(error);
+        }
+        state.agents.set_max_subagents(max as usize);
+    }
+    subagent_settings(State(state)).await
+}
+
+fn cwd_from_body(state: &AppState, body: &Value) -> Result<PathBuf, Response> {
+    let Some(cwd) = body.get("cwd").and_then(Value::as_str) else {
+        return Err(bad_request("Valid cwd required"));
+    };
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_dir() {
+        return Err(bad_request("Valid cwd required"));
+    }
+    if !state.roots.is_allowed_existing(&cwd) {
+        return Err(forbidden("Access denied"));
+    }
+    Ok(cwd)
 }
 
 pub async fn subagent_profiles(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CwdQuery>,
 ) -> Response {
-    let cwd = query.cwd.map(PathBuf::from);
-    no_store(json!({"profiles": scan_subagent_profiles(&state, cwd.as_deref())}))
+    let Some(cwd) = query.cwd else {
+        return bad_request("Valid cwd required");
+    };
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_dir() {
+        return bad_request("Valid cwd required");
+    }
+    if !state.roots.is_allowed_existing(&cwd) {
+        return forbidden("Access denied");
+    }
+    no_store(json!({
+        "profiles": pi_star_core::subagents::list_profiles(&state.config, &cwd),
+    }))
 }
 
 pub async fn save_subagent_profile(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
+    let cwd = match cwd_from_body(&state, &body) {
+        Ok(cwd) => cwd,
+        Err(response) => return response,
+    };
+    let Some(scope) = body.get("scope").and_then(Value::as_str) else {
+        return bad_request("scope must be global or project");
+    };
+    if !matches!(scope, "global" | "project") {
+        return bad_request("scope must be global or project");
+    }
     let Some(profile) = body.get("profile") else {
         return bad_request("profile required");
     };
-    let Some(name) = profile
-        .get("name")
-        .and_then(Value::as_str)
-        .filter(|name| !name.is_empty())
-    else {
-        return bad_request("profile.name required");
-    };
-    if name.contains('/') || name.contains('\\') || name == ".." {
-        return bad_request("invalid profile name");
-    }
-    let scope = body
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("global");
-    let dir = match subagent_profile_dir(&state, scope, body.get("cwd").and_then(Value::as_str)) {
-        Some(dir) => dir,
-        None => return bad_request("cwd is required for a project profile"),
-    };
-    if let Err(error) = std::fs::create_dir_all(&dir) {
-        return internal(error);
-    }
-    let path = dir.join(format!("{name}.md"));
-    let text = render_subagent_profile(profile);
-    match std::fs::write(&path, text) {
-        Ok(()) => no_store(json!({
-            "profile": subagent_profile_from_file(&path, scope)
-        })),
-        Err(error) => internal(error),
+    match pi_star_core::subagents::save_profile(&state.config, &cwd, scope, profile) {
+        Ok(profile) => no_store(json!({ "profile": profile })),
+        Err(error) => bad_request(error.to_string()),
     }
 }
 
@@ -850,28 +883,28 @@ pub async fn toggle_subagent_profile(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
+    let cwd = match cwd_from_body(&state, &body) {
+        Ok(cwd) => cwd,
+        Err(response) => return response,
+    };
     let Some(name) = body.get("name").and_then(Value::as_str) else {
         return bad_request("name required");
     };
     let Some(enabled) = body.get("enabled").and_then(Value::as_bool) else {
         return bad_request("enabled required");
     };
-    let scope = body
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("global");
-    let Some(dir) = subagent_profile_dir(&state, scope, body.get("cwd").and_then(Value::as_str))
-    else {
-        return bad_request("cwd is required for a project profile");
+    let Some(scope) = body.get("scope").and_then(Value::as_str) else {
+        return bad_request("scope must be global, project, or builtin");
     };
-    let path = dir.join(format!("{name}.md"));
-    let Ok(text) = std::fs::read_to_string(&path) else {
-        return not_found("Agent profile not found");
-    };
-    let updated = set_frontmatter_bool(&text, "enabled", enabled);
-    match std::fs::write(&path, updated) {
-        Ok(()) => no_store(json!({"profile": subagent_profile_from_file(&path, scope)})),
-        Err(error) => internal(error),
+    if !matches!(scope, "global" | "project" | "builtin") {
+        return bad_request("scope must be global, project, or builtin");
+    }
+    match pi_star_core::subagents::toggle_profile(&state.config, &cwd, scope, name, enabled) {
+        Ok(profile) => no_store(json!({ "profile": profile })),
+        Err(error) if error.to_string() == "Agent profile not found" => {
+            not_found(error.to_string())
+        }
+        Err(error) => bad_request(error.to_string()),
     }
 }
 
@@ -879,177 +912,23 @@ pub async fn delete_subagent_profile(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
+    let cwd = match cwd_from_body(&state, &body) {
+        Ok(cwd) => cwd,
+        Err(response) => return response,
+    };
     let Some(name) = body.get("name").and_then(Value::as_str) else {
         return bad_request("name required");
     };
-    let scope = body
-        .get("scope")
-        .and_then(Value::as_str)
-        .unwrap_or("global");
-    let Some(dir) = subagent_profile_dir(&state, scope, body.get("cwd").and_then(Value::as_str))
-    else {
-        return bad_request("cwd is required for a project profile");
+    let Some(scope) = body.get("scope").and_then(Value::as_str) else {
+        return bad_request("scope must be global or project");
     };
-    match std::fs::remove_file(dir.join(format!("{name}.md"))) {
+    if !matches!(scope, "global" | "project") {
+        return bad_request("scope must be global or project");
+    }
+    match pi_star_core::subagents::delete_profile(&state.config, &cwd, scope, name) {
         Ok(()) => no_store(json!({"ok": true})),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            not_found("Agent profile not found")
-        }
         Err(error) => internal(error),
     }
-}
-
-fn subagent_profile_dir(state: &AppState, scope: &str, cwd: Option<&str>) -> Option<PathBuf> {
-    if scope == "project" {
-        Some(PathBuf::from(cwd?).join(".pi").join("agents"))
-    } else {
-        Some(state.config.agent_dir.join("agents"))
-    }
-}
-
-fn scan_subagent_profiles(state: &AppState, cwd: Option<&Path>) -> Vec<Value> {
-    let mut profiles = Vec::new();
-    let mut dirs = vec![(state.config.agent_dir.join("agents"), "global")];
-    if let Some(cwd) = cwd {
-        dirs.push((cwd.join(".pi").join("agents"), "project"));
-    }
-    for (dir, scope) in dirs {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-                continue;
-            }
-            if let Some(profile) = subagent_profile_from_file(&path, scope) {
-                profiles.push(profile);
-            }
-        }
-    }
-    profiles.sort_by(|a, b| {
-        a.get("name")
-            .and_then(Value::as_str)
-            .cmp(&b.get("name").and_then(Value::as_str))
-    });
-    profiles
-}
-
-fn subagent_profile_from_file(path: &Path, scope: &str) -> Option<Value> {
-    let text = std::fs::read_to_string(path).ok()?;
-    let mut lines = text.lines();
-    let mut name = path.file_stem()?.to_string_lossy().into_owned();
-    let mut description = String::new();
-    let mut tools = Vec::new();
-    let mut model = None;
-    let mut thinking = None;
-    let mut enabled = true;
-    let mut body = text.clone();
-    if lines.next()?.trim() == "---" {
-        let mut offset = 4;
-        for line in text.lines().skip(1) {
-            offset += line.len() + 1;
-            if line.trim() == "---" {
-                body = text.get(offset..).unwrap_or("").to_string();
-                break;
-            }
-            let Some((key, value)) = line.split_once(':') else {
-                continue;
-            };
-            let value = value.trim().trim_matches('"').trim_matches('\'');
-            match key.trim() {
-                "name" => name = value.to_string(),
-                "description" => description = value.to_string(),
-                "tools" => {
-                    tools = value
-                        .trim_matches('[')
-                        .trim_matches(']')
-                        .split(',')
-                        .map(str::trim)
-                        .filter(|item| !item.is_empty())
-                        .map(str::to_owned)
-                        .collect()
-                }
-                "model" => model = Some(value.to_string()),
-                "thinking" => thinking = Some(value.to_string()),
-                "enabled" => enabled = value != "false",
-                _ => {}
-            }
-        }
-    }
-    Some(json!({
-        "name": name,
-        "displayName": name,
-        "description": description,
-        "systemPrompt": body.trim(),
-        "tools": tools,
-        "loadSkills": true,
-        "loadExtensions": true,
-        "inheritContext": true,
-        "runInBackground": false,
-        "promptMode": "append",
-        "enabled": enabled,
-        "scope": scope,
-        "filePath": path.to_string_lossy(),
-        "model": model,
-        "thinking": thinking,
-    }))
-}
-
-fn render_subagent_profile(profile: &Value) -> String {
-    let text = |key: &str| profile.get(key).and_then(Value::as_str).unwrap_or("");
-    let name = text("name");
-    let mut frontmatter = String::new();
-    frontmatter.push_str("---\n");
-    frontmatter.push_str(&format!("name: {name}\n"));
-    if !text("description").is_empty() {
-        frontmatter.push_str(&format!("description: {}\n", text("description")));
-    }
-    if let Some(tools) = profile.get("tools").and_then(Value::as_array) {
-        let tools = tools
-            .iter()
-            .filter_map(Value::as_str)
-            .collect::<Vec<_>>()
-            .join(", ");
-        if !tools.is_empty() {
-            frontmatter.push_str(&format!("tools: [{tools}]\n"));
-        }
-    }
-    if !text("model").is_empty() {
-        frontmatter.push_str(&format!("model: {}\n", text("model")));
-    }
-    if !text("thinking").is_empty() {
-        frontmatter.push_str(&format!("thinking: {}\n", text("thinking")));
-    }
-    if profile.get("enabled").and_then(Value::as_bool) == Some(false) {
-        frontmatter.push_str("enabled: false\n");
-    }
-    frontmatter.push_str("---\n");
-    frontmatter.push_str(text("systemPrompt"));
-    frontmatter.push('\n');
-    frontmatter
-}
-
-fn set_frontmatter_bool(text: &str, key: &str, value: bool) -> String {
-    let mut lines: Vec<String> = text.lines().map(str::to_owned).collect();
-    if lines.first().map(|line| line.trim()) != Some("---") {
-        return text.to_string();
-    }
-    let end = lines
-        .iter()
-        .skip(1)
-        .position(|line| line.trim() == "---")
-        .map(|index| index + 1);
-    let Some(end) = end else {
-        return text.to_string();
-    };
-    lines.retain(|line| !line.trim_start().starts_with(&format!("{key}:")));
-    if !value {
-        lines.insert(end, format!("{key}: false"));
-    }
-    let mut result = lines.join("\n");
-    result.push('\n');
-    result
 }
 
 pub async fn subagent_view(
@@ -1783,19 +1662,50 @@ pub async fn skills(State(state): State<Arc<AppState>>, Query(query): Query<CwdQ
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    match scan_skills(&state, &cwd) {
-        Ok(skills) => no_store(json!({
-            "skills": skills,
-            "diagnostics": [],
-            "projectResourcesLoaded": true,
-        })),
-        Err(error) => internal(error),
-    }
+    let (skills, diagnostics, project_resources_loaded) = skills_json(&state, &cwd);
+    no_store(json!({
+        "skills": skills,
+        "diagnostics": diagnostics,
+        "projectResourcesLoaded": project_resources_loaded,
+    }))
+}
+
+fn skills_json(state: &AppState, cwd: &Path) -> (Vec<Value>, Vec<Value>, bool) {
+    let (skills, diagnostics, project_resources_loaded) =
+        pi_star_core::resources::load_skills(&state.config, cwd);
+    let skills = skills
+        .into_iter()
+        .map(|skill| {
+            let scope = if skill.source_info.get("scope").and_then(Value::as_str) == Some("project")
+            {
+                "project"
+            } else {
+                "global"
+            };
+            let mut value = json!({
+                "name": skill.name,
+                "description": skill.description,
+                "filePath": skill.file_path.to_string_lossy(),
+                "baseDir": skill.base_dir.to_string_lossy(),
+                "disableModelInvocation": skill.disable_model_invocation,
+                "sourceInfo": skill.source_info,
+            });
+            if let Some(install) =
+                crate::routes::skills_install::install_info(state, cwd, scope, &skill.name)
+            {
+                value["install"] = install;
+            }
+            value
+        })
+        .collect();
+    (skills, diagnostics, project_resources_loaded)
 }
 
 fn skill_roots(state: &AppState, cwd: Option<&Path>) -> Vec<PathBuf> {
     let mut roots = vec![
         state.config.agent_dir.join("skills"),
+        state.config.agent_dir.join("npm"),
+        state.config.agent_dir.join("git"),
         settings::home_dir()
             .unwrap_or_default()
             .join(".agents")
@@ -1803,102 +1713,20 @@ fn skill_roots(state: &AppState, cwd: Option<&Path>) -> Vec<PathBuf> {
     ];
     if let Some(cwd) = cwd {
         roots.push(cwd.join(".pi").join("skills"));
+        roots.push(cwd.join(".pi").join("npm"));
+        roots.push(cwd.join(".pi").join("git"));
         roots.push(cwd.join(".agents").join("skills"));
+        let resolved = pi_star_core::resources::resolve_resources(&state.config, cwd);
+        roots.extend(
+            resolved
+                .skills
+                .iter()
+                .filter_map(|resource| resource.path.parent().map(Path::to_path_buf)),
+        );
     }
+    roots.sort();
+    roots.dedup();
     roots
-}
-
-fn scan_skills(state: &AppState, cwd: &Path) -> anyhow::Result<Vec<Value>> {
-    let mut roots = skill_roots(state, Some(cwd));
-    let mut skills = Vec::new();
-    for root in roots.drain(..) {
-        if !root.is_dir() {
-            continue;
-        }
-        for entry in ignore::WalkBuilder::new(&root)
-            .max_depth(Some(3))
-            .build()
-            .flatten()
-        {
-            if entry.file_type().is_some_and(|kind| kind.is_file())
-                && entry.path().file_name().and_then(|name| name.to_str()) == Some("SKILL.md")
-            {
-                if let Ok(text) = std::fs::read_to_string(entry.path()) {
-                    let (name, description, disabled) = parse_skill_frontmatter(&text)
-                        .unwrap_or_else(|| {
-                            (
-                                entry
-                                    .path()
-                                    .parent()
-                                    .and_then(|path| path.file_name())
-                                    .and_then(|name| name.to_str())
-                                    .unwrap_or("skill")
-                                    .to_string(),
-                                String::new(),
-                                false,
-                            )
-                        });
-                    let base_dir = entry.path().parent().unwrap_or(entry.path());
-                    let scope = if base_dir.starts_with(cwd) {
-                        "project"
-                    } else {
-                        "global"
-                    };
-                    let mut skill = json!({
-                        "name": name,
-                        "description": description,
-                        "filePath": entry.path().to_string_lossy(),
-                        "baseDir": base_dir.to_string_lossy(),
-                        "disableModelInvocation": disabled,
-                        "sourceInfo": {"scope": scope},
-                    });
-                    if let Some(install) =
-                        crate::routes::skills_install::install_info(state, cwd, scope, &name)
-                    {
-                        skill["install"] = install;
-                    }
-                    skills.push(skill);
-                }
-            }
-        }
-    }
-    Ok(skills)
-}
-
-fn parse_skill_frontmatter(text: &str) -> Option<(String, String, bool)> {
-    let mut lines = text.lines();
-    if lines.next()?.trim() != "---" {
-        return None;
-    }
-    let mut name = None;
-    let mut description = None;
-    let mut disabled = false;
-    for line in lines {
-        let line = line.trim();
-        if line == "---" {
-            break;
-        }
-        if let Some(value) = line.strip_prefix("name:") {
-            name = Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
-        } else if let Some(value) = line.strip_prefix("description:") {
-            description = Some(
-                value
-                    .trim()
-                    .trim_matches('"')
-                    .trim_matches('\'')
-                    .to_string(),
-            );
-        } else if line.starts_with("disable-model-invocation:") {
-            disabled = line.ends_with("true");
-        }
-    }
-    Some((name?, description.unwrap_or_default(), disabled))
 }
 
 pub async fn patch_skills(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
@@ -2134,99 +1962,378 @@ fn urlencoding(value: &str) -> String {
         .collect()
 }
 
+fn api_scope(scope: &str) -> &str {
+    if scope == "project" {
+        "project"
+    } else {
+        "global"
+    }
+}
+
+fn resource_kind_name(kind: &str) -> &str {
+    match kind {
+        "extensions" => "extension",
+        "skills" => "skill",
+        "prompts" => "prompt",
+        _ => "theme",
+    }
+}
+
+fn plugin_resource_name(path: &Path, kind: &str) -> String {
+    let file = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default();
+    if kind == "skills" && file.eq_ignore_ascii_case("SKILL.md") {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .unwrap_or(file)
+            .to_string();
+    }
+    if kind == "extensions" && matches!(file, "index.ts" | "index.js") {
+        return path
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|value| value.to_str())
+            .unwrap_or(file)
+            .to_string();
+    }
+    path.file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or(file)
+        .to_string()
+}
+
+fn plugin_relative_path(path: &Path, base: &Path) -> String {
+    path.strip_prefix(base)
+        .ok()
+        .map(|value| value.to_string_lossy().replace('\\', "/"))
+        .filter(|value| !value.starts_with(".."))
+        .unwrap_or_else(|| path.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_disabled_package(filter: &Value) -> bool {
+    ["extensions", "skills", "prompts", "themes"]
+        .iter()
+        .all(|key| {
+            filter
+                .get(*key)
+                .and_then(Value::as_array)
+                .is_some_and(|items| items.is_empty())
+        })
+}
+
+fn configured_version(source: &str) -> Option<String> {
+    let parsed = pi_star_core::resources::parse_package_source(source).ok()?;
+    match parsed.kind {
+        pi_star_core::resources::PackageSourceKind::Npm { spec, .. } => spec,
+        pi_star_core::resources::PackageSourceKind::Git { .. } => {
+            let last_at = source.rfind('@')?;
+            let last_slash = source.rfind('/').unwrap_or(0);
+            let last_colon = source.rfind(':').unwrap_or(0);
+            (last_at > last_slash.max(last_colon))
+                .then(|| source[last_at + 1..].to_string())
+                .filter(|value| !value.is_empty())
+        }
+        pi_star_core::resources::PackageSourceKind::Local(_) => None,
+    }
+}
+
+fn can_check_plugin_source(source: &str) -> bool {
+    pi_star_core::resources::parse_package_source(source)
+        .map(|parsed| {
+            !matches!(
+                parsed.kind,
+                pi_star_core::resources::PackageSourceKind::Local(_)
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn package_metadata(path: Option<&Path>) -> (Option<String>, Option<String>, Option<String>) {
+    let Some(path) = path else {
+        return (None, None, None);
+    };
+    let manifest_path = if path.is_dir() {
+        path.join("package.json")
+    } else {
+        path.parent()
+            .map(|parent| parent.join("package.json"))
+            .unwrap_or_default()
+    };
+    let manifest = std::fs::read_to_string(manifest_path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .unwrap_or(Value::Null);
+    (
+        manifest
+            .get("name")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        manifest
+            .get("version")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+        manifest
+            .get("description")
+            .and_then(Value::as_str)
+            .map(str::to_owned),
+    )
+}
+
+fn plugin_view(state: &AppState, cwd: Option<&str>) -> Value {
+    let cwd = cwd.map(PathBuf::from).unwrap_or_default();
+    let resolved = pi_star_core::resources::resolve_resources(&state.config, &cwd);
+    let packages = pi_star_core::resources::installed_packages(&state.config, &cwd);
+    let mut counts_by_key: HashMap<(String, String), Value> = HashMap::new();
+    let mut resources_by_key: HashMap<(String, String), Vec<Value>> = HashMap::new();
+    let mut totals = json!({"extensions": 0, "skills": 0, "prompts": 0, "themes": 0});
+
+    let mut collect = |list: &[pi_star_core::resources::ResourcePath], kind: &str| {
+        for resource in list
+            .iter()
+            .filter(|resource| resource.enabled && resource.metadata.origin == "package")
+        {
+            let scope = api_scope(&resource.metadata.scope).to_string();
+            let key = (scope, resource.metadata.source.clone());
+            let counts = counts_by_key.entry(key.clone()).or_insert_with(
+                || json!({"extensions": 0, "skills": 0, "prompts": 0, "themes": 0}),
+            );
+            if let Some(object) = counts.as_object_mut() {
+                let count = object.get(kind).and_then(Value::as_u64).unwrap_or(0) + 1;
+                object.insert(kind.into(), json!(count));
+            }
+            if let Some(object) = totals.as_object_mut() {
+                let count = object.get(kind).and_then(Value::as_u64).unwrap_or(0) + 1;
+                object.insert(kind.into(), json!(count));
+            }
+            resources_by_key.entry(key).or_default().push(json!({
+                "kind": resource_kind_name(kind),
+                "name": plugin_resource_name(&resource.path, kind),
+                "path": resource.path.to_string_lossy(),
+                "relativePath": plugin_relative_path(
+                    &resource.path,
+                    &resource.metadata.base_dir,
+                ),
+            }));
+        }
+    };
+    collect(&resolved.extensions, "extensions");
+    collect(&resolved.skills, "skills");
+    collect(&resolved.prompts, "prompts");
+    collect(&resolved.themes, "themes");
+
+    let mut standalone_extensions: Vec<Value> = resolved
+        .extensions
+        .iter()
+        .filter(|resource| resource.metadata.origin == "top-level")
+        .map(|resource| {
+            json!({
+                "kind": "extension",
+                "name": plugin_resource_name(&resource.path, "extensions"),
+                "path": resource.path.to_string_lossy(),
+                "relativePath": plugin_relative_path(
+                    &resource.path,
+                    &resource.metadata.base_dir,
+                ),
+                "scope": api_scope(&resource.metadata.scope),
+                "enabled": resource.enabled,
+            })
+        })
+        .collect();
+    standalone_extensions.sort_by(|a, b| {
+        a.get("name")
+            .and_then(Value::as_str)
+            .cmp(&b.get("name").and_then(Value::as_str))
+    });
+    let enabled_standalone = standalone_extensions
+        .iter()
+        .filter(|extension| extension.get("enabled").and_then(Value::as_bool) == Some(true))
+        .count() as u64;
+    if let Some(object) = totals.as_object_mut() {
+        let count = object
+            .get("extensions")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        object.insert("extensions".into(), json!(count + enabled_standalone));
+    }
+
+    let mut diagnostics = resolved.diagnostics.clone();
+    let mut out_packages = Vec::new();
+    // pi-web lists global packages first, then project ones.
+    for package in packages
+        .iter()
+        .filter(|package| package.scope != "project")
+        .chain(packages.iter().filter(|package| package.scope == "project"))
+    {
+        let scope = api_scope(&package.scope).to_string();
+        let key = (scope.clone(), package.source.clone());
+        let disabled = package.filter.as_ref().is_some_and(is_disabled_package);
+        let counts = counts_by_key
+            .get(&key)
+            .cloned()
+            .unwrap_or_else(|| json!({"extensions": 0, "skills": 0, "prompts": 0, "themes": 0}));
+        let resources = resources_by_key.get(&key).cloned().unwrap_or_default();
+        let resource_count: u64 = ["extensions", "skills", "prompts", "themes"]
+            .iter()
+            .map(|kind| counts.get(*kind).and_then(Value::as_u64).unwrap_or(0))
+            .sum();
+        let (package_name, version, description) = package_metadata(
+            package
+                .installed_path
+                .as_deref()
+                .or(package.legacy_path.as_deref()),
+        );
+        if !package
+            .installed_path
+            .as_ref()
+            .is_some_and(|path| path.exists())
+            && !package
+                .legacy_path
+                .as_ref()
+                .is_some_and(|path| path.exists())
+        {
+            diagnostics.push(json!({
+                "type": "warning",
+                "source": package.source,
+                "message": "Configured package path was not found.",
+            }));
+        }
+        let path_exists = package
+            .installed_path
+            .as_ref()
+            .is_some_and(|path| path.exists())
+            || package
+                .legacy_path
+                .as_ref()
+                .is_some_and(|path| path.exists());
+        out_packages.push(json!({
+            "source": package.source,
+            "scope": scope,
+            "canCheckForUpdates": can_check_plugin_source(&package.source),
+            "filtered": package.filter.is_some(),
+            "disabled": disabled,
+            "installedPath": package
+                .installed_path
+                .as_ref()
+                .filter(|path| path.exists())
+                .or(package.legacy_path.as_ref())
+                .map(|path| path.to_string_lossy()),
+            "packageName": package_name,
+            "version": version,
+            "configuredVersion": configured_version(&package.source),
+            "description": description,
+            "counts": counts,
+            "resources": resources,
+            "status": if disabled {
+                "disabled"
+            } else if resource_count > 0 {
+                "loaded"
+            } else if path_exists {
+                "installed"
+            } else {
+                "missing"
+            },
+        }));
+    }
+
+    json!({
+        "packages": out_packages,
+        "standaloneExtensions": standalone_extensions,
+        "totals": totals,
+        "diagnostics": diagnostics,
+        "projectResourcesLoaded": resolved.project_resources_loaded,
+    })
+}
+
+fn plugins_view(state: &AppState, cwd: Option<&str>) -> Value {
+    plugin_view(state, cwd)
+}
+
 pub async fn plugins(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CwdQuery>,
 ) -> Response {
-    no_store(plugins_view(&state, query.cwd.as_deref()))
-}
-
-fn plugins_view(state: &AppState, cwd: Option<&str>) -> Value {
-    let mut packages = Vec::new();
-    let global = settings::read_settings(&state.config);
-    append_plugin_packages(&mut packages, state, global.get("packages"), "global", cwd);
-    if let Some(cwd) = cwd {
-        let project = std::fs::read_to_string(PathBuf::from(cwd).join(".pi").join("settings.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .unwrap_or(Value::Null);
-        append_plugin_packages(
-            &mut packages,
-            state,
-            project.get("packages"),
-            "project",
-            Some(cwd),
-        );
-    }
-    json!({
-        "packages": packages,
-        "standaloneExtensions": [],
-        "totals": {"extensions": packages.len(), "skills": 0, "prompts": 0, "themes": 0},
-        "diagnostics": [],
-        "projectResourcesLoaded": true,
-    })
-}
-
-fn append_plugin_packages(
-    packages: &mut Vec<Value>,
-    state: &AppState,
-    value: Option<&Value>,
-    scope: &str,
-    cwd: Option<&str>,
-) {
-    let Some(entries) = value.and_then(Value::as_array) else {
-        return;
+    let Some(cwd) = query.cwd else {
+        return bad_request("cwd required");
     };
-    for entry in entries {
-        let (source, disabled) = match entry {
-            Value::String(source) => (source.clone(), false),
-            Value::Object(object) => {
-                let Some(source) = object.get("source").and_then(Value::as_str) else {
-                    continue;
-                };
-                let disabled = ["extensions", "skills", "prompts", "themes"]
-                    .iter()
-                    .all(|key| {
-                        object
-                            .get(*key)
-                            .and_then(Value::as_array)
-                            .is_some_and(|items| items.is_empty())
-                    });
-                (source.to_string(), disabled)
-            }
-            _ => continue,
-        };
-        let installed_path =
-            crate::routes::plugins_ops::install_path(state, &source, scope, cwd.map(Path::new));
-        let mut package = json!({
-            "source": source,
-            "scope": scope,
-            "canCheckForUpdates": true,
-            "filtered": false,
-            "disabled": disabled,
-            "counts": {"extensions": 0, "skills": 0, "prompts": 0, "themes": 0},
-            "resources": [],
-            "status": if disabled { "disabled" } else { "installed" },
+    let cwd_path = PathBuf::from(&cwd);
+    if !state.roots.is_allowed_existing(&cwd_path) {
+        return forbidden("Access denied");
+    }
+    no_store(plugin_view(&state, Some(&cwd)))
+}
+
+fn settings_path_for_scope(
+    state: &AppState,
+    cwd: Option<&Path>,
+    scope: &str,
+) -> Result<PathBuf, String> {
+    if scope == "project" {
+        cwd.map(|cwd| cwd.join(".pi").join("settings.json"))
+            .ok_or_else(|| "cwd is required for a project package".to_string())
+    } else {
+        Ok(state.config.settings_path())
+    }
+}
+
+fn toggle_package_entry(
+    state: &AppState,
+    cwd: Option<&Path>,
+    source: &str,
+    scope: &str,
+    disabled: bool,
+) -> Result<(), String> {
+    let path = settings_path_for_scope(state, cwd, scope)?;
+    let mut config = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        .unwrap_or_else(|| json!({}));
+    let object = config
+        .as_object_mut()
+        .ok_or_else(|| "settings.json is not an object".to_string())?;
+    let packages = object
+        .entry("packages".to_string())
+        .or_insert_with(|| json!([]));
+    let packages = packages
+        .as_array_mut()
+        .ok_or_else(|| "packages is not an array".to_string())?;
+    let Some(entry) = packages
+        .iter_mut()
+        .find(|entry| plugin_source(entry) == Some(source))
+    else {
+        return Err("Package is not configured".to_string());
+    };
+    if disabled {
+        let mut next = entry.as_object().cloned().unwrap_or_else(|| {
+            let mut map = serde_json::Map::new();
+            map.insert("source".into(), json!(source));
+            map
         });
-        if let Some(path) = installed_path {
-            if path.exists() {
-                package["installedPath"] = json!(path.to_string_lossy());
-                if let Ok(text) = std::fs::read_to_string(path.join("package.json")) {
-                    if let Ok(manifest) = serde_json::from_str::<Value>(&text) {
-                        package["packageName"] =
-                            manifest.get("name").cloned().unwrap_or(Value::Null);
-                        package["version"] =
-                            manifest.get("version").cloned().unwrap_or(Value::Null);
-                        package["description"] =
-                            manifest.get("description").cloned().unwrap_or(Value::Null);
-                    }
-                }
-            } else {
-                package["status"] = json!("missing");
+        next.insert("extensions".into(), json!([]));
+        next.insert("skills".into(), json!([]));
+        next.insert("prompts".into(), json!([]));
+        next.insert("themes".into(), json!([]));
+        *entry = Value::Object(next);
+    } else {
+        if let Some(next) = entry.as_object_mut() {
+            for key in ["extensions", "skills", "prompts", "themes"] {
+                next.remove(key);
             }
         }
-        packages.push(package);
+        if entry.as_object().is_some_and(|object| object.len() <= 1) {
+            *entry = Value::String(source.to_string());
+        }
     }
+    settings::write_json_atomic(&path, &config, 0o600).map_err(|error| error.to_string())
+}
+
+#[derive(Debug, Deserialize)]
+struct PackageToggle {
+    source: String,
+    scope: String,
 }
 
 pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
@@ -2238,6 +2345,16 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
     let source = body.get("source").and_then(Value::as_str).unwrap_or("");
     let cwd = body.get("cwd").and_then(Value::as_str).map(PathBuf::from);
     if matches!(action, "install" | "update") {
+        if scope == "project" {
+            let Some(cwd_path) = cwd.as_deref() else {
+                return bad_request("cwd is required for a project package");
+            };
+            if !pi_star_core::settings::project_trust(&state.config, cwd_path).trusted {
+                return forbidden(
+                    "Project resources must be trusted before modifying project plugins",
+                );
+            }
+        }
         if action == "install" {
             if source.is_empty() {
                 return bad_request("source is required");
@@ -2268,13 +2385,73 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
         {
             return internal(error);
         }
+        state.invalidate_models();
         return no_store(plugins_view(
             &state,
             cwd.as_deref().and_then(|path| path.to_str()),
         ));
     }
+
+    if let Some(packages) = body.get("packages") {
+        if !matches!(action, "enable" | "disable") {
+            return bad_request("packages is only supported by enable and disable");
+        }
+        let Some(packages) = serde_json::from_value::<Vec<PackageToggle>>(packages.clone()).ok()
+        else {
+            return bad_request("packages must be a list of { source, scope }");
+        };
+        let trusted = cwd
+            .as_deref()
+            .map(|cwd| pi_star_core::settings::project_trust(&state.config, cwd).trusted)
+            .unwrap_or(false);
+        let disabled = action == "disable";
+        let mut results = Vec::new();
+        let mut seen = HashSet::new();
+        for package in packages {
+            let scope = if package.scope == "project" {
+                "project"
+            } else {
+                "global"
+            };
+            let key = format!("{scope}\0{}", package.source);
+            if !seen.insert(key) {
+                continue;
+            }
+            if scope == "project" && !trusted {
+                results.push(json!({
+                    "source": package.source,
+                    "scope": scope,
+                    "error": "Project resources must be trusted before modifying project plugins",
+                }));
+                continue;
+            }
+            match toggle_package_entry(&state, cwd.as_deref(), &package.source, scope, disabled) {
+                Ok(()) => results.push(json!({"source": package.source, "scope": scope})),
+                Err(error) => results.push(json!({
+                    "source": package.source,
+                    "scope": scope,
+                    "error": error,
+                })),
+            }
+        }
+        state.invalidate_models();
+        let mut view = plugins_view(&state, cwd.as_deref().and_then(|path| path.to_str()));
+        if let Some(object) = view.as_object_mut() {
+            object.insert("results".into(), Value::Array(results));
+        }
+        return no_store(view);
+    }
+
     if source.is_empty() {
         return bad_request("source is required");
+    }
+    if scope == "project" {
+        let Some(cwd_path) = cwd.as_deref() else {
+            return bad_request("cwd is required for a project package");
+        };
+        if !pi_star_core::settings::project_trust(&state.config, cwd_path).trusted {
+            return forbidden("Project resources must be trusted before modifying project plugins");
+        }
     }
     if action == "remove" {
         if let Err(error) =
@@ -2282,56 +2459,16 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
         {
             return internal(error);
         }
-    }
-    let path = if scope == "project" {
-        let Some(cwd) = &cwd else {
-            return bad_request("cwd is required for a project package");
-        };
-        cwd.join(".pi").join("settings.json")
-    } else {
-        state.config.settings_path()
-    };
-    let mut config = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .unwrap_or_else(|| json!({}));
-    let Some(object) = config.as_object_mut() else {
-        return internal("settings.json is not an object");
-    };
-    let packages = object
-        .entry("packages".to_string())
-        .or_insert_with(|| json!([]));
-    let Some(packages) = packages.as_array_mut() else {
-        return internal("packages is not an array");
-    };
-    match action {
-        "remove" => packages.retain(|entry| plugin_source(entry) != Some(source)),
-        "disable" | "enable" => {
-            let disabled = action == "disable";
-            for entry in packages.iter_mut() {
-                if plugin_source(entry) != Some(source) {
-                    continue;
-                }
-                if disabled {
-                    *entry = json!({
-                        "source": source,
-                        "extensions": [],
-                        "skills": [],
-                        "prompts": [],
-                        "themes": [],
-                    });
-                } else if let Some(object) = entry.as_object_mut() {
-                    for key in ["extensions", "skills", "prompts", "themes"] {
-                        object.remove(key);
-                    }
-                }
-            }
+    } else if matches!(action, "disable" | "enable") {
+        if let Err(error) =
+            toggle_package_entry(&state, cwd.as_deref(), source, scope, action == "disable")
+        {
+            return bad_request(error);
         }
-        _ => return bad_request("Invalid action"),
+    } else {
+        return bad_request("Invalid action");
     }
-    if let Err(error) = settings::write_json_atomic(&path, &config, 0o600) {
-        return internal(error);
-    }
+    state.invalidate_models();
     no_store(plugins_view(
         &state,
         cwd.as_deref().and_then(|path| path.to_str()),
@@ -2339,29 +2476,13 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
 }
 
 fn configured_packages(state: &AppState, cwd: Option<&Path>) -> Vec<(String, String)> {
-    let mut result = Vec::new();
-    let global = settings::read_settings(&state.config);
-    append_package_sources(&mut result, global.get("packages"), "global");
-    if let Some(cwd) = cwd {
-        let project = std::fs::read_to_string(cwd.join(".pi").join("settings.json"))
-            .ok()
-            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-            .unwrap_or(Value::Null);
-        append_package_sources(&mut result, project.get("packages"), "project");
-    }
-    result
-}
-
-fn append_package_sources(sources: &mut Vec<(String, String)>, value: Option<&Value>, scope: &str) {
-    let Some(entries) = value.and_then(Value::as_array) else {
-        return;
+    let Some(cwd) = cwd else {
+        return Vec::new();
     };
-    for entry in entries {
-        let Some(source) = plugin_source(entry) else {
-            continue;
-        };
-        sources.push((source.to_string(), scope.to_string()));
-    }
+    pi_star_core::resources::configured_packages(&state.config, cwd)
+        .into_iter()
+        .map(|package| (package.source, api_scope(&package.scope).to_string()))
+        .collect()
 }
 
 fn plugin_source(entry: &Value) -> Option<&str> {
@@ -2644,10 +2765,7 @@ pub async fn skill_check(
     if package.is_some() != scope.is_some() {
         return bad_request("package and scope must be provided together");
     }
-    let skills = match scan_skills(&state, &cwd) {
-        Ok(skills) => skills,
-        Err(error) => return internal(error),
-    };
+    let (skills, _, _) = skills_json(&state, &cwd);
     let installs: Vec<Value> = skills
         .iter()
         .filter_map(|skill| skill.get("install").cloned())

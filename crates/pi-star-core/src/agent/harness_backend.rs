@@ -48,6 +48,10 @@ use crate::session::{read_header, read_session, session_settings};
 /// Shared event buffer size; mirrors the legacy `SessionRuntime` channel.
 const EVENT_BUFFER: usize = 512;
 
+/// Internal marker for a loadout with no tools: the harness treats an
+/// empty `active_tool_names` as "all tools".
+const NO_TOOLS: &str = "__pi_star_no_tools__";
+
 pub struct HarnessBackend {
     pub id: String,
     pub path: PathBuf,
@@ -61,7 +65,7 @@ pub struct HarnessBackend {
     running: AtomicBool,
     model: parking_lot::RwLock<Option<ModelDef>>,
     thinking: parking_lot::RwLock<String>,
-    system_prompt: String,
+    system_prompt: parking_lot::RwLock<String>,
     queue: parking_lot::RwLock<(Vec<String>, Vec<String>)>,
     auto_compaction: AtomicBool,
 }
@@ -142,8 +146,17 @@ impl HarnessBackend {
             .iter()
             .map(|tool| tool.tool.schema().name.clone())
             .collect();
-        let system_prompt =
-            system_prompt.unwrap_or_else(|| super::build_system_prompt(config, &cwd, &tool_names));
+        let selected_tools = stored_tool_selection(path);
+        let visible_tools: Vec<String> = match selected_tools {
+            Some(selected) => selected,
+            None => crate::prompt::default_tool_names(config, &cwd),
+        }
+        .into_iter()
+        .filter(|name| tool_names.iter().any(|known| known == name))
+        .collect();
+        let active_tool_names = harness_tool_names(&visible_tools);
+        let system_prompt = system_prompt
+            .unwrap_or_else(|| super::build_system_prompt(config, &cwd, &visible_tools));
         let stored_prompt = system_prompt.clone();
         let thinking = read_session(path)
             .ok()
@@ -165,7 +178,7 @@ impl HarnessBackend {
         let options = AgentHarnessOptions {
             model,
             thinking_level: parse_thinking(&thinking),
-            active_tool_names: tool_names,
+            active_tool_names,
             tools,
             system_prompt: Some(system_prompt),
             resources: AgentHarnessResources::default(),
@@ -206,7 +219,7 @@ impl HarnessBackend {
             running: AtomicBool::new(false),
             model: parking_lot::RwLock::new(Some(model_def)),
             thinking: parking_lot::RwLock::new(thinking),
-            system_prompt: stored_prompt,
+            system_prompt: parking_lot::RwLock::new(stored_prompt),
             queue: parking_lot::RwLock::new((Vec::new(), Vec::new())),
             auto_compaction: AtomicBool::new(true),
         }))
@@ -303,7 +316,7 @@ impl HarnessBackend {
             "lastUsage": {},
         });
         if include_prompt {
-            value["systemPrompt"] = Value::String(self.system_prompt.clone());
+            value["systemPrompt"] = Value::String(self.system_prompt.read().clone());
         }
         value
     }
@@ -492,6 +505,7 @@ impl HarnessBackend {
                     .get_tools()
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                let active = visible_tool_names(&active);
                 Ok(Value::Array(
                     tools
                         .iter()
@@ -503,6 +517,14 @@ impl HarnessBackend {
                                     "active".into(),
                                     Value::Bool(active.iter().any(|name| name == &schema.name)),
                                 );
+                                object.insert("declarationHidden".into(), Value::Bool(false));
+                                let guidelines = super::prompt_tool_guidelines(&schema.name);
+                                if !guidelines.is_empty() {
+                                    object.insert(
+                                        "promptGuidelines".into(),
+                                        serde_json::to_value(guidelines).unwrap_or(Value::Null),
+                                    );
+                                }
                             }
                             value
                         })
@@ -621,16 +643,29 @@ impl HarnessBackend {
                         .filter_map(Value::as_str)
                         .map(str::to_owned)
                         .collect::<Vec<_>>(),
-                    None => self
-                        .lane
-                        .get_active_tools()
-                        .await
-                        .map_err(|error| anyhow!(error.to_string()))?,
+                    None => crate::prompt::default_tool_names(&self.config, &self.cwd),
                 };
                 self.lane
-                    .set_active_tools(names)
+                    .set_active_tools(harness_tool_names(&names))
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                let selection = if command.get("toolNames").is_some() {
+                    json!({"version": 1, "tools": names})
+                } else {
+                    // A cleared marker lets an earlier pin be retracted; the
+                    // session then follows settings.json `defaultTools` again.
+                    json!({"version": 1, "cleared": true})
+                };
+                self.harness
+                    .append_custom_entry("pi-web:tool-selection", Some(selection))
+                    .await
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                let prompt = super::build_system_prompt(&self.config, &self.cwd, &names);
+                self.harness
+                    .set_system_prompt(Some(prompt.clone()))
+                    .await
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                *self.system_prompt.write() = prompt;
                 Ok(json!({ "sessionId": self.id, "recreated": false }))
             }
             "set_session_name" => {
@@ -911,6 +946,53 @@ fn build_providers(config: &Config, _cwd: &Path) -> Result<Vec<Arc<dyn Provider>
 // Tools
 // ---------------------------------------------------------------------------
 
+fn harness_tool_names(names: &[String]) -> Vec<String> {
+    if names.is_empty() {
+        vec![NO_TOOLS.to_string()]
+    } else {
+        names.to_vec()
+    }
+}
+
+fn visible_tool_names(names: &[String]) -> Vec<String> {
+    names
+        .iter()
+        .filter(|name| name.as_str() != NO_TOOLS)
+        .cloned()
+        .collect()
+}
+
+fn stored_tool_selection(path: &Path) -> Option<Vec<String>> {
+    let session = read_session(path).ok()?;
+    for entry in session.entries.iter().rev() {
+        if entry.get("type").and_then(Value::as_str) != Some("custom")
+            || entry.get("customType").and_then(Value::as_str) != Some("pi-web:tool-selection")
+        {
+            continue;
+        }
+        let Some(data) = entry.get("data") else {
+            continue;
+        };
+        if data.get("version").and_then(Value::as_u64) != Some(1) {
+            continue;
+        }
+        if data.get("cleared").and_then(Value::as_bool) == Some(true) {
+            return None;
+        }
+        let Some(tools) = data.get("tools").and_then(Value::as_array) else {
+            continue;
+        };
+        return Some(
+            tools
+                .iter()
+                .filter_map(Value::as_str)
+                .map(str::to_owned)
+                .collect(),
+        );
+    }
+    None
+}
+
 async fn build_tools(
     cwd: &Path,
     roots: Arc<AllowedRoots>,
@@ -922,11 +1004,11 @@ async fn build_tools(
     let context = ExecutionToolContext::new(env.clone(), Some(env.clone()));
     let mut tools = vec![
         HarnessTool::new(pi_star_tools::create_read_tool(&context, None)),
-        HarnessTool::new(pi_star_tools::create_write_tool(&context)),
-        HarnessTool::new(pi_star_tools::create_edit_tool(&context)),
         HarnessTool::new(pi_star_tools::create_bash_tool(&context, None)),
-        HarnessTool::new(pi_star_tools::create_find_tool(&context, None)),
+        HarnessTool::new(pi_star_tools::create_edit_tool(&context)),
+        HarnessTool::new(pi_star_tools::create_write_tool(&context)),
         HarnessTool::new(pi_star_tools::create_grep_tool(&context, None)),
+        HarnessTool::new(pi_star_tools::create_find_tool(&context, None)),
         HarnessTool::new(pi_star_tools::create_ls_tool(&context, None)),
     ];
 
