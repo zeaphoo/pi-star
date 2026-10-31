@@ -34,9 +34,9 @@ use pi_star_harness::types::{
     AgentHarnessOptions, AgentHarnessResources, AgentHarnessStreamOptions, CompactionSettings,
     DrivingMode, HarnessTool, HarnessToolExecution, RetryPolicy,
 };
-use pi_star_tools::os_env::OsExecutionEnv;
 use pi_star_tools::tools::ExecutionToolContext;
 
+use crate::agent::harness_env::AllowedEnv;
 use crate::agent::session_store::{V3SessionRepo, message_to_v3};
 use crate::config::Config;
 use crate::file_access::AllowedRoots;
@@ -123,7 +123,7 @@ impl HarnessBackend {
             .map_err(|error| anyhow!(error.to_string()))?;
         let session = Session::new(Arc::new(storage), None);
 
-        let tools = build_tools(&cwd);
+        let tools = build_tools(&cwd, roots.clone());
         let tool_names: Vec<String> = tools
             .iter()
             .map(|tool| tool.tool.schema().name.clone())
@@ -654,8 +654,8 @@ fn build_providers(config: &Config, _cwd: &Path) -> Result<Vec<Arc<dyn Provider>
 // Tools
 // ---------------------------------------------------------------------------
 
-fn build_tools(cwd: &Path) -> Vec<HarnessTool> {
-    let env = Arc::new(OsExecutionEnv::with_cwd(cwd.to_path_buf()));
+fn build_tools(cwd: &Path, roots: Arc<AllowedRoots>) -> Vec<HarnessTool> {
+    let env = Arc::new(AllowedEnv::new(cwd.to_path_buf(), roots));
     let context = ExecutionToolContext::new(env.clone(), Some(env.clone()));
     vec![
         HarnessTool::new(pi_star_tools::create_read_tool(&context, None)),

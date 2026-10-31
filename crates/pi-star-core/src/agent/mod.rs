@@ -1,4 +1,5 @@
 pub mod harness_backend;
+pub mod harness_env;
 pub mod provider;
 pub mod session_store;
 pub mod tools;
