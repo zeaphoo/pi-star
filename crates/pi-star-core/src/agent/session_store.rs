@@ -600,6 +600,15 @@ pub(crate) fn message_to_v3(message: &AgentMessage) -> Value {
         let content = obj.remove("content").unwrap_or(Value::Null);
         let data = obj.remove("data").unwrap_or(Value::Null);
         let timestamp = obj.remove("timestamp").unwrap_or(Value::Null);
+        if role == "bashExecution" {
+            return json!({
+                "role": "bashExecution",
+                "command": data.get("command").cloned().unwrap_or(Value::Null),
+                "output": data.get("output").cloned().unwrap_or(Value::Null),
+                "exitCode": data.get("exitCode").cloned().unwrap_or(Value::Null),
+                "timestamp": timestamp,
+            });
+        }
         return json!({
             "role": "custom",
             "customType": role,
@@ -674,6 +683,12 @@ fn message_from_v3(value: &Value) -> Result<AgentMessage, String> {
             obj.insert("kind".into(), Value::String(kind.to_string()));
             serde_json::from_value(Value::Object(obj)).map_err(|error| error.to_string())
         }
+        "bashExecution" => Ok(AgentMessage::Custom(CustomMessage {
+            role: "bashExecution".to_string(),
+            content: Vec::new(),
+            data: value.clone(),
+            timestamp: value.get("timestamp").and_then(Value::as_i64).unwrap_or(0),
+        })),
         "custom" => {
             let custom_type = value
                 .get("customType")

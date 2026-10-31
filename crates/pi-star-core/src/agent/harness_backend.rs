@@ -20,7 +20,7 @@ use tokio::sync::broadcast;
 use pi_star_agent::agent_tool::AgentTool;
 use pi_star_agent::error::AgentError;
 use pi_star_agent::events::{AgentEmitter, AgentEvent};
-use pi_star_agent::message::AgentMessage;
+use pi_star_agent::message::{AgentMessage, CustomMessage};
 use pi_star_agent::types::{AgentToolResult, TextContentOrImage};
 use pi_star_ai::model::Model;
 use pi_star_ai::provider::Provider;
@@ -273,6 +273,16 @@ impl HarnessBackend {
             .and_then(|session| session.name())
     }
 
+    async fn emit_queue(&self) {
+        if let Ok(queued) = self.lane.queued_messages().await {
+            self.emit(json!({
+                "type": "queue_update",
+                "steering": queued.steering,
+                "followUp": queued.follow_up,
+            }));
+        }
+    }
+
     /// Handle one pi-web agent command.
     pub async fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
         let kind = command.get("type").and_then(Value::as_str).unwrap_or("");
@@ -373,6 +383,7 @@ impl HarnessBackend {
                         self.lane.follow_up(message).await
                     };
                     queued.map_err(|error| anyhow!(error.to_string()))?;
+                    self.emit_queue().await;
                     return Ok(json!({ "queued": true }));
                 }
                 let this = self.clone();
@@ -402,6 +413,7 @@ impl HarnessBackend {
                     .abort()
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                self.emit_queue().await;
                 Ok(json!({
                     "steering": result.steer.iter().map(queued_text).collect::<Vec<_>>(),
                     "followUp": result.follow_up.iter().map(queued_text).collect::<Vec<_>>(),
@@ -413,6 +425,7 @@ impl HarnessBackend {
                     .clear_queue()
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                self.emit_queue().await;
                 Ok(json!({
                     "steering": queued.steering,
                     "followUp": queued.follow_up,
@@ -476,6 +489,7 @@ impl HarnessBackend {
                     .set_name(Some(name))
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                self.emit(json!({ "type": "session_info_changed", "name": name }));
                 Ok(json!({ "name": name }))
             }
             "compact" => {
@@ -502,6 +516,80 @@ impl HarnessBackend {
             "abort_compaction" => Ok(json!({ "cancelled": true })),
             "reload" => Ok(self.state_json(true)),
             "extension_ui_response" | "extension_ui_input" => Ok(Value::Null),
+            "fork" | "clone" => {
+                use pi_star_harness::session::types::{
+                    ForkOptions, SessionCreateOptions, SessionMetadata, SessionRepo, SessionStorage,
+                };
+                let header = read_header(&self.path)?;
+                let repo = V3SessionRepo::new(self.config.clone(), &self.cwd);
+                let metadata = SessionMetadata {
+                    id: header.id.clone(),
+                    created_at: 0,
+                    parent_session_id: None,
+                };
+                let storage = repo
+                    .fork(
+                        &metadata,
+                        &SessionCreateOptions::default(),
+                        &ForkOptions::Branch {
+                            entry_id: None,
+                            position: None,
+                        },
+                    )
+                    .await
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                let new_id = storage.metadata().id.clone();
+                Ok(json!({ "cancelled": false, "newSessionId": new_id }))
+            }
+            "bash" => {
+                let script = command
+                    .get("command")
+                    .and_then(Value::as_str)
+                    .unwrap_or("")
+                    .to_string();
+                if script.is_empty() {
+                    return Err(anyhow!("command is required"));
+                }
+                let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".into());
+                let output = tokio::process::Command::new(shell)
+                    .arg("-lc")
+                    .arg(&script)
+                    .current_dir(&self.cwd)
+                    .output()
+                    .await?;
+                let text = String::from_utf8_lossy(&output.stdout).into_owned()
+                    + &String::from_utf8_lossy(&output.stderr);
+                let exit_code = output.status.code();
+                let message = AgentMessage::Custom(CustomMessage {
+                    role: "bashExecution".into(),
+                    content: Vec::new(),
+                    data: json!({
+                        "command": script,
+                        "output": text,
+                        "exitCode": exit_code,
+                    }),
+                    timestamp: now_ms(),
+                });
+                self.lane
+                    .append_message(message.clone())
+                    .await
+                    .map_err(|error| anyhow!(error.to_string()))?;
+                self.emit(
+                    json!({ "type": "message_start", "message": { "role": "bashExecution" } }),
+                );
+                self.emit(json!({
+                    "type": "message_end",
+                    "message": {
+                        "role": "bashExecution",
+                        "command": script,
+                        "output": text,
+                        "exitCode": exit_code,
+                        "timestamp": now_ms(),
+                    },
+                }));
+                Ok(json!({ "output": text, "exitCode": exit_code }))
+            }
+            "abort_bash" => Ok(json!({ "cancelled": true })),
             other => Err(anyhow!("unknown command: {other}")),
         }
     }
@@ -1375,6 +1463,29 @@ mod tests {
         assert!(
             assistant.get("timestamp").and_then(Value::as_str).is_some(),
             "entry timestamps are ISO strings in v3"
+        );
+
+        let bash = backend
+            .send(&json!({"type": "bash", "command": "echo hello-bash"}))
+            .await
+            .unwrap();
+        assert_eq!(bash["exitCode"], 0);
+        assert!(
+            bash["output"]
+                .as_str()
+                .is_some_and(|output| output.contains("hello-bash"))
+        );
+        let session = crate::session::read_session(&backend.path).unwrap();
+        assert!(session.entries.iter().any(|entry| {
+            entry.get("type").and_then(Value::as_str) == Some("message")
+                && entry.pointer("/message/role").and_then(Value::as_str) == Some("bashExecution")
+        }));
+
+        let fork = backend.send(&json!({"type": "fork"})).await.unwrap();
+        let fork_id = fork["newSessionId"].as_str().unwrap();
+        assert!(
+            crate::config::session_file_for_id(&config.sessions_dir, fork_id).is_some(),
+            "fork must create a new v3 session file"
         );
     }
 }
