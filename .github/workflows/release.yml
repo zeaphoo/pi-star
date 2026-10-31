@@ -116,10 +116,6 @@ jobs:
     defaults:
       run:
         shell: bash
-    env:
-      # Short staging path keeps node_modules under MAX_PATH; the installer
-      # destination itself is C:\Program Files\PiStar.
-      PI_RUNTIME_DIR: C:/pirt
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -141,7 +137,12 @@ jobs:
       - name: Cache bundled pi runtime
         uses: actions/cache@v4
         with:
-          path: C:/pirt
+          # Keep the staging directory on the same drive as the checkout.
+          # Tauri's resource normalize() strips the Windows drive prefix, so a
+          # C:\ staging path becomes \pirt and is resolved on D: where the
+          # build runs, which fails. app/pi-runtime is same-drive and short
+          # enough for node_modules even without long paths.
+          path: app/pi-runtime
           key: pi-runtime-windows-${{ hashFiles('packaging/pi-runtime.json') }}
       - name: Install tauri-cli
         run: cargo install tauri-cli --locked

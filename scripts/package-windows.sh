@@ -16,6 +16,9 @@ case "$(uname -s)" in
     *) echo "package-windows.sh 仅在 Windows（Git Bash / MSYS）上运行" >&2; exit 1 ;;
 esac
 
+ROOT_WIN="$(cygpath -w "$ROOT")"
+RUNTIME_WIN="$(cygpath -w "$RUNTIME_DIR")"
+
 cleanup() {
     rm -f "$INJECT_CONFIG" "$APP_BIN"
 }
@@ -42,7 +45,9 @@ case "$(uname -m)" in
 esac
 
 if [[ "${SKIP_PI_RUNTIME:-0}" != "1" ]]; then
-    node "$ROOT/scripts/prepare-pi-runtime.mjs" --out "$RUNTIME_DIR" --platform win32 --arch "$WIN_ARCH"
+    # Pass the native path: Node on Windows must not resolve an MSYS /d/...
+    # path against the current drive.
+    node "$ROOT/scripts/prepare-pi-runtime.mjs" --out "$RUNTIME_WIN" --platform win32 --arch "$WIN_ARCH"
 fi
 for path in "$RUNTIME_DIR/node.exe" "$RUNTIME_DIR/pi/package.json" "$RUNTIME_DIR/agent-extension/index.ts"; do
     [[ -e "$path" ]] || { echo "pi 运行时缺少 $path" >&2; exit 1; }
@@ -68,6 +73,12 @@ if [[ "$VERSION" == *-* ]]; then
     MSI_VERSION="${core}.${build}"
 fi
 
+if [[ "${ROOT_WIN%%:*}" != "${RUNTIME_WIN%%:*}" ]]; then
+    echo "Windows 资源 staging 必须与仓库同盘（当前 $ROOT_WIN vs $RUNTIME_WIN）。" >&2
+    echo "Tauri 会丢掉资源路径的盘符；请把 PI_RUNTIME_DIR 放到仓库所在盘。" >&2
+    exit 1
+fi
+
 node -e '
 const fs = require("fs")
 const path = require("path")
@@ -89,7 +100,7 @@ for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
 const config = { bundle: { resources } }
 if (msi) config.bundle.windows = { wix: { version: msi } }
 fs.writeFileSync(out, JSON.stringify(config))
-' "$(cygpath -w "$ROOT")" "$(cygpath -w "$RUNTIME_DIR")" "$(cygpath -w "$INJECT_CONFIG")" "$MSI_VERSION"
+' "$ROOT_WIN" "$RUNTIME_WIN" "$(cygpath -w "$INJECT_CONFIG")" "$MSI_VERSION"
 
 (cd "$ROOT/app" && cargo tauri build --config "$(cygpath -w "$INJECT_CONFIG")" --bundles "$BUNDLES")
 rm -f "$INJECT_CONFIG"

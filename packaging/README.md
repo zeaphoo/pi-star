@@ -76,6 +76,8 @@ node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform darwin --arc
 Windows 主程序是 `PiStarApp.exe`，与 `pi-star.exe` 在忽略大小写后仍不同。便携 zip 内两个 exe
 与 `pi-runtime/` 同目录。`pi/node_modules` 路径较深，Windows 构建机建议启用 long paths
 （`git config --global core.longpaths true` 与注册表 `LongPathsEnabled=1`）；CI 已自动开启。
+Windows 的 `PI_RUNTIME_DIR` 必须与仓库位于同一盘符：Tauri 规范化资源路径时会丢掉盘符，
+跨盘路径会在构建时被解析到错误位置。打包脚本会提前校验并报错。
 
 ## CI / Release
 
