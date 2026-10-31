@@ -10,12 +10,13 @@ Git for Windows 执行 bash 命令的行为。
 ### Requirement: 自包含 pi 运行时
 
 桌面安装包 SHALL 携带官方 Node 运行时、固定版本的 pi CLI 生产依赖和 pi-star 的
-`agent-extension/`，安装后无需用户预装 Node 或 pi。运行时版本 MUST 由仓库内固定清单声明。
+`agent-extension/`；Windows 安装包 SHALL 额外携带 MinGit。安装后无需用户预装 Node、pi
+或 Git for Windows。运行时版本 MUST 由仓库内固定清单声明。
 
 #### Scenario: 干净机器启动
 
-- **WHEN** 用户安装桌面包且机器没有 Node/pi
-- **THEN** pi-star 使用内置 `pi-runtime/` 启动 RPC 后端，Agent 页面可用
+- **WHEN** 用户安装桌面包且机器没有 Node/pi/Git
+- **THEN** pi-star 使用内置 `pi-runtime/` 启动 RPC 后端，Windows bash 使用内置 MinGit
 
 #### Scenario: 版本固定
 
@@ -90,12 +91,18 @@ dmg；未配置时 SHOULD 产出未签名 dmg 并明确告警。
 
 ### Requirement: Windows Git Bash 探测
 
-Windows 的 bash 工具 SHALL 使用 Git for Windows 的 `bash.exe`，支持 `PI_STAR_BASH` 覆盖；探测
-MUST 排除 `System32`/`Sysnative` 的 WSL 启动器，且 MUST NOT 回退到 cmd.exe。
+Windows 的 bash 工具 SHALL 优先使用安装包内置的 MinGit，其次使用系统 Git for Windows，
+支持 `PI_STAR_BASH` 覆盖；探测 MUST 排除 `System32`/`Sysnative` 的 WSL 启动器，且 MUST NOT
+回退到 cmd.exe。
 
-#### Scenario: 标准 Git 安装
+#### Scenario: 安装包内置 Git
 
-- **WHEN** Git 安装在 `Program Files\Git`
+- **WHEN** 目标机器没有安装 Git，直接使用 Windows 安装包
+- **THEN** bash 工具使用 `pi-runtime/git/bin/bash.exe` 执行命令
+
+#### Scenario: 系统 Git 安装
+
+- **WHEN** 安装包未包含 Git，但系统 Git 安装在 `Program Files\Git`
 - **THEN** bash 工具使用 `Git\bin\bash.exe` 执行命令
 
 #### Scenario: 只有 WSL bash

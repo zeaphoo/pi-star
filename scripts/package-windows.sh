@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # 构建 Windows 桌面应用：NSIS / MSI 安装包 + 便携 zip。
-# 内嵌 pi-star.exe、Node、pi 包和 agent-extension；必须在 Git Bash / MSYS 下运行。
+# 内嵌 pi-star.exe、Node、pi 包、agent-extension 和 MinGit；必须在 Git Bash / MSYS 下运行。
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -72,6 +72,7 @@ node -e '
 const fs = require("fs")
 const [root, runtime, out, msi] = process.argv.slice(1)
 const p = (value) => value.replace(/\\/g, "/")
+const fsExists = (p) => fs.existsSync(p)
 const resources = {
   [p(`${root}/app/pi-star.exe`)]: "pi-star.exe",
   [p(`${runtime}/node.exe`)]: "pi-runtime/node.exe",
@@ -80,6 +81,9 @@ const resources = {
   [p(`${runtime}/pi-runtime.json`)]: "pi-runtime/pi-runtime.json",
   [p(`${runtime}/NODE-LICENSE`)]: "pi-runtime/NODE-LICENSE",
   [p(`${runtime}/PI-NOTICE`)]: "pi-runtime/PI-NOTICE",
+}
+for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
+  if (fsExists(`${runtime}/${extra}`)) resources[p(`${runtime}/${extra}`)] = `pi-runtime/${extra}`
 }
 const config = { bundle: { resources } }
 if (msi) config.bundle.windows = { wix: { version: msi } }
@@ -140,9 +144,10 @@ Pi Star ${VERSION} portable (${WIN_ARCH})
   Back up %USERPROFILE%\\.pi\\agent to keep sessions and credentials.
 
 命令执行 / Bash
-  Windows 的 bash 工具需要 Git for Windows 的 bash.exe。
-  桌面壳会自动探测 Git 安装目录和 PATH；也可以用 PI_STAR_BASH 指定路径。
-  Install Git for Windows for the bash tool, or set PI_STAR_BASH to bash.exe.
+  安装包已内置 MinGit（pi-runtime\git），无需另装 Git for Windows。
+  The package bundles MinGit under pi-runtime\git; no separate Git install is needed.
+  仍可用 PI_STAR_BASH 指向其他 bash.exe。
+
 
 WebView2
   Windows 10 1803+ 通常已随 Edge 安装；缺失时请安装 Evergreen Bootstrapper。

@@ -56,7 +56,8 @@ UI 热更新：`cd ui && npm run dev`，然后在 debug 构建下设置
 `cargo tauri build`。`app/pi-star`、`app/pi-runtime`、`app/.bundle-resources.json` 都是打包
 临时文件，已在根 `.gitignore` 中忽略。
 
-安装包内 `pi-star` 与 `pi-runtime/` 位于同一资源目录；`pi-star` 启动时自动发现并设置
+安装包内 `pi-star` 与 `pi-runtime/` 位于同一资源目录（Windows 的 `pi-runtime/git/` 为内置
+MinGit）；`pi-star` 启动时自动发现并设置
 `PI_STAR_PI_NODE`、`PI_STAR_PI_JS`、`PI_STAR_AGENT_EXTENSION`、`PI_PACKAGE_DIR`。用户仍可用
 `PI_STAR_PI_CLI` 指向自己的 pi。
 

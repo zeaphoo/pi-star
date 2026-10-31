@@ -39,7 +39,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | 桌面 WebView | ✅ | 原生装饰、稳定端口、主窗口零 IPC、只读 `__PI_STAR__` 标记、桌面模式跳过 PWA/SW |
 | 桌面打包 | ◐ | `package-linux-app/windows/mac` 注入 `bundle.resources`；安装包携带 `pi-star`、Node、pi CLI 与 `agent-extension`；Linux deb/AppImage 已实测，Windows/macOS 待实机验收 |
 | CI / Release | ◐ | 工作流已写入：CI 跑 Rust/UI/三平台检查；Release 由 `v*` 触发并汇总产物；尚未在 GitHub 上首次运行 |
-| Windows bash | ◐ | Git for Windows 探测：`PI_STAR_BASH` → git.exe 推导 → 标准安装目录 → `where bash.exe`（排除 WSL）；`--noprofile --norc -c` + `CREATE_NO_WINDOW`；WSL 路径单测通过，待 Windows 实机验收 |
+| Windows bash | ◐ | Windows 安装包内置 MinGit；探测顺序：内置 Git/`PI_STAR_BASH` → git.exe 推导 → 标准安装目录 → `where bash.exe`（排除 WSL）；`--noprofile --norc -c` + `CREATE_NO_WINDOW`；待 Windows 实机验收 |
 | 测试 | ✅ | 全部 Rust workspace 单测/集成测试（含按会话后端切换、CLI 事件/stdin/端口）+ 1652 个客户端单测 + 完整浏览器 e2e（含 PTY 终端）+ `app/` 单测 |
 
 ## 运行时边界

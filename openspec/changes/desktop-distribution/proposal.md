@@ -8,8 +8,8 @@ Windows/macOS 安装包和 CI/Release 流水线。
 
 ## What Changes
 
-- **自包含运行时**：安装包携带官方 Node、固定版本的 `@earendil-works/pi-coding-agent` 生产依赖，
-  以及 `agent-extension/`；`pi-star` 从 `pi-runtime/` 自动发现它们。
+- **自包含运行时**：安装包携带官方 Node、固定版本的 `@earendil-works/pi-coding-agent` 生产依赖、
+  `agent-extension/`；Windows 还携带官方 MinGit。`pi-star` 从 `pi-runtime/` 自动发现它们。
 - **平台打包**：新增 Linux（deb/AppImage）、Windows（NSIS/MSI/portable zip）、macOS（.app/dmg）
   脚本；全部是桌面应用，不再发布 Linux service 包。
 - **macOS 签名/公证**：有 secrets 时对内置 Node/原生模块先签名，再签 `.app`，公证 app 与 dmg；

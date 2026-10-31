@@ -189,8 +189,9 @@ PI_WEB_DIR=/path/to/pi-web node scripts/sync-ui-from-pi-web.mjs
 - splash/错误页、原生装饰主窗口、托盘、开机自启动、关窗到托盘；
 - 退出时清理 pi-star 及其 Node/PTY 子进程树。
 
-安装包同时内置 Node、pi CLI（`@earendil-works/pi-coding-agent`）和 `agent-extension/`，
-安装后不需要单独安装 Node 或 pi。版本固定在 `packaging/pi-runtime.json`。
+安装包同时内置 Node、pi CLI（`@earendil-works/pi-coding-agent`）和 `agent-extension/`；
+Windows 还内置 MinGit，安装后不需要单独安装 Node、pi 或 Git for Windows。版本固定在
+`packaging/pi-runtime.json`。
 
 主窗口加载 `http://127.0.0.1:<port>/`，端口默认 `30151` 并持久化在桌面偏好中。端口保持稳定是
 因为 webview 的 localStorage、cookie 和缓存都以 origin 为键；冲突时桌面壳会显示错误，不会静默
@@ -226,8 +227,9 @@ release `pi-star` → Tauri 安装包。`pi-star` 与 `pi-runtime/` 通过临时
 注入，Linux 落在 `/usr/lib/PiStar/`，macOS 落在 `Contents/Resources/`，Windows 与
 `PiStarApp.exe` 同目录。产物在 `dist/<os>/`。Linux **只发布桌面应用**，不再有单独的服务包。
 
-Windows 的 `bash` 工具需要 Git for Windows（不会回退 cmd.exe，也不用 WSL 的
-`System32\bash.exe`）；探测顺序和 `PI_STAR_BASH` 覆盖见 [`packaging/README.md`](packaging/README.md)。
+Windows 的 `bash` 工具优先使用安装包内置的 MinGit（不会回退 cmd.exe，也不用 WSL 的
+`System32\bash.exe`）；也支持系统 Git for Windows 与 `PI_STAR_BASH` 覆盖，详见
+[`packaging/README.md`](packaging/README.md)。
 安装包默认未签名；macOS 配置签名 secrets 后会自动签名/公证。CI 与 Release 配置见
 `.github/workflows/`。
 

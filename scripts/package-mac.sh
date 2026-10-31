@@ -60,6 +60,7 @@ cp -f "$ROOT_TARGET/release/pi-star" "$APP_BIN"
 node -e '
 const fs = require("fs")
 const [root, runtime, out] = process.argv.slice(1)
+const fsExists = (p) => fs.existsSync(p)
 const resources = {
   [`${root}/app/pi-star`]: "pi-star",
   [`${runtime}/node`]: "pi-runtime/node",
@@ -68,6 +69,9 @@ const resources = {
   [`${runtime}/pi-runtime.json`]: "pi-runtime/pi-runtime.json",
   [`${runtime}/NODE-LICENSE`]: "pi-runtime/NODE-LICENSE",
   [`${runtime}/PI-NOTICE`]: "pi-runtime/PI-NOTICE",
+}
+for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
+  if (fsExists(`${runtime}/${extra}`)) resources[`${runtime}/${extra}`] = `pi-runtime/${extra}`
 }
 fs.writeFileSync(out, JSON.stringify({ bundle: { resources } }))
 ' "$ROOT" "$RUNTIME_DIR" "$INJECT_CONFIG"

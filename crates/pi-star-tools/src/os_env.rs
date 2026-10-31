@@ -344,6 +344,27 @@ fn is_legacy_wsl_bash_path(p: &Path) -> bool {
 
 #[cfg(windows)]
 async fn windows_probe_bash() -> Option<ShellConfig> {
+    // 0. The installer bundles PortableGit beside pi-star; prefer it so target
+    // machines do not need Git for Windows. `pi-star` also sets PI_STAR_BASH,
+    // but probing the layout directly keeps the tool usable in isolation.
+    let mut bundled: Vec<PathBuf> = Vec::new();
+    if let Some(home) = std::env::var_os("PI_STAR_GIT_HOME") {
+        let home = PathBuf::from(home);
+        bundled.push(home.join("bin").join("bash.exe"));
+        bundled.push(home.join("usr").join("bin").join("bash.exe"));
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            for git in [dir.join("pi-runtime").join("git"), dir.join("git")] {
+                bundled.push(git.join("bin").join("bash.exe"));
+                bundled.push(git.join("usr").join("bin").join("bash.exe"));
+            }
+        }
+    }
+    if let Some(found) = bundled.into_iter().find(|candidate| candidate.is_file()) {
+        return Some(bash_shell_config(found));
+    }
+
     let mut candidates: Vec<PathBuf> = Vec::new();
 
     // 1. Prefer Git for Windows relative to the git.exe already on PATH.

@@ -2,9 +2,10 @@
 
 ## 1. 自包含运行时
 
-- [x] 1.1 新增 `packaging/pi-runtime.json` 固定 Node/pi 版本，并写 `scripts/prepare-pi-runtime.mjs` 下载 Node、npm pack/install pi、复制 `agent-extension`
+- [x] 1.1 新增 `packaging/pi-runtime.json` 固定 Node/pi/MinGit 版本，并写 `scripts/prepare-pi-runtime.mjs` 下载 Node、npm pack/install pi、复制 `agent-extension`、解压 Windows MinGit
 - [x] 1.2 新增 `crates/pi-star/src/pi_runtime.rs`：运行时发现、环境注入、RPC/export 命令构造；补布局解析单测
 - [x] 1.3 在 `main` 启动时调用 `apply_env`，并验证 `PI_STAR_PI_RUNTIME` 能驱动内置 pi（Linux 打包产物实测）
+- [x] 1.4 Windows 安装包内置 MinGit：准备脚本解压/校验，`apply_env` 设置 `PI_STAR_GIT_HOME`/`PI_STAR_BASH` 并前置 PATH
 
 ## 2. 平台打包
 
@@ -23,7 +24,7 @@
 ## 4. Windows bash
 
 - [x] 4.1 `os_env.rs` 增加 `PI_STAR_BASH`/`PI_DESKTOP_BASH` 覆盖
-- [x] 4.2 按 PI-Desktop 顺序探测 Git for Windows，排除 WSL，使用 `--noprofile --norc -c`
+- [x] 4.2 优先使用内置 MinGit，其次按 PI-Desktop 顺序探测系统 Git，排除 WSL，使用 `--noprofile --norc -c`
 - [x] 4.3 补 WSL 路径识别单测
 
 ## 5. 文档与验收

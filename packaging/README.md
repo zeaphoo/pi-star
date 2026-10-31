@@ -9,6 +9,7 @@ Pi Star 只发布**桌面应用**，不再提供单独的 Linux 服务包。每�
 | Node 运行时 | `pi-runtime/node`（Windows `node.exe`） |
 | pi CLI | `pi-runtime/pi/`（`@earendil-works/pi-coding-agent` + 生产依赖） |
 | pi-star 扩展 | `pi-runtime/agent-extension/`（`index.ts`、`subagent.ts`） |
+| MinGit（仅 Windows） | `pi-runtime/git/`（Git Bash、git、coreutils） |
 
 Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Windows 为安装目录。
 `pi-star` 启动时会在自身同目录查找 `pi-runtime/`，因此安装后无需单独安装 Node 或 pi。
@@ -18,10 +19,17 @@ Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Win
 `packaging/pi-runtime.json` 固定内置运行时：
 
 ```json
-{ "node": "22.20.0", "pi": "0.99.1" }
+{
+  "node": "22.20.0",
+  "pi": "0.99.1",
+  "minGit": "2.56.0.4",
+  "minGitTag": "v2.56.0.windows.4"
+}
 ```
 
-升级 pi 时同时更新此文件并重新打包。`scripts/check-desktop-version.sh` 校验
+升级 pi/Node/MinGit 时同时更新此文件并重新打包。Windows 目标机器不需要预装 Git for
+Windows；`pi-star` 会使用 `pi-runtime/git/bin/bash.exe`，并把 `git`/`cmd`/`usr/bin` 等目录
+加入子进程 PATH。`scripts/check-desktop-version.sh` 校验
 `app/Cargo.toml`、`app/tauri.conf.json` 与 workspace 版本；发布 tag 必须是 `v<version>`。
 
 ## 本机构建
@@ -53,7 +61,9 @@ node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform darwin --arc
 ```
 
 它从 nodejs.org 下载固定版本 Node，`npm pack` 固定版本 pi，`npm install --omit=dev`
-安装生产依赖，并复制 `agent-extension/`。已准备且元数据一致时自动跳过。
+安装生产依赖，复制 `agent-extension/`；Windows 上还会解压 MinGit。已准备且元数据一致时
+自动跳过。MinGit 采用 GPL-2.0，安装包内附带 `GIT-LICENSE.txt`/`GIT-NOTICE.txt`，源码地址
+为 <https://github.com/git-for-windows/git>。
 
 ## 产物命名
 
@@ -99,14 +109,15 @@ Linux/Windows/macOS 做桌面壳编译检查。
 
 ## Windows 的 bash
 
-Agent 的 `bash` 工具在 Windows 上需要 **Git for Windows** 的 `bash.exe`，不会回退到
-`cmd.exe`，也不会使用 WSL 的 `System32\bash.exe`。探测顺序（与 PI-Desktop 一致）：
+Agent 的 `bash` 工具在 Windows 上优先使用安装包内置的 MinGit，不会回退到 `cmd.exe`，
+也不会使用 WSL 的 `System32\bash.exe`。探测顺序：
 
-1. `PI_STAR_BASH`，兼容 `PI_DESKTOP_BASH`；
-2. 从 PATH 上的 `git.exe` 推导 `Git\bin\bash.exe` / `Git\usr\bin\bash.exe`；
-3. `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`LocalAppData\Programs` 下的
+1. 内置 `pi-runtime/git/bin/bash.exe`（或 `PI_STAR_GIT_HOME`）；
+2. `PI_STAR_BASH`，兼容 `PI_DESKTOP_BASH`；
+3. 从 PATH 上的 `git.exe` 推导 `Git\bin\bash.exe` / `Git\usr\bin\bash.exe`；
+4. `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`LocalAppData\Programs` 下的
    `Git\bin\bash.exe`；
-4. `where bash.exe`，排除 `System32` 的 WSL 启动器。
+5. `where bash.exe`，排除 `System32` 的 WSL 启动器。
 
 找到后使用 `bash --noprofile --norc -c`，并以 `CREATE_NO_WINDOW` 启动。终端面板仍默认使用
 PowerShell（可用 `SHELL` 覆盖）。

@@ -17,7 +17,7 @@ bash、平台安装包和 CI。安装包必须做到“下载即用”，且不�
 **Non-Goals:**
 
 - 不把 pi 编译成单文件二进制；仍使用官方 Node + npm 包。
-- 不在安装包内捆绑 Git for Windows（体积和许可成本高），只探测用户安装。
+- Linux/macOS 不额外捆绑 Git（系统自带 bash）；Windows 为满足 bash 工具捆绑 MinGit。
 - 不签名 Windows 安装包；macOS 签名/公证为可选 secrets。
 - 不改变 Linux 服务端的独立运行方式，只是不再单独发布 service 包。
 
@@ -30,12 +30,12 @@ pi-runtime/
   node(.exe)
   pi/                  npm pack + npm install --omit=dev
   agent-extension/     index.ts + subagent.ts
-  pi-runtime.json      { node, pi, platform, arch }
-  NODE-LICENSE
-  PI-NOTICE
+  git/                 Windows only: MinGit
+  pi-runtime.json      { node, pi, git, platform, arch }
+  NODE-LICENSE / PI-NOTICE / GIT-LICENSE.txt / GIT-NOTICE.txt
 ```
 
-`packaging/pi-runtime.json` 固定 `node=22.20.0`、`pi=0.99.1`。`scripts/prepare-pi-runtime.mjs`
+`packaging/pi-runtime.json` 固定 `node=22.20.0`、`pi=0.99.1`、`minGit=2.56.0.4`。`scripts/prepare-pi-runtime.mjs`
 下载官方 Node（curl），`npm pack` pi 并从 tarball 安装生产依赖，复制扩展；元数据匹配时跳过，
 供 GitHub Actions 缓存。 pi 的 `docs/`、`examples/` 保留，供系统提示引用。
 
@@ -48,7 +48,8 @@ pi-runtime/
 3. debug 构建的 `app/pi-runtime`、`dist/pi-runtime`。
 
 找到后 `apply_env` 设置 `PI_STAR_PI_NODE`、`PI_STAR_PI_JS`、`PI_STAR_AGENT_EXTENSION`、
-`PI_PACKAGE_DIR`。`PI_STAR_PI_CLI` 是显式逃生口，存在时完全不使用内置运行时。RPC 与 export
+`PI_PACKAGE_DIR`；Windows 上还会设置 `PI_STAR_GIT_HOME`/`PI_STAR_BASH`，并把 MinGit 的
+`cmd`、`ucrt64/bin`、`usr/bin`、`bin` 前置到 PATH。`PI_STAR_PI_CLI` 是显式逃生口，存在时完全不使用内置运行时。RPC 与 export
 都通过 `pi_runtime::command()` 构造 `node <cli.js> ...`。
 
 ### 3. 打包脚本共享资源注入
@@ -87,10 +88,11 @@ Linux 产物 rename 为 `pi-star-app_*` 并重写 deb `Package:`；Windows `PiSt
 对齐 PI-Desktop（见 `crates/pi-star-tools/src/os_env.rs`）：
 
 1. `with_shell_path`；
-2. `PI_STAR_BASH`（兼容 `PI_DESKTOP_BASH`）；
-3. 从 PATH 上的 `git.exe` 推导 Git 根目录，查 `bin/bash.exe`、`usr/bin/bash.exe`；
-4. `ProgramFiles`/`ProgramFiles(x86)`/`ProgramW6432`/`LocalAppData\Programs`；
-5. `where bash.exe`，排除 `System32`/`Sysnative` 的 WSL 启动器。
+2. 安装包内置 `pi-runtime/git`（或 `PI_STAR_GIT_HOME`）；
+3. `PI_STAR_BASH`（兼容 `PI_DESKTOP_BASH`）；
+4. 从 PATH 上的 `git.exe` 推导 Git 根目录，查 `bin/bash.exe`、`usr/bin/bash.exe`；
+5. `ProgramFiles`/`ProgramFiles(x86)`/`ProgramW6432`/`LocalAppData\Programs`；
+6. `where bash.exe`，排除 `System32`/`Sysnative` 的 WSL 启动器。
 
 Git Bash 使用 `--noprofile --norc -c`；WSL bash 保留 `-s` stdin 传输；缺失时返回
 `ShellUnavailable`，不静默回退 cmd.exe。
@@ -102,7 +104,8 @@ Git Bash 使用 `--noprofile --norc -c`；WSL bash 保留 `-s` stdin 传输；�
 - Node 在 hardened runtime 下需要 JIT entitlements → 对内置 Node/native 模块签名时带
   entitlements。
 - macOS 无 secrets 时未签名 → Release 仍出 dmg 并告警；配置 secrets 后自动公证。
-- Windows 无 Git for Windows 时 bash 工具不可用 → 安装指南明确；终端仍可用 PowerShell。
+- MinGit 不提供 `bash.exe`，但 `usr/bin/sh.exe` 与 bash 字节相同 → 准备脚本复制为 `bash.exe`，解压约 96 MB（PortableGit 为 416 MB）。
+- GPL-2.0 合规 → 安装包附带 Git 许可证与源码地址（`GIT-LICENSE.txt`、`GIT-NOTICE.txt`）。
 - 未签名 Windows 安装包触发 SmartScreen → README 说明。
 
 ## Migration Plan

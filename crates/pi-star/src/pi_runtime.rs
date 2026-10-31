@@ -25,6 +25,10 @@ pub struct PiRuntime {
     pub cli_js: PathBuf,
     pub package_dir: PathBuf,
     pub extension: Option<PathBuf>,
+    /// Bundled PortableGit root (Windows only).
+    pub git: Option<PathBuf>,
+    /// `git/bin/bash.exe` or `git/usr/bin/bash.exe`.
+    pub git_bash: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,12 +78,19 @@ fn from_dir(dir: &Path) -> Option<PiRuntime> {
         .map(|relative| package_dir.join(relative))
         .find(|path| path.is_file())?;
     let extension = dir.join("agent-extension").join("index.ts");
+    let git_dir = dir.join("git");
+    let git_bash = ["bin/bash.exe", "usr/bin/bash.exe"]
+        .iter()
+        .map(|relative| git_dir.join(relative))
+        .find(|path| path.is_file());
     Some(PiRuntime {
         dir: dir.to_path_buf(),
         node,
         cli_js,
         package_dir,
         extension: extension.is_file().then_some(extension),
+        git: git_bash.as_ref().map(|_| git_dir),
+        git_bash,
     })
 }
 
@@ -102,6 +113,16 @@ pub fn apply_env() {
     set_if_absent("PI_PACKAGE_DIR", &runtime.package_dir);
     if let Some(extension) = &runtime.extension {
         set_if_absent("PI_STAR_AGENT_EXTENSION", extension);
+    }
+    if let Some(git) = &runtime.git {
+        set_if_absent("PI_STAR_GIT_HOME", git);
+        if let Some(bash) = &runtime.git_bash {
+            set_if_absent("PI_STAR_BASH", bash);
+        }
+    }
+    #[cfg(windows)]
+    if let Some(git) = &runtime.git {
+        prepend_git_path(git);
     }
     tracing::debug!(
         dir = %runtime.dir.display(),
@@ -157,6 +178,29 @@ fn set_if_absent(name: &str, value: &Path) {
     }
 }
 
+#[cfg(windows)]
+fn prepend_git_path(git: &Path) {
+    let mut dirs = Vec::new();
+    for relative in ["cmd", "ucrt64/bin", "mingw64/bin", "usr/bin", "bin"] {
+        let dir = git.join(relative);
+        if dir.is_dir() {
+            dirs.push(dir);
+        }
+    }
+    let Some(existing) = std::env::var_os("PATH") else {
+        return;
+    };
+    for dir in std::env::split_paths(&existing) {
+        if !dirs.iter().any(|candidate| candidate == &dir) {
+            dirs.push(dir);
+        }
+    }
+    if let Ok(path) = std::env::join_paths(dirs) {
+        // SAFETY: called once from `main` before any worker thread is started.
+        unsafe { std::env::set_var("PATH", path) };
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,11 +219,15 @@ mod tests {
         std::fs::write(root.join("pi/package.json"), "{}").unwrap();
         std::fs::write(root.join("pi/dist/bundle/cli.js"), "").unwrap();
         std::fs::write(root.join("agent-extension/index.ts"), "").unwrap();
+        std::fs::create_dir_all(root.join("git/bin")).unwrap();
+        std::fs::write(root.join("git/bin/bash.exe"), b"").unwrap();
 
         let runtime = from_dir(&root).expect("runtime");
         assert_eq!(runtime.node, root.join(node_name()));
         assert_eq!(runtime.cli_js, root.join("pi/dist/bundle/cli.js"));
         assert!(runtime.extension.is_some());
+        assert!(runtime.git.is_some());
+        assert_eq!(runtime.git_bash.unwrap(), root.join("git/bin/bash.exe"));
         let _ = std::fs::remove_dir_all(root);
     }
 
