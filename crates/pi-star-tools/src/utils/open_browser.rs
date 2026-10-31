@@ -18,7 +18,7 @@
 //!
 //! # Example
 //!
-//! ```rust
+//! ```no_run
 //! use pi_star_tools::utils::open_browser::open_browser;
 //!
 //! // Open a URL in the default browser
@@ -26,6 +26,9 @@
 //!     eprintln!("Failed to open browser: {}", e);
 //! }
 //! ```
+//!
+//! The example is `no_run`: running it (as a doc test) would really launch the
+//! user's browser, the same side effect the unit test below deliberately avoids.
 
 use std::process::Command;
 
