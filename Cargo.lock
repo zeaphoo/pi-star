@@ -2029,7 +2029,7 @@ checksum = "9b4f627cb1b25917193a259e49bdad08f671f8d9708acfd5fe0a8c1455d87220"
 
 [[package]]
 name = "pi-star"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "anyhow",
  "async-stream",
@@ -2062,7 +2062,7 @@ dependencies = [
 
 [[package]]
 name = "pi-star-agent"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2078,7 +2078,7 @@ dependencies = [
 
 [[package]]
 name = "pi-star-ai"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",
@@ -2100,7 +2100,7 @@ dependencies = [
 
 [[package]]
 name = "pi-star-core"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "aes-gcm",
  "anyhow",
@@ -2143,7 +2143,7 @@ dependencies = [
 
 [[package]]
 name = "pi-star-harness"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "pi-star-tools"
-version = "0.1.0"
+version = "0.1.0-rc.1"
 dependencies = [
  "async-trait",
  "base64 0.22.1",

@@ -9,6 +9,14 @@ const root = path.dirname(fileURLToPath(import.meta.url));
 
 // The desktop installer pins the bundled pi version. Keep the UI's displayed
 // version in sync with that pin instead of a hard-coded compatibility string.
+function packageVersion() {
+  try {
+    return JSON.parse(readFileSync(path.resolve(root, "package.json"), "utf8")).version || "0.0.0";
+  } catch {
+    return "0.0.0";
+  }
+}
+
 function bundledPiVersion() {
   try {
     const pins = JSON.parse(readFileSync(path.resolve(root, "../packaging/pi-runtime.json"), "utf8"));
@@ -20,7 +28,7 @@ function bundledPiVersion() {
 
 export default defineConfig({
   define: {
-    "import.meta.env.VITE_APP_VERSION": JSON.stringify(process.env.PI_STAR_VERSION ?? "0.1.0"),
+    "import.meta.env.VITE_APP_VERSION": JSON.stringify(process.env.PI_STAR_VERSION ?? packageVersion()),
     "import.meta.env.VITE_PI_VERSION": JSON.stringify(process.env.PI_STAR_PI_VERSION ?? bundledPiVersion()),
   },
   plugins: [react(), tailwindcss()],

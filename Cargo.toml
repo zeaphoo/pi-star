@@ -13,16 +13,16 @@ default-members = ["crates/pi-star"]
 exclude = ["app"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.1.0-rc.1"
 edition = "2024"
 license = "MIT"
 rust-version = "1.88"
 
 [workspace.dependencies]
-pi-star-ai = { path = "crates/pi-star-ai", version = "0.1.0" }
-pi-star-agent = { path = "crates/pi-star-agent", version = "0.1.0" }
-pi-star-tools = { path = "crates/pi-star-tools", version = "0.1.0" }
-pi-star-harness = { path = "crates/pi-star-harness", version = "0.1.0" }
+pi-star-ai = { path = "crates/pi-star-ai", version = "0.1.0-rc.1" }
+pi-star-agent = { path = "crates/pi-star-agent", version = "0.1.0-rc.1" }
+pi-star-tools = { path = "crates/pi-star-tools", version = "0.1.0-rc.1" }
+pi-star-harness = { path = "crates/pi-star-harness", version = "0.1.0-rc.1" }
 
 anyhow = "1"
 async-stream = "0.3"

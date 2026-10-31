@@ -8,9 +8,9 @@
 
 ## [Unreleased]
 
-## [0.1.0] - 2026-10-31
+## [0.1.0-rc.1] - 2026-10-31
 
-首个公开版本。
+首个公开预发布版本。
 
 ### Added
 
@@ -60,5 +60,5 @@
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
 
-[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.1...HEAD
+[0.1.0-rc.1]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.1
