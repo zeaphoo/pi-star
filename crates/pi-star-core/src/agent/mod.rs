@@ -1384,6 +1384,9 @@ impl SessionRuntime {
     }
 
     pub fn debug_snapshot(&self) -> Value {
+        if let Some(harness) = self.harness.get() {
+            return harness.debug_snapshot();
+        }
         let state = self.state.lock();
         json!({
             "sessionId": self.id,

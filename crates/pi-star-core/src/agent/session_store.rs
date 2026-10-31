@@ -621,7 +621,7 @@ pub(crate) fn message_to_v3(message: &AgentMessage) -> Value {
     value
 }
 
-fn v3_to_entry(value: &Value, seq: u64) -> SessionResult<Entry> {
+pub(crate) fn v3_to_entry(value: &Value, seq: u64) -> SessionResult<Entry> {
     let Some(obj) = value.as_object() else {
         return Err(SessionError::invalid_entry(
             "session entry is not an object",

@@ -63,6 +63,8 @@ pub struct HarnessBackend {
     model: parking_lot::RwLock<Option<ModelDef>>,
     thinking: parking_lot::RwLock<String>,
     system_prompt: String,
+    queue: parking_lot::RwLock<(Vec<String>, Vec<String>)>,
+    auto_compaction: AtomicBool,
 }
 
 impl HarnessBackend {
@@ -206,6 +208,8 @@ impl HarnessBackend {
             model: parking_lot::RwLock::new(Some(model_def)),
             thinking: parking_lot::RwLock::new(thinking),
             system_prompt: stored_prompt,
+            queue: parking_lot::RwLock::new((Vec::new(), Vec::new())),
+            auto_compaction: AtomicBool::new(true),
         }))
     }
 
@@ -229,6 +233,47 @@ impl HarnessBackend {
             .unwrap_or_default()
     }
 
+    fn context_usage(&self) -> Value {
+        let Ok(file) = read_session(&self.path) else {
+            return json!({ "percent": Value::Null, "contextWindow": 0, "tokens": Value::Null });
+        };
+        let mut entries = Vec::new();
+        for (index, value) in file.entries.iter().enumerate() {
+            if let Ok(entry) = crate::agent::session_store::v3_to_entry(value, index as u64 + 1) {
+                entries.push(entry);
+            }
+        }
+        let by_id: std::collections::HashMap<&str, &pi_star_harness::session::types::Entry> =
+            entries.iter().map(|entry| (entry.id(), entry)).collect();
+        let mut path = Vec::new();
+        let mut current = entries.last().map(|entry| entry.id().to_string());
+        while let Some(id) = current {
+            let Some(entry) = by_id.get(id.as_str()) else {
+                break;
+            };
+            path.push((*entry).clone());
+            current = entry.parent_id().map(str::to_owned);
+        }
+        path.reverse();
+        let context =
+            pi_star_harness::session::context::build_session_context(&path, &Default::default());
+        let estimate =
+            pi_star_harness::compaction::tokens::estimate_context_tokens(&context.messages);
+        let window = self
+            .model
+            .read()
+            .as_ref()
+            .and_then(|model| model.context_window)
+            .unwrap_or(0);
+        let percent = (window > 0)
+            .then(|| ((estimate.tokens as f64 / window as f64) * 1000.0).round() / 10.0);
+        json!({
+            "percent": percent,
+            "contextWindow": window,
+            "tokens": estimate.tokens,
+        })
+    }
+
     pub fn state_json(&self, include_prompt: bool) -> Value {
         let model = self.model.read().clone();
         let thinking = self.thinking.read().clone();
@@ -247,11 +292,14 @@ impl HarnessBackend {
             "isPromptRunning": running,
             "isBashRunning": false,
             "isCompacting": false,
-            "autoCompactionEnabled": true,
+            "autoCompactionEnabled": self.auto_compaction.load(Ordering::SeqCst),
             "extensionStatuses": [],
             "extensionWidgets": [],
-            "queuedMessages": { "steering": [], "followUp": [] },
-            "contextUsage": { "percent": Value::Null, "contextWindow": 0, "tokens": Value::Null },
+            "queuedMessages": {
+                "steering": self.queue.read().0.clone(),
+                "followUp": self.queue.read().1.clone(),
+            },
+            "contextUsage": self.context_usage(),
             "totalActiveMs": 0,
             "lastUsage": {},
         });
@@ -259,6 +307,23 @@ impl HarnessBackend {
             value["systemPrompt"] = Value::String(self.system_prompt.clone());
         }
         value
+    }
+
+    pub fn debug_snapshot(&self) -> Value {
+        json!({
+            "sessionId": self.id,
+            "sessionFile": self.path.to_string_lossy(),
+            "cwd": self.cwd.to_string_lossy(),
+            "running": self.is_running(),
+            "entries": read_session(&self.path).map(|session| session.entries.len()).unwrap_or(0),
+            "model": self.model.read().as_ref().map(|model| json!({
+                "provider": model.provider,
+                "id": model.id,
+            })),
+            "thinkingLevel": self.thinking.read().clone(),
+            "activeTools": [],
+            "uptimeMs": 0,
+        })
     }
 
     pub fn tool_entries(&self) -> Value {
@@ -275,6 +340,7 @@ impl HarnessBackend {
 
     async fn emit_queue(&self) {
         if let Ok(queued) = self.lane.queued_messages().await {
+            *self.queue.write() = (queued.steering.clone(), queued.follow_up.clone());
             self.emit(json!({
                 "type": "queue_update",
                 "steering": queued.steering,
@@ -294,14 +360,64 @@ impl HarnessBackend {
                     .get_stats()
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
+                let entries = read_session(&self.path)
+                    .map(|session| session.entries)
+                    .unwrap_or_default();
+                let role = |entry: &Value| {
+                    entry
+                        .pointer("/message/role")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default()
+                        .to_string()
+                };
+                let user_messages = entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.get("type").and_then(Value::as_str) == Some("message")
+                            && role(entry) == "user"
+                    })
+                    .count();
+                let assistant_messages = entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.get("type").and_then(Value::as_str) == Some("message")
+                            && role(entry) == "assistant"
+                    })
+                    .count();
+                let tool_results = entries
+                    .iter()
+                    .filter(|entry| {
+                        entry.get("type").and_then(Value::as_str) == Some("message")
+                            && role(entry) == "toolResult"
+                    })
+                    .count();
+                let tool_calls: usize = entries
+                    .iter()
+                    .filter(|entry| role(entry) == "assistant")
+                    .map(|entry| {
+                        entry
+                            .pointer("/message/content")
+                            .and_then(Value::as_array)
+                            .map(|blocks| {
+                                blocks
+                                    .iter()
+                                    .filter(|block| {
+                                        block.get("type").and_then(Value::as_str)
+                                            == Some("toolCall")
+                                    })
+                                    .count()
+                            })
+                            .unwrap_or(0)
+                    })
+                    .sum();
                 Ok(json!({
                     "sessionFile": self.path.to_string_lossy(),
                     "sessionId": self.id,
-                    "userMessages": stats.message_count,
-                    "assistantMessages": 0,
-                    "toolCalls": 0,
-                    "toolResults": 0,
-                    "totalMessages": stats.message_count,
+                    "userMessages": user_messages,
+                    "assistantMessages": assistant_messages,
+                    "toolCalls": tool_calls,
+                    "toolResults": tool_results,
+                    "totalMessages": user_messages + assistant_messages + tool_results,
                     "tokens": stats.total_tokens,
                     "cost": stats.cost_total,
                     "totalActiveMs": 0,
@@ -510,9 +626,15 @@ impl HarnessBackend {
                     .map_err(|error| anyhow!(error.to_string()))?;
                 Ok(json!({ "cancelled": false }))
             }
-            "set_auto_compaction" => Ok(json!({
-                "enabled": command.get("enabled").and_then(Value::as_bool).unwrap_or(true),
-            })),
+            "set_auto_compaction" => {
+                let enabled = command
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(true);
+                self.auto_compaction.store(enabled, Ordering::SeqCst);
+                Ok(json!({ "enabled": enabled }))
+            }
+            "get_commands" => Ok(json!({ "commands": [] })),
             "abort_compaction" => Ok(json!({ "cancelled": true })),
             "reload" => Ok(self.state_json(true)),
             "extension_ui_response" | "extension_ui_input" => Ok(Value::Null),
