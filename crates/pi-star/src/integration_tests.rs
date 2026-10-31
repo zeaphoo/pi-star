@@ -2527,6 +2527,14 @@ for line in sys.stdin:
         .await
         .unwrap();
     assert!(!session.is_running());
+    // pi's RPC get_state omits systemPrompt; the backend must fill it in.
+    assert!(
+        session
+            .state_json()
+            .get("systemPrompt")
+            .and_then(Value::as_str)
+            .is_some_and(|prompt| !prompt.is_empty())
+    );
     let mut events = session.subscribe();
     let response = session
         .send(&json!({"type": "prompt", "message": "hi"}))

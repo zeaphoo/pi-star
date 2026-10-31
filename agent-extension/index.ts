@@ -120,6 +120,9 @@ export default function piStarHost(pi: any) {
           case "get_tools":
             data = toolList(pi);
             break;
+          case "get_system_prompt":
+            data = { systemPrompt: String(ctx.getSystemPrompt?.() ?? "") };
+            break;
           case "set_tools":
             pi.setActiveTools(Array.isArray(params.toolNames) ? params.toolNames : []);
             data = toolList(pi);

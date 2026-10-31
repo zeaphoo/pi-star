@@ -403,6 +403,40 @@ impl PiRpcSession {
         self.identity.lock().path.clone()
     }
 
+    /// Read `get_state` from pi and fill in the fields its RPC response does
+    /// not carry (notably `systemPrompt`, which pi-web's wrapper computes).
+    async fn refresh_state(&self) {
+        let Ok(mut state) = self
+            .request(json!({"type": "get_state"}), REQUEST_TIMEOUT)
+            .await
+        else {
+            return;
+        };
+        let host_prompt = self
+            .host_command("get_system_prompt", json!({}))
+            .await
+            .ok()
+            .and_then(|data| {
+                data.get("systemPrompt")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .filter(|prompt| !prompt.is_empty());
+        let prompt = host_prompt.unwrap_or_else(|| {
+            // Without the host extension pi's RPC state has no prompt at all;
+            // render the same sections QuickPI uses instead of showing an
+            // empty System panel.
+            let tools = persisted_tool_selection(&self.path()).unwrap_or_else(|| {
+                pi_star_core::prompt::default_tool_names(&self.config, &self.cwd)
+            });
+            pi_star_core::prompt::build_system_prompt(&self.config, &self.cwd, &tools)
+        });
+        if let Some(object) = state.as_object_mut() {
+            object.insert("systemPrompt".into(), Value::String(prompt));
+        }
+        self.set_state(state);
+    }
+
     /// Persist the active tool selection in the same `pi-web:tool-selection`
     /// custom entry pi-web uses. `None` records a cleared selection so a later
     /// reopen follows settings.json `defaultTools` again.
@@ -520,6 +554,10 @@ impl PiRpcSession {
         }
         let result = match kind {
             "extension_ui_response" => self.send_extension_ui_response(command.clone()).await,
+            "get_state" => {
+                self.refresh_state().await;
+                Ok(self.state_json())
+            }
             "get_tools" => self.host_command("get_tools", json!({})).await,
             "set_tools" => {
                 let requested = command.get("toolNames").and_then(Value::as_array);
@@ -543,12 +581,20 @@ impl PiRpcSession {
                     } else {
                         self.append_tool_selection(None);
                     }
+                    // The prompt's tools/rules sections change with the loadout.
+                    self.refresh_state().await;
                 }
                 result
             }
             "navigate_tree" => self.host_command("navigate_tree", command.clone()).await,
             "fork_branch" => self.host_command("fork_branch", command.clone()).await,
-            "reload" => self.host_command("reload", json!({})).await,
+            "reload" => {
+                let result = self.host_command("reload", json!({})).await;
+                if result.is_ok() {
+                    self.refresh_state().await;
+                }
+                result
+            }
             "abort_compaction" => self.host_command("abort_compaction", json!({})).await,
             _ => self.request(command.clone(), REQUEST_TIMEOUT).await,
         }?;
@@ -991,9 +1037,7 @@ impl PiRpcRegistry {
                 sessions.insert(new.to_string(), session);
             }
         }));
-        let _ = session
-            .request(json!({"type":"get_state"}), REQUEST_TIMEOUT)
-            .await;
+        session.refresh_state().await;
         if let Some(tools) = requested_tools {
             session.append_tool_selection(Some(&tools));
         } else if let Some(selection) = persisted_tool_selection(path) {
