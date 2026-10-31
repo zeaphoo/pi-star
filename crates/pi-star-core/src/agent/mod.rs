@@ -90,13 +90,10 @@ pub struct AgentRegistry {
 
 impl AgentRegistry {
     pub fn new(config: Config, roots: Arc<AllowedRoots>) -> Self {
-        // Default to the merged engine. `legacy` keeps the old runtime for one
-        // release of A/B comparison; `pi-rpc`/`pi` are handled by the server
-        // backend selector before this registry is used.
-        let legacy = std::env::var("PI_STAR_AGENT_BACKEND")
-            .map(|value| matches!(value.as_str(), "legacy" | "pi-rpc" | "pi"))
-            .unwrap_or(false);
-        Self::with_backend(config, roots, !legacy)
+        // The merged engine is the only in-process backend. `pi-rpc`/`pi`
+        // select the subprocess backend in the server state before this
+        // registry is used.
+        Self::with_backend(config, roots, true)
     }
 
     pub fn with_backend(config: Config, roots: Arc<AllowedRoots>, merged: bool) -> Self {
@@ -1738,53 +1735,5 @@ mod tests {
         );
         let _receiver = runtime.subscribe().await.unwrap();
         assert!(!runtime.is_running());
-    }
-
-    #[tokio::test]
-    async fn extension_ui_request_resolves_with_the_browser_response() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = Config::new(Some(temp.path().join("agent")), None).unwrap();
-        let roots = Arc::new(AllowedRoots::new());
-        let registry = Arc::new(AgentRegistry::with_backend(config, roots, false));
-        let runtime = registry.create(temp.path()).unwrap();
-
-        let waiting = runtime.clone();
-        let handle = tokio::spawn(async move {
-            waiting
-                .request_extension_ui(
-                    json!({"id": "q1", "method": "confirm", "title": "Continue?"}),
-                    Duration::from_secs(2),
-                )
-                .await
-        });
-        tokio::time::sleep(Duration::from_millis(20)).await;
-        assert_eq!(runtime.pending_extension_ui_ids(), vec!["q1".to_string()]);
-        runtime
-            .send(&json!({"type": "extension_ui_response", "id": "q1", "confirmed": true}))
-            .await
-            .unwrap();
-        let response = handle.await.unwrap().unwrap();
-        assert_eq!(response["confirmed"], true);
-        assert!(runtime.pending_extension_ui_ids().is_empty());
-    }
-
-    #[tokio::test]
-    async fn extension_ui_request_times_out() {
-        let temp = tempfile::tempdir().unwrap();
-        let config = Config::new(Some(temp.path().join("agent")), None).unwrap();
-        let registry = Arc::new(AgentRegistry::with_backend(
-            config,
-            Arc::new(AllowedRoots::new()),
-            false,
-        ));
-        let runtime = registry.create(temp.path()).unwrap();
-        let response = runtime
-            .request_extension_ui(
-                json!({"id": "q2", "method": "input"}),
-                Duration::from_millis(20),
-            )
-            .await;
-        assert!(response.is_none());
-        assert!(runtime.pending_extension_ui_ids().is_empty());
     }
 }

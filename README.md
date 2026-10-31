@@ -48,13 +48,7 @@ scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
 ### Agent 后端
 
 默认使用融合后的 `AgentHarness` 内核（`crates/pi-star-agent/tools/harness/ai`），
-会话仍写 pi 的 v3 JSONL。旧版 Rust Agent 保留一个版本的 A/B 窗口：
-
-```bash
-PI_STAR_AGENT_BACKEND=legacy ./target/release/pi-star --port 30151
-```
-
-也可以让会话交给 `pi --mode rpc` 子进程执行（TS 扩展兼容路径）：
+会话仍写 pi 的 v3 JSONL。也可以让会话交给 `pi --mode rpc` 子进程执行（TS 扩展兼容路径）：
 
 ```bash
 PI_STAR_AGENT_BACKEND=pi-rpc ./target/release/pi-star --port 30151
