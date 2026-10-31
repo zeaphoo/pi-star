@@ -40,7 +40,7 @@ import { setupPushSubscription } from "@/lib/push-client";
 import { startPageVisibilityTracking } from "@/lib/page-debug";
 import type { DebugClientSession } from "@/lib/debug-types";
 import { getInitialNavigation, linkedSessionId, withTabOpen } from "@/lib/initial-navigation";
-import { clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
+import { clearTabOpen, clearTabOpenSession, getTabOpen, setTabOpenNewSession, setTabOpenSession } from "@/lib/tab-session";
 import { mergeCatalogRow } from "./session-catalog-helpers";
 import { getDraft, parkedNewSessionDraftKey, rekeyDraft } from "@/lib/draft-store";
 import {
@@ -213,6 +213,7 @@ export function AppShell() {
     () => initialNavigation.requestedCwd ? "validating" : "idle",
   );
   const [initialCwdError, setInitialCwdError] = useState<string | null>(null);
+  const [initialCwdAttempt, setInitialCwdAttempt] = useState(0);
   const [refreshKey, setRefreshKey] = useState(0);
   const [sessionKey, setSessionKey] = useState(0);
   const sessionScrollPositionsRef = useRef(new Map<string, ChatScrollPosition>());
@@ -738,12 +739,46 @@ export function AppShell() {
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
+        // A remembered new-session cwd can go stale between launches (moved or
+        // deleted project). It must not trap startup on the error page: forget
+        // it and fall back to the normal workspace selection. An explicit
+        // ?cwd= deep link still gets the retryable error UI below.
+        if (initialNavigation.requestedCwdFromTab) {
+          clearTabOpen();
+          setInitialCwdError(null);
+          setInitialCwdStatus("idle");
+          setInitialNavigation((navigation) => ({
+            ...navigation,
+            requestedCwd: null,
+            requestedCwdFromTab: false,
+          }));
+          return;
+        }
         setInitialCwdError(error instanceof Error ? error.message : String(error));
         setInitialCwdStatus("error");
       });
 
     return () => controller.abort();
-  }, [initialNavigation, router]);
+  }, [initialCwdAttempt, initialNavigation, router]);
+
+  const dismissInitialWorkspace = useCallback(() => {
+    clearTabOpen();
+    setInitialCwdError(null);
+    setInitialCwdStatus("idle");
+    setInitialNavigation((navigation) => ({
+      ...navigation,
+      requestedCwd: null,
+      requestedCwdFromTab: false,
+    }));
+    const url = new URL(window.location.href);
+    url.searchParams.delete("cwd");
+    router.replace(`${url.pathname}${url.search}`, { scroll: false });
+  }, [router]);
+
+  const retryInitialWorkspace = useCallback(() => {
+    setInitialCwdStatus("validating");
+    setInitialCwdAttempt((attempt) => attempt + 1);
+  }, []);
 
   // Restore the workspace's last open session after switching to it. Called
   // from handleCwdChange once the outgoing context has been reset. The session
@@ -2728,6 +2763,14 @@ export function AppShell() {
                 {initialNavigation.requestedCwd}
               </div>
               <div style={{ maxWidth: 720, fontSize: 12 }}>{initialCwdError}</div>
+              <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+                <button type="button" onClick={retryInitialWorkspace} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer" }}>
+                  {translate("common.retry")}
+                </button>
+                <button type="button" onClick={dismissInitialWorkspace} style={{ padding: "6px 12px", borderRadius: 7, border: "1px solid var(--border)", background: "transparent", color: "var(--text-muted)", cursor: "pointer" }}>
+                  {translate("workspace.selectProject")}
+                </button>
+              </div>
             </div>
           ) : showPlaceholder ? (
             activeCwd ? (

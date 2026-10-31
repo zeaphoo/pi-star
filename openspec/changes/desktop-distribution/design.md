@@ -35,7 +35,7 @@ pi-runtime/
   NODE-LICENSE / PI-NOTICE / GIT-LICENSE.txt / GIT-NOTICE.txt
 ```
 
-`packaging/pi-runtime.json` 固定 `node=22.20.0`、`pi=0.99.1`、`minGit=2.56.0.4`。`scripts/prepare-pi-runtime.mjs`
+`packaging/pi-runtime.json` 固定 `node=22.20.0`、`pi=1.4.0`、`minGit=2.56.0.4`。`scripts/prepare-pi-runtime.mjs`
 下载官方 Node（curl），`npm pack` pi 并从 tarball 安装生产依赖，复制扩展；元数据匹配时跳过，
 供 GitHub Actions 缓存。 pi 的 `docs/`、`examples/` 保留，供系统提示引用。
 

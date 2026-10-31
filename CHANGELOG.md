@@ -25,7 +25,7 @@
 - **内嵌前端**：release 构建用 `rust-embed` 把 `ui/dist` 编入 `pi-star`；debug 读磁盘，
   `--ui-dir` 可显式覆盖。
 - **自包含 pi 运行时**：安装包携带固定版本的 Node、`@earendil-works/pi-coding-agent`
-  生产依赖和 `agent-extension/`；Windows 额外携带 MinGit，目标机器无需预装 Node/pi/Git。
+  1.4.0 生产依赖和 `agent-extension/`；Windows 额外携带 MinGit，目标机器无需预装 Node/pi/Git。
 - **跨平台打包**：Linux deb/AppImage、Windows NSIS/MSI/portable zip、macOS .app/dmg；
   macOS 支持 Developer ID 签名与可选公证。
 - **CI / Release**：GitHub Actions 在 Linux/Windows/macOS 做编译与测试检查；`v*` 标签触发
@@ -45,8 +45,10 @@
 
 ### Fixed
 
-- **版本信息**：欢迎页显示实际版本号与内置 pi 版本（`v0.1.0 · pi v0.99.1`），不再显示
+- **版本信息**：欢迎页显示实际版本号与内置 pi 版本（`v0.1.0 · pi v1.4.0`），不再显示
   `pi vpi-compatible-rust`。
+- **失效工作区**：启动时记住的新会话目录失效不再卡在“无法打开工作区”；自动丢弃记忆并回到
+  默认工作区，显式 `?cwd=` 错误页提供重试与选择项目。
 - 桌面壳被 `SIGKILL` 时通过 stdin EOF 与进程组/Job Object 清理子进程树，避免孤儿进程。
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。

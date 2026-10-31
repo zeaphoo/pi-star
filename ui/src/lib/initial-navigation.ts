@@ -5,6 +5,8 @@ export interface InitialNavigation {
   sessionId: string | null;
   /** `sessionId` is this tab's memory (`withTabOpen`), not the URL's `?session=`. */
   sessionFromTab?: boolean;
+  /** `requestedCwd` is this tab's remembered new-session composer, not the URL's. */
+  requestedCwdFromTab?: boolean;
   sidebarCollapsed: boolean;
 }
 
@@ -44,7 +46,7 @@ export function withTabOpen(
   if (tabOpen.kind === "session") {
     return { ...navigation, sessionId: tabOpen.sessionId, sessionFromTab: true };
   }
-  return { ...navigation, requestedCwd: tabOpen.cwd };
+  return { ...navigation, requestedCwd: tabOpen.cwd, requestedCwdFromTab: true };
 }
 
 /**

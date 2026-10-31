@@ -102,6 +102,16 @@ export function setTabOpenNewSession(
   }
 }
 
+/** Forget this tab's remembered session or new-session composer. */
+export function clearTabOpen(storage: StorageLike | null = getBrowserStorage()): void {
+  if (!storage) return;
+  try {
+    storage.removeItem(STORAGE_KEY);
+  } catch {
+    // storage unavailable — memory is best-effort
+  }
+}
+
 /** Forget this tab's session when it matches `sessionId`. */
 export function clearTabOpenSession(
   sessionId: string,

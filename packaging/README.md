@@ -21,7 +21,7 @@ Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Win
 ```json
 {
   "node": "22.20.0",
-  "pi": "0.99.1",
+  "pi": "1.4.0",
   "minGit": "2.56.0.4",
   "minGitTag": "v2.56.0.windows.4"
 }

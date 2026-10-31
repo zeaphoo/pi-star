@@ -167,7 +167,12 @@ test("withTabOpen restores a remembered new-session composer as cwd", async () =
 
   assert.deepEqual(
     withTabOpen(empty, tabNew),
-    { requestedCwd: "/work/project", sessionId: null, sidebarCollapsed: false },
+    {
+      requestedCwd: "/work/project",
+      requestedCwdFromTab: true,
+      sessionId: null,
+      sidebarCollapsed: false,
+    },
   );
 
   const fromUrl = { requestedCwd: null, sessionId: "url-session", sidebarCollapsed: false };

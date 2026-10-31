@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  clearTabOpen,
   getTabOpen,
   setTabOpenSession,
   setTabOpenNewSession,
@@ -22,6 +23,13 @@ function createStorage(initial = {}) {
     },
   };
 }
+
+test("clears whatever this tab remembered", () => {
+  const storage = createStorage();
+  setTabOpenNewSession("/work/project", storage);
+  clearTabOpen(storage);
+  assert.equal(getTabOpen(storage), null);
+});
 
 test("returns null when this tab remembers nothing", () => {
   assert.equal(getTabOpen(createStorage()), null);

@@ -6,6 +6,7 @@ export const zhTWLocale: LocalePlugin = {
   label: "繁體中文",
   messages: {
     "common.ok": "確定",
+    "common.retry": "重試",
     "common.language": "語言",
     "common.models": "模型",
     "common.skills": "技能",
