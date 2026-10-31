@@ -309,6 +309,22 @@ impl HarnessBackend {
         value
     }
 
+    /// Append a pi-native `usage` entry (`cache_warm`, extension-reported usage,
+    /// …). Returns the entry id.
+    pub async fn append_usage(
+        &self,
+        kind: &str,
+        provider: &str,
+        model: &str,
+        usage: pi_star_ai::types::Usage,
+        note: Option<&str>,
+    ) -> Result<String> {
+        self.session
+            .append_usage(kind, provider, model, usage, note)
+            .await
+            .map_err(|error| anyhow!(error.to_string()))
+    }
+
     pub fn debug_snapshot(&self) -> Value {
         json!({
             "sessionId": self.id,
@@ -410,6 +426,25 @@ impl HarnessBackend {
                             .unwrap_or(0)
                     })
                     .sum();
+                let mut tokens = stats.total_tokens;
+                let mut cost = stats.cost_total;
+                for entry in &entries {
+                    let usage = match entry.get("type").and_then(Value::as_str) {
+                        Some("usage" | "compaction" | "branch_summary") => entry.get("usage"),
+                        Some("message") => entry.pointer("/message/usage"),
+                        _ => None,
+                    };
+                    if let Some(usage) = usage {
+                        tokens += usage
+                            .get("totalTokens")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0);
+                        cost += usage
+                            .pointer("/cost/total")
+                            .and_then(Value::as_f64)
+                            .unwrap_or(0.0);
+                    }
+                }
                 Ok(json!({
                     "sessionFile": self.path.to_string_lossy(),
                     "sessionId": self.id,
@@ -418,8 +453,8 @@ impl HarnessBackend {
                     "toolCalls": tool_calls,
                     "toolResults": tool_results,
                     "totalMessages": user_messages + assistant_messages + tool_results,
-                    "tokens": stats.total_tokens,
-                    "cost": stats.cost_total,
+                    "tokens": tokens,
+                    "cost": cost,
                     "totalActiveMs": 0,
                 }))
             }
@@ -1602,6 +1637,34 @@ mod tests {
             entry.get("type").and_then(Value::as_str) == Some("message")
                 && entry.pointer("/message/role").and_then(Value::as_str) == Some("bashExecution")
         }));
+
+        let usage = pi_star_ai::types::Usage {
+            input: 1,
+            output: 2,
+            cache_read: 0,
+            cache_write: 0,
+            cache_write_1h: None,
+            reasoning: None,
+            total_tokens: 3,
+            cost: Default::default(),
+        };
+        backend
+            .append_usage("cache_warm", "faux", "faux-model", usage, Some("test"))
+            .await
+            .unwrap();
+        let session = crate::session::read_session(&backend.path).unwrap();
+        let usage_entry = session
+            .entries
+            .iter()
+            .find(|entry| entry.get("type").and_then(Value::as_str) == Some("usage"))
+            .expect("usage entry persisted");
+        assert_eq!(usage_entry["kind"], "cache_warm");
+        assert_eq!(usage_entry["provider"], "faux");
+        assert_eq!(usage_entry["model"], "faux-model");
+        assert_eq!(usage_entry["note"], "test");
+        assert_eq!(usage_entry["usage"]["totalTokens"], 3);
+        assert!(usage_entry["timestamp"].as_str().is_some());
+        assert!(usage_entry["parentId"].as_str().is_some());
 
         let fork = backend.send(&json!({"type": "fork"})).await.unwrap();
         let fork_id = fork["newSessionId"].as_str().unwrap();

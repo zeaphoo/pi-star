@@ -426,6 +426,38 @@ impl Session {
             .await
     }
 
+    /// Append a pi-native `usage` entry (model-attributed usage that does not
+    /// participate in LLM context). Mirrors `SessionManager.appendUsage`.
+    pub async fn append_usage(
+        &self,
+        kind: &str,
+        provider: &str,
+        model: &str,
+        usage: pi_star_ai::types::Usage,
+        note: Option<&str>,
+    ) -> SessionResult<String> {
+        let id = self.id_generator().next();
+        let mut value = serde_json::json!({
+            "type": "usage",
+            "kind": kind,
+            "provider": provider,
+            "model": model,
+            "usage": usage,
+        });
+        if let Some(note) = note {
+            value["note"] = serde_json::Value::String(note.to_string());
+        }
+        self.append_entry(
+            crate::session::types::ProvisionedEntry {
+                id: id.clone(),
+                kind: crate::session::types::ProvisionedKind::Raw { value },
+            },
+            "main",
+        )
+        .await?;
+        Ok(id)
+    }
+
     // -- Lanes ---------------------------------------------------------------
 
     /// `getLanes()`. Mirrors TS `Session.getLanes`.
