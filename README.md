@@ -104,22 +104,24 @@ cargo build --release
 
 打开 <http://127.0.0.1:30151>。
 
+启动后只打印访问地址，不会自动打开浏览器；需要时用 `--open` 显式打开。
+
 常用参数：
 
 ```bash
 pi-star --port 8080 --hostname 0.0.0.0
-pi-star --no-open
+pi-star --open
 pi-star --ui-dir ui/dist --agent-dir ~/.pi/agent
 ```
 
-对应环境变量：`PORT`、`PI_WEB_HOSTNAME`、`PI_WEB_NO_OPEN`、`PI_WEB_PASSWORD`、
+对应环境变量：`PORT`、`PI_WEB_HOSTNAME`、`PI_STAR_OPEN_BROWSER`、`PI_WEB_PASSWORD`、
 `PI_WEB_ALLOWED_HOSTS`、`PI_CODING_AGENT_DIR`。
 
 ### 开发
 
 ```bash
 # 终端 1：Rust 服务（30151）
-cargo run -p pi-star -- --no-open
+cargo run -p pi-star
 
 # 终端 2：Vite（30152，/api 代理到 30151）
 cd ui && npm run dev

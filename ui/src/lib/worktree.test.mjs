@@ -25,7 +25,7 @@ test("main and linked worktrees share one canonical project root", async (t) => 
   const repo = path.join(tempRoot, "repo");
   const linked = path.join(tempRoot, "linked");
   await execFileAsync("git", ["init", repo]);
-  await git(repo, ["config", "user.name", "Pi Web Test"]);
+  await git(repo, ["config", "user.name", "Pi Star Test"]);
   await git(repo, ["config", "user.email", "pi-web-test@example.invalid"]);
   await git(repo, ["config", "commit.gpgsign", "false"]);
   await writeFile(path.join(repo, "README.md"), "# test\n");
@@ -96,7 +96,7 @@ test("forced worktree removal passes Git's force flag", async (t) => {
   const repo = path.join(tempRoot, "repo");
   const linked = path.join(tempRoot, "linked");
   await execFileAsync("git", ["init", repo]);
-  await git(repo, ["config", "user.name", "Pi Web Test"]);
+  await git(repo, ["config", "user.name", "Pi Star Test"]);
   await git(repo, ["config", "user.email", "pi-web-test@example.invalid"]);
   await git(repo, ["config", "commit.gpgsign", "false"]);
   await writeFile(path.join(repo, "README.md"), "# test\n");
@@ -118,7 +118,7 @@ test("worktree removal accepts a path that runs through a link", async (t) => {
   const repo = path.join(tempRoot, "repo");
   const alias = path.join(tempRoot, "alias");
   await execFileAsync("git", ["init", repo]);
-  await git(repo, ["config", "user.name", "Pi Web Test"]);
+  await git(repo, ["config", "user.name", "Pi Star Test"]);
   await git(repo, ["config", "user.email", "pi-web-test@example.invalid"]);
   await git(repo, ["config", "commit.gpgsign", "false"]);
   await writeFile(path.join(repo, "README.md"), "# test\n");
@@ -138,7 +138,7 @@ test("worktrees of bare clones group under their clone, not the folder holding t
 
   const source = path.join(tempRoot, "source");
   await execFileAsync("git", ["init", source]);
-  await git(source, ["config", "user.name", "Pi Web Test"]);
+  await git(source, ["config", "user.name", "Pi Star Test"]);
   await git(source, ["config", "user.email", "pi-web-test@example.invalid"]);
   await git(source, ["config", "commit.gpgsign", "false"]);
   await writeFile(path.join(source, "README.md"), "# test\n");
@@ -184,7 +184,7 @@ async function linkedWorktree(t, prefix) {
   const repo = path.join(tempRoot, "repo");
   const linked = path.join(tempRoot, "linked");
   await execFileAsync("git", ["init", repo]);
-  await git(repo, ["config", "user.name", "Pi Web Test"]);
+  await git(repo, ["config", "user.name", "Pi Star Test"]);
   await git(repo, ["config", "user.email", "pi-web-test@example.invalid"]);
   await git(repo, ["config", "commit.gpgsign", "false"]);
   await writeFile(path.join(repo, "README.md"), "# test\n");

@@ -1537,9 +1537,9 @@ async fn manifest_is_json_and_skill_content_accepts_file_path() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["name"], "Pi Web");
+    assert_eq!(body["name"], "Pi Star");
     assert_eq!(body["start_url"], "/");
-    assert_eq!(body["icons"].as_array().unwrap().len(), 2);
+    assert_eq!(body["icons"].as_array().unwrap().len(), 3);
 
     let skill_dir = fixture.agent_dir.join("skills").join("fixture");
     std::fs::create_dir_all(&skill_dir).unwrap();

@@ -168,7 +168,7 @@ export async function resolveProject(cwd: string): Promise<ProjectInfo> {
     // Transient git failure (fd exhaustion, a killed git): serve a cwd-only
     // fallback for this request only, never cached, so it cannot become a
     // lasting project identity. The next request retries.
-    console.error(`[pi-web] resolveProject: git failed for ${cwd}, not cached: ${error instanceof Error ? error.message : String(error)}`);
+    console.error(`[pi-star] resolveProject: git failed for ${cwd}, not cached: ${error instanceof Error ? error.message : String(error)}`);
     return { projectRoot: cwd, branch: null, isWorktree: false, isTopLevel: false };
   }
   cache.set(cwd, { info, expiresAt: Date.now() + PROJECT_CACHE_TTL_MS });

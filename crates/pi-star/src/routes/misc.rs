@@ -393,19 +393,20 @@ pub async fn _unused(_body: Json<Value>) -> Response {
     no_store(json!({}))
 }
 
-/// `GET /manifest.webmanifest`: pi-web generated this from `app/manifest.ts`;
-/// the Rust server keeps the same JSON and reads `PI_WEB_APP_NAME` per request.
+/// `GET /manifest.webmanifest`: the Rust server generates the web app manifest
+/// and reads `PI_STAR_APP_NAME` (or the legacy `PI_WEB_APP_NAME`) per request.
 pub async fn manifest() -> Response {
-    let name = std::env::var("PI_WEB_APP_NAME")
+    let name = std::env::var("PI_STAR_APP_NAME")
+        .or_else(|_| std::env::var("PI_WEB_APP_NAME"))
         .ok()
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
-        .unwrap_or_else(|| "Pi Web".to_string());
+        .unwrap_or_else(|| "Pi Star".to_string());
     no_store(json!({
         "id": "/",
         "name": name,
         "short_name": name,
-        "description": "Local web interface for the pi coding agent",
+        "description": "Pi Star, local web interface for the pi coding agent",
         "start_url": "/",
         "scope": "/",
         "display": "standalone",
@@ -414,6 +415,7 @@ pub async fn manifest() -> Response {
         "categories": ["developer", "productivity"],
         "lang": "en",
         "icons": [
+            {"src": "/icons/pi-star.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any"},
             {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
         ]

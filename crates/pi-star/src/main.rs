@@ -33,9 +33,12 @@ struct Cli {
         default_value = "127.0.0.1"
     )]
     hostname: String,
-    /// Do not open a browser after startup.
-    #[arg(long = "no-open", env = "PI_WEB_NO_OPEN")]
-    no_open: bool,
+    /// Open the URL in the default browser after startup.
+    #[arg(long = "open", env = "PI_STAR_OPEN_BROWSER")]
+    open: bool,
+    /// Deprecated: the browser is no longer opened by default.
+    #[arg(long = "no-open", hide = true)]
+    _no_open: bool,
     /// Directory containing index.html and assets (default ui/dist).
     #[arg(long = "ui-dir", default_value = "ui/dist")]
     ui_dir: PathBuf,
@@ -90,8 +93,8 @@ async fn main() -> Result<()> {
         .with_context(|| format!("bind {addr}"))?;
     let actual = listener.local_addr()?;
     state.set_server_port(actual.port());
-    tracing::info!("pi-star listening on http://{actual}");
-    if !cli.no_open {
+    tracing::info!("Pi Star is running at http://{actual}");
+    if cli.open {
         open_browser(&format!("http://{actual}"));
     }
 
