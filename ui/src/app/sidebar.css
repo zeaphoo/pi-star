@@ -1025,8 +1025,8 @@ a.session-tree-main {
    the versions in the accent for a few seconds. Never cut: New's label
    gives way first, and on a row too narrow for the versions they take the
    sidebar's meta size (data-fit 2, which only they reach: "Pi Web" fits
-   beside the two cells at the sidebar's 180px minimum, and at 11px so do
-   the versions with a digit to spare). */
+   beside the two cells at the sidebar's 180px minimum, and the versions at
+   9px with a digit to spare, the logo giving way). */
 .sidebar-brand {
   display: inline-flex;
   flex: none;
@@ -1109,10 +1109,15 @@ a.session-tree-main {
   font-size: 11px;
 }
 
-/* The versions are long; at the narrowest header the logo gives way so the
-   click's text still fits beside New and Search. */
+/* The versions are long; at the narrowest header the logo gives way and the
+   text drops to 9px so a prerelease like 0.1.0-rc.1p1.4.0 still fits beside
+   New and Search. */
 .sidebar-header[data-fit="2"] .sidebar-brand.is-version .sidebar-brand-logo {
   display: none;
+}
+
+.sidebar-header[data-fit="2"] .sidebar-brand.is-version {
+  font-size: 9px;
 }
 
 .sidebar-header[data-fit="1"] .sidebar-new-label,

@@ -46,7 +46,7 @@
 ### Fixed
 
 - **版本信息**：欢迎页显示实际版本号与内置 pi 版本（`v0.1.0 · pi v1.4.0`），不再显示
-  `pi vpi-compatible-rust`。
+  `pi vpi-compatible-rust`；最窄侧栏的版本浮层用 9px，容纳 `0.1.0-rc.1p1.4.0`。
 - **失效工作区**：启动时记住的新会话目录失效不再卡在“无法打开工作区”；自动丢弃记忆并回到
   默认工作区，显式 `?cwd=` 错误页提供重试与选择项目。
 - **macOS 公证**：`stapler` 取票遇到 Apple CloudKit 瞬时网络错误（Error 65/68、NSURLError

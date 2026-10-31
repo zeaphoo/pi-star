@@ -95,12 +95,13 @@ test("the brand's text sits in the chevron column and is never cut at the sideba
 
   // At the sidebar's minimum (its line off), beside New's + and the search
   // (36px cells each), "Pi Star" fits in its 15px code type (0.6em a
-  // character), and the versions in the 11px of data-fit 2.
+  // character), and the versions at 9px of data-fit 2 (logo hidden).
   assert.match(brand, /(?:^|\s)font-family: var\(--font-mono\);/);
   assert.match(brand, /(?:^|\s)font-size: 15px;/);
   assert.match(css, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand \{\s*font-size: 11px;\s*\}/);
   assert.match(css, /\.sidebar-brand-logo \{[^}]*width: 16px;[^}]*height: 16px;/);
   assert.match(css, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand\.is-version \.sidebar-brand-logo \{\s*display: none;\s*\}/);
+  assert.match(css, /\.sidebar-header\[data-fit="2"\] \.sidebar-brand\.is-version \{\s*font-size: 9px;\s*\}/);
   const room = SIDEBAR_MIN_WIDTH - 1 - 36 - 36;
   const logo = 16 + 6;
   const box = (text, fontSize, withLogo = true) =>
@@ -109,6 +110,6 @@ test("the brand's text sits in the chevron column and is never cut at the sideba
   // pi-star's UI version, with room for a longer pi version. At the narrowest
   // header the version state hides the logo (see the CSS rule above).
   const versions = brandVersionText(packageJson.version, process.env.PI_STAR_PI_VERSION ?? "1.4.0");
-  assert.ok(box(versions, 11, false) <= room, `${versions} at 11px`);
-  assert.ok(box(`${versions}0`, 11, false) <= room, "and a digit more");
+  assert.ok(box(versions, 9, false) <= room, `${versions} at 9px`);
+  assert.ok(box(`${versions}0`, 9, false) <= room, "and a digit more");
 });
