@@ -90,10 +90,13 @@ pub struct AgentRegistry {
 
 impl AgentRegistry {
     pub fn new(config: Config, roots: Arc<AllowedRoots>) -> Self {
-        let merged = std::env::var("PI_STAR_AGENT_BACKEND")
-            .map(|value| value == "merged")
+        // Default to the merged engine. `legacy` keeps the old runtime for one
+        // release of A/B comparison; `pi-rpc`/`pi` are handled by the server
+        // backend selector before this registry is used.
+        let legacy = std::env::var("PI_STAR_AGENT_BACKEND")
+            .map(|value| matches!(value.as_str(), "legacy" | "pi-rpc" | "pi"))
             .unwrap_or(false);
-        Self::with_backend(config, roots, merged)
+        Self::with_backend(config, roots, !legacy)
     }
 
     pub fn with_backend(config: Config, roots: Arc<AllowedRoots>, merged: bool) -> Self {
@@ -1739,7 +1742,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let config = Config::new(Some(temp.path().join("agent")), None).unwrap();
         let roots = Arc::new(AllowedRoots::new());
-        let registry = Arc::new(AgentRegistry::new(config, roots));
+        let registry = Arc::new(AgentRegistry::with_backend(config, roots, false));
         let runtime = registry.create(temp.path()).unwrap();
 
         let waiting = runtime.clone();
@@ -1766,7 +1769,11 @@ mod tests {
     async fn extension_ui_request_times_out() {
         let temp = tempfile::tempdir().unwrap();
         let config = Config::new(Some(temp.path().join("agent")), None).unwrap();
-        let registry = Arc::new(AgentRegistry::new(config, Arc::new(AllowedRoots::new())));
+        let registry = Arc::new(AgentRegistry::with_backend(
+            config,
+            Arc::new(AllowedRoots::new()),
+            false,
+        ));
         let runtime = registry.create(temp.path()).unwrap();
         let response = runtime
             .request_extension_ui(

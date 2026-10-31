@@ -35,7 +35,11 @@ OpenSpec 任务已全部完成（61/61）。运行时边界（Node 扩展执行�
 ui/                     pi-web UI 的 Vite 适配版（React 19 + Tailwind 4）
   src/app|components|hooks|lib
   src/shims/            next/navigation、next/image、parseStreamingJson 的本地替身
-crates/pi-star-core/    会话、配置、模型、文件/Git、终端、UiState、Agent Runtime
+crates/pi-star-ai/      模型、provider、流式协议与 usage（源码融合自 rpi）
+crates/pi-star-agent/   Agent loop、事件、队列、工具调用（源码融合自 rpi）
+crates/pi-star-tools/   内置工具与 ExecutionEnv（源码融合自 rpi）
+crates/pi-star-harness/ 会话状态机、压缩、system prompt、skills、harness loop
+crates/pi-star-core/    会话(v3)、配置、模型、文件/Git、终端、UiState、Agent 适配层
 crates/pi-star/         Axum 路由、SSE、静态资源、认证与安全中间件、CLI
 openspec/               本次迁移的 proposal/spec/design/tasks
 scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
@@ -43,7 +47,14 @@ scripts/                从只读 pi-web checkout 重新复制 UI 的脚本
 
 ### Agent 后端
 
-默认使用 Rust Agent。也可以让会话交给 `pi --mode rpc` 子进程执行：
+默认使用融合后的 `AgentHarness` 内核（`crates/pi-star-agent/tools/harness/ai`），
+会话仍写 pi 的 v3 JSONL。旧版 Rust Agent 保留一个版本的 A/B 窗口：
+
+```bash
+PI_STAR_AGENT_BACKEND=legacy ./target/release/pi-star --port 30151
+```
+
+也可以让会话交给 `pi --mode rpc` 子进程执行（TS 扩展兼容路径）：
 
 ```bash
 PI_STAR_AGENT_BACKEND=pi-rpc ./target/release/pi-star --port 30151

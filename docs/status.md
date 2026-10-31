@@ -15,7 +15,7 @@ API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清�
 | @ 文件索引 | ✅ | git ls-files + 忽略规则回退，模糊匹配 |
 | Git / worktree | ✅ | status、diff、list/add/remove |
 | 终端 | ✅ | portable-pty + SSE + 进程组清理 |
-| Agent 主链路 | ✅ | 默认 Rust Agent；`PI_STAR_AGENT_BACKEND=pi-rpc` 时由 `pi --mode rpc` 子进程执行；`=merged` 时改走融合后的 `AgentHarness`（pi v3 存储，实验性，尚未覆盖 MCP/subagent 工具与扩展 UI） |
+| Agent 主链路 | ✅ | 默认走融合后的 `AgentHarness`（pi v3 存储，工具经 AllowedRoots 沙箱，含 MCP 与 subagent）；`PI_STAR_AGENT_BACKEND=legacy` 回到旧运行时，`=pi-rpc` 由 `pi --mode rpc` 子进程执行（TS 扩展兼容路径） |
 | PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue、模型/thinking、压缩/重试、统计、fork/clone、session rekey、单写者路由、子代理 session 锁、扩展 UI、事件流；`pi-star-agent-extension` 补偿 get/set tools、tree、branch、reload 和基础 subagent 工具；真实 pi + 假模型端到端测试覆盖工具、abort、扩展 UI、fork/rekey |
 | 会话空闲回收 / 租约 | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`，后台 30s 回收；lease 续租 |
 | Subagents | ✅ | 子会话、父会话等待、并发上限、profile 扫描/保存/开关、状态显示 |
