@@ -7,11 +7,13 @@ mod pi_rpc;
 mod routes;
 mod state;
 
+use std::future::IntoFuture;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use anyhow::{Context, Result};
 use clap::Parser;
+use tokio_util::sync::CancellationToken;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -93,30 +95,59 @@ async fn main() -> Result<()> {
         open_browser(&format!("http://{actual}"));
     }
 
-    let shutdown = async {
-        let ctrl_c = async {
-            tokio::signal::ctrl_c().await.ok();
-        };
-        #[cfg(unix)]
-        let terminate = async {
-            if let Ok(mut signal) =
-                tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            {
-                signal.recv().await;
-            }
-        };
-        #[cfg(not(unix))]
-        let terminate = std::future::pending::<()>();
-        tokio::select! {
-            _ = ctrl_c => {},
-            _ = terminate => {},
+    // Graceful shutdown must not wait forever for long-lived SSE streams
+    // (agent events, terminal, file watch): axum waits for every connection to
+    // finish, and those streams stay open until the browser closes them.
+    let shutdown_token = CancellationToken::new();
+    {
+        let token = shutdown_token.clone();
+        tokio::spawn(async move {
+            wait_for_shutdown_signal().await;
+            tracing::info!("shutdown requested; closing connections");
+            token.cancel();
+        });
+    }
+    let graceful = {
+        let token = shutdown_token.clone();
+        async move { token.cancelled().await }
+    };
+    let serve = axum::serve(listener, app)
+        .with_graceful_shutdown(graceful)
+        .into_future();
+    tokio::pin!(serve);
+    let result = tokio::select! {
+        result = &mut serve => result,
+        _ = async {
+            shutdown_token.cancelled().await;
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        } => {
+            tracing::warn!("graceful shutdown timed out; terminating open streams");
+            Ok(())
         }
     };
-    axum::serve(listener, app)
-        .with_graceful_shutdown(shutdown)
-        .await?;
     state.shutdown();
+    result?;
     Ok(())
+}
+
+async fn wait_for_shutdown_signal() {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c().await.ok();
+    };
+    #[cfg(unix)]
+    let terminate = async {
+        if let Ok(mut signal) =
+            tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+        {
+            signal.recv().await;
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = terminate => {},
+    }
 }
 
 fn open_browser(url: &str) {
