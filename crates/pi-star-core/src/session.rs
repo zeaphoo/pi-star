@@ -480,7 +480,12 @@ pub fn create_session_file_with_parent(
     fs::create_dir_all(&dir)?;
     let id = uuid::Uuid::new_v4().to_string();
     let now = Utc::now();
-    let file_name = format!("{}_{}.jsonl", now.format("%Y-%m-%dT%H-%M-%S%.3fZ"), id);
+    // pi's `sessionFileName`: ISO timestamp with `:` and `.` replaced by `-`.
+    let stamp = now
+        .format("%Y-%m-%dT%H-%M-%S%.3fZ")
+        .to_string()
+        .replace('.', "-");
+    let file_name = format!("{stamp}_{id}.jsonl");
     let path = dir.join(file_name);
     let mut header = json!({
         "type": "session",
