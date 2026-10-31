@@ -10,6 +10,7 @@ RUNTIME_DIR="${PI_RUNTIME_DIR:-$ROOT/app/pi-runtime}"
 BUNDLES="${TAURI_BUNDLES:-nsis,msi}"
 INJECT_CONFIG="$ROOT/app/.bundle-resources.json"
 APP_BIN="$ROOT/app/pi-star.exe"
+PORTABLE_DIR=""
 
 case "$(uname -s)" in
     MINGW* | MSYS* | CYGWIN*) ;;
@@ -21,6 +22,9 @@ RUNTIME_WIN="$(cygpath -w "$RUNTIME_DIR")"
 
 cleanup() {
     rm -f "$INJECT_CONFIG" "$APP_BIN"
+    if [[ -n "$PORTABLE_DIR" ]]; then
+        rm -rf "$PORTABLE_DIR"
+    fi
 }
 trap cleanup EXIT
 
@@ -111,7 +115,8 @@ BUNDLE_DIR="$APP_TARGET/release/bundle"
 [[ -f "$APP_EXE" ]] || { echo "未找到 $APP_EXE" >&2; exit 1; }
 
 rm -rf "$DIST_DIR"
-mkdir -p "$DIST_DIR/portable"
+mkdir -p "$DIST_DIR"
+PORTABLE_DIR="$(mktemp -d "${TMPDIR:-/tmp}/pistar-portable.XXXXXX")"
 
 shopt -s nullglob
 installers=("$BUNDLE_DIR"/nsis/*.exe "$BUNDLE_DIR"/msi/*.msi)
@@ -132,10 +137,10 @@ done
 
 # 便携版：两个 exe + pi-runtime 必须在同一目录（Windows 大小写不敏感，
 # PiStarApp.exe 与 pi-star.exe 仍不同）。
-cp -f "$APP_EXE" "$DIST_DIR/portable/PiStarApp.exe"
-cp -f "$ROOT_TARGET/release/pi-star.exe" "$DIST_DIR/portable/pi-star.exe"
-cp -R "$RUNTIME_DIR" "$DIST_DIR/portable/pi-runtime"
-cat > "$DIST_DIR/portable/README.txt" <<TXT
+cp -f "$APP_EXE" "$PORTABLE_DIR/PiStarApp.exe"
+cp -f "$ROOT_TARGET/release/pi-star.exe" "$PORTABLE_DIR/pi-star.exe"
+cp -R "$RUNTIME_DIR" "$PORTABLE_DIR/pi-runtime"
+cat > "$PORTABLE_DIR/README.txt" <<TXT
 Pi Star ${VERSION} portable (${WIN_ARCH})
 =========================================
 
@@ -171,14 +176,16 @@ WebView2
   托盘菜单“退出”会同时停止 pi-star；只关窗口则留在托盘。
 TXT
 
-PORTABLE_WIN="$(cygpath -w "$DIST_DIR/portable")"
+PORTABLE_WIN="$(cygpath -w "$PORTABLE_DIR")"
 ZIP_WIN="$(cygpath -w "$DIST_DIR/pi-star-app_${VERSION}_windows_${WIN_ARCH}_portable.zip")"
 powershell.exe -NoProfile -NonInteractive -Command \
     "Compress-Archive -Path '$PORTABLE_WIN\\*' -DestinationPath '$ZIP_WIN' -Force" >/dev/null
 
 for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.ts; do
-    [[ -e "$DIST_DIR/portable/$name" ]] || { echo "便携包缺少 $name" >&2; exit 1; }
+    [[ -e "$PORTABLE_DIR/$name" ]] || { echo "便携包缺少 $name" >&2; exit 1; }
 done
+rm -rf "$PORTABLE_DIR"
+PORTABLE_DIR=""
 
 SEVEN_ZIP=""
 if command -v 7z >/dev/null 2>&1; then

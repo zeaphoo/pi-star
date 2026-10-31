@@ -151,7 +151,13 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: windows-app
-          path: dist/windows/*
+          # Only installers and the portable zip. `dist/windows/*` used to
+          # include the entire portable/pi-runtime tree, which the Release job
+          # then uploaded as thousands of individual assets and timed out.
+          path: |
+            dist/windows/*.exe
+            dist/windows/*.msi
+            dist/windows/*.zip
           if-no-files-found: error
 
   macos:
@@ -236,10 +242,28 @@ jobs:
         run: ./scripts/release-notes.sh "${{ needs.verify.outputs.version }}" > release-notes.md
       - name: List artifacts
         run: find artifacts -type f -printf '%p %s bytes\n' | sort
+      - name: Clear stale release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.verify.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release view "$TAG" --json assets --jq '.assets[].name' |
+              while IFS= read -r name; do
+                [[ -n "$name" ]] && gh release delete-asset "$TAG" "$name" --yes
+              done
+          fi
       - uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.verify.outputs.tag }}
           name: Pi Star ${{ needs.verify.outputs.version }}
           body_path: release-notes.md
           prerelease: ${{ contains(needs.verify.outputs.version, '-') }}
-          files: artifacts/**/*
+          files: |
+            artifacts/linux-app/*.deb
+            artifacts/linux-app/*.AppImage
+            artifacts/windows-app/*.exe
+            artifacts/windows-app/*.msi
+            artifacts/windows-app/*.zip
+            artifacts/macos-*/*.dmg

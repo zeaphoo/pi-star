@@ -55,7 +55,9 @@
   `--force-local`，避免 `D:` 被当成远程主机；pi 依赖安装加 `--legacy-peer-deps`，规避 npm 10
   的 `edgesOut` 崩溃；Windows 运行时 staging 放在仓库同盘的 `app/pi-runtime`，避免 Tauri
   规范化资源路径时丢掉盘符（`C:\pirt` → `\pirt`）。NSIS 内容断言会先把 7-Zip 输出的
-  反斜杠归一化，避免把已打包的 `pi-runtime\node.exe` 误判为缺失。
+  反斜杠归一化，避免把已打包的 `pi-runtime\node.exe` 误判为缺失。Windows artifact 只上传
+  安装包和便携 zip，便携 staging 放到临时目录；发布前清理同名 Release 的旧 assets，避免把
+  `pi-runtime` 内数百个文件逐个上传导致 GitHub API 超时。
 - 桌面壳被 `SIGKILL` 时通过 stdin EOF 与进程组/Job Object 清理子进程树，避免孤儿进程。
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
