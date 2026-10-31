@@ -139,7 +139,7 @@ Pi Star ${VERSION} portable (${WIN_ARCH})
   README.txt
 
 数据 / Data
-  桌面偏好：%APPDATA%\\com.pistar.desktop
+  桌面偏好：%APPDATA%\\xyz.pi-star.desktop
   会话与设置：%USERPROFILE%\\.pi\\agent
   Back up %USERPROFILE%\\.pi\\agent to keep sessions and credentials.
 

@@ -234,7 +234,7 @@ Windows 的 `bash` 工具优先使用安装包内置的 MinGit（不会回退 cm
 安装包默认未签名；macOS 配置签名 secrets 后会自动签名/公证。CI 与 Release 配置见
 `.github/workflows/`。
 
-桌面壳数据目录（Linux `~/.local/share/com.pistar.desktop/`）：
+桌面壳数据目录（Linux `~/.local/share/xyz.pi-star.desktop/`）：
 
 - `desktop.toml`：`autostart`、`close_to_tray`、`port`；
 - `pi-star.log`：子进程 stderr 与事件日志（启动时超过 5 MB 轮转）；

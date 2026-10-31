@@ -63,7 +63,7 @@ MinGit）；`pi-star` 启动时自动发现并设置
 
 ## 数据目录
 
-Linux 为 `~/.local/share/com.pistar.desktop/`（macOS/Windows 由 Tauri 按 identifier 解析）：
+Linux 为 `~/.local/share/xyz.pi-star.desktop/`（macOS/Windows 由 Tauri 按 identifier 解析）：
 
 - `desktop.toml`：桌面偏好；
 - `pi-star.log`：子进程 stderr 与事件（启动时 >5 MB 轮转）；

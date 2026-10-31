@@ -119,7 +119,7 @@ app/
   Cargo.toml            [workspace] 独立；tauri 2 + 插件
   Cargo.lock
   build.rs              tauri_build + AppManifest::commands(&["desktop_action"])
-  tauri.conf.json       productName PiStar, identifier com.pistar.desktop, mainBinaryName PiStarApp
+  tauri.conf.json       productName PiStar, identifier xyz.pi-star.desktop, mainBinaryName PiStarApp
   capabilities/default.json   仅 splash 窗口的 allow-desktop-action
   icons/                tauri icon 生成
   src/

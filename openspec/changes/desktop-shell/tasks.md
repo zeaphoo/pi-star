@@ -21,7 +21,7 @@
 ## 3. Tauri 壳骨架与窗口
 
 - [x] 3.1 在根 `Cargo.toml` 加 `exclude = ["app"]`，并在根 `.gitignore` 忽略 `app/target`、`app/gen`、`app/pi-star`、`app/pi-star.exe`；创建 `app/Cargo.toml`（独立 `[workspace]`）、`app/build.rs`、`app/tauri.conf.json`、`app/capabilities/default.json`、`app/ui/index.html` 和 `app/icons/`；`main.rs` 在 release 使用 `windows_subsystem = "windows"`；`cd app && cargo build` 通过
-- [x] 3.2 配置 `tauri.conf.json`：`productName = "PiStar"`、`identifier = "com.pistar.desktop"`、`mainBinaryName = "PiStarApp"`、`frontendDist = "ui"`、`withGlobalTauri = true`、`app.windows = []`、资源由打包脚本注入；用 `cargo tauri build --no-bundle` 验证配置可解析
+- [x] 3.2 配置 `tauri.conf.json`：`productName = "PiStar"`、`identifier = "xyz.pi-star.desktop"`、`mainBinaryName = "PiStarApp"`、`frontendDist = "ui"`、`withGlobalTauri = true`、`app.windows = []`、资源由打包脚本注入；用 `cargo tauri build --no-bundle` 验证配置可解析
 - [x] 3.3 实现 `app/src/config.rs`：解析 app data 目录、`--hidden`、稳定端口与 `PI_STAR_DESKTOP_URL`（仅 debug）；定位 `pi-star` 的顺序为 exe 同目录 → resource dir →（仅 debug）仓库 target →（仅 debug）PATH；用 `locate_in` 纯函数单测覆盖去重、资源目录、开发路径和 PATH 忽略
 - [x] 3.4 实现 `app/src/prefs.rs`：`desktop.toml` 的加载/默认值/损坏回退/原子保存；单测覆盖缺失、缺字段、损坏、往返读写
 - [x] 3.5 实现 `app/src/window.rs`：splash 创建与状态注入、主窗口 hidden 创建/`PageLoadEvent::Finished` 后显示、共享 20 秒启动期限、配置失败时仍显示 fatal splash；手动启动验证 splash 和错误页
