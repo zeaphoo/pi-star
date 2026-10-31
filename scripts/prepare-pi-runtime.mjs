@@ -102,16 +102,37 @@ function runNpm(args, cwd) {
   }
 }
 
+function pathArg(value) {
+  return process.platform === "win32" ? value.replace(/\\/g, "/") : value;
+}
+
+function isGnuTar() {
+  try {
+    return execFileSync("tar", ["--version"], { encoding: "utf8" }).includes("GNU tar");
+  } catch {
+    return false;
+  }
+}
+
 function extract(archive, dest) {
   mkdirSync(dest, { recursive: true });
-  execFileSync("tar", ["-xf", archive, "-C", dest], { stdio: "inherit" });
+  const args = [];
+  // GNU tar on Git Bash treats `D:` in a Windows path as a remote host.
+  if (process.platform === "win32" && isGnuTar()) {
+    args.push("--force-local");
+  }
+  args.push("-xf", pathArg(archive), "-C", pathArg(dest));
+  execFileSync("tar", args, { stdio: "inherit" });
 }
 
 function extractZip(archive, dest) {
   mkdirSync(dest, { recursive: true });
   if (process.platform === "win32") {
-    // Windows bsdtar handles zip archives (GNU tar on Linux does not).
-    execFileSync("tar", ["-xf", archive, "-C", dest], { stdio: "inherit" });
+    // Windows has PowerShell in every supported image; Expand-Archive handles
+    // zip files without the GNU tar drive-letter ambiguity.
+    const quote = (value) => value.replace(/'/g, "''");
+    const script = `Expand-Archive -LiteralPath '${quote(pathArg(archive))}' -DestinationPath '${quote(pathArg(dest))}' -Force`;
+    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { stdio: "inherit" });
   } else {
     execFileSync("unzip", ["-q", archive, "-d", dest], { stdio: "inherit" });
   }
@@ -188,7 +209,11 @@ async function stage() {
     const archive = join(work, nodeArchiveName());
     downloadSync(`https://nodejs.org/dist/v${nodeVersion}/${nodeArchiveName()}`, archive);
     const extracted = join(work, "node");
-    extract(archive, extracted);
+    if (platform === "win32") {
+      extractZip(archive, extracted);
+    } else {
+      extract(archive, extracted);
+    }
     const nodeName = platform === "win32" ? "node.exe" : "node";
     const found = findFile(extracted, nodeName);
     if (!found) throw new Error(`${nodeName} not found in ${nodeArchiveName()}`);
@@ -212,10 +237,23 @@ async function stage() {
     extract(join(packed, tarball), extracted);
     cpSync(join(extracted, "package"), join(outDir, "pi"), { recursive: true });
     // The published pi tarball ships an npm-shrinkwrap that can lag its own
-    // dependencies (0.99.1 shrinkwrap referenced 0.99.2 in practice), so `npm ci`
-    // rejects it. Resolve production deps from package.json instead.
+    // dependencies (0.99.1 referenced 0.99.2) and triggers npm 10's
+    // "Cannot read properties of null (reading 'edgesOut')" on CI. Remove it
+    // and resolve production deps from package.json instead.
+    rmSync(join(outDir, "pi/npm-shrinkwrap.json"), { force: true });
     runNpm(
-      ["install", "--omit=dev", "--ignore-scripts", "--no-audit", "--no-fund", "--no-package-lock"],
+      [
+        "install",
+        "--omit=dev",
+        "--ignore-scripts",
+        "--no-audit",
+        "--no-fund",
+        "--no-package-lock",
+        // npm 10 on the CI Node 22 walks dev-dependency peer sets even with
+        // --omit=dev and crashes on a null edge; disabling peer resolution
+        // installs the same production tree without that arborist bug.
+        "--legacy-peer-deps",
+      ],
       join(outDir, "pi"),
     );
   }

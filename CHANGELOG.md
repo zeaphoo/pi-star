@@ -49,6 +49,9 @@
   `pi vpi-compatible-rust`。
 - **失效工作区**：启动时记住的新会话目录失效不再卡在“无法打开工作区”；自动丢弃记忆并回到
   默认工作区，显式 `?cwd=` 错误页提供重试与选择项目。
+- **Release 构建**：Windows 下用 PowerShell 解压 Node/MinGit 的 zip，并给 GNU tar 加
+  `--force-local`，避免 `D:` 被当成远程主机；pi 依赖安装加 `--legacy-peer-deps`，规避 npm 10
+  的 `edgesOut` 崩溃。
 - 桌面壳被 `SIGKILL` 时通过 stdin EOF 与进程组/Job Object 清理子进程树，避免孤儿进程。
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
