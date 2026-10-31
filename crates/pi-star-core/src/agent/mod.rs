@@ -1,3 +1,4 @@
+pub mod harness_backend;
 pub mod provider;
 pub mod session_store;
 pub mod tools;
@@ -1531,7 +1532,7 @@ fn content_blocks(message: &Value) -> Vec<Value> {
     }
 }
 
-fn prompt_text(command: &Value) -> String {
+pub(crate) fn prompt_text(command: &Value) -> String {
     match command.get("message") {
         Some(Value::String(text)) => text.clone(),
         Some(Value::Array(blocks)) => blocks
@@ -1549,7 +1550,7 @@ fn prompt_text(command: &Value) -> String {
     }
 }
 
-fn prompt_images(command: &Value) -> Vec<(String, String)> {
+pub(crate) fn prompt_images(command: &Value) -> Vec<(String, String)> {
     let mut images = Vec::new();
     if let Some(items) = command.get("images").and_then(Value::as_array) {
         for item in items {
@@ -1591,7 +1592,7 @@ fn prompt_content(prompt: &PromptRequest) -> Value {
     Value::Array(content)
 }
 
-fn build_system_prompt(config: &Config, cwd: &Path, tools: &[String]) -> String {
+pub(crate) fn build_system_prompt(config: &Config, cwd: &Path, tools: &[String]) -> String {
     let mut prompt = format!(
         "You are pi, a coding agent working in {}. Use the available tools to inspect and modify the project. \
          Prefer reading files before editing. Keep replies concise and show the user what changed. \

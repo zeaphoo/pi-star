@@ -583,7 +583,7 @@ fn entry_to_v3(entry: &Entry) -> Result<Value, String> {
     Ok(Value::Object(obj))
 }
 
-fn message_to_v3(message: &AgentMessage) -> Value {
+pub(crate) fn message_to_v3(message: &AgentMessage) -> Value {
     let mut value = serde_json::to_value(message).unwrap_or(Value::Null);
     let Some(obj) = value.as_object_mut() else {
         return value;
