@@ -192,8 +192,9 @@ for file in "$DIST_DIR"/*-setup.exe; do
         echo "WARN: 未找到 7-Zip，跳过 $file 内容断言" >&2
         continue
     fi
-    listing="$("$SEVEN_ZIP" l "$file" 2>/dev/null || true)"
-    for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe; do
+    # 7-Zip prints native separators inside NSIS; normalize before matching.
+    listing="$("$SEVEN_ZIP" l "$file" 2>/dev/null | tr '\\' '/' || true)"
+    for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.ts; do
         grep -qi "$name" <<<"$listing" || { echo "安装包 ${file##*/} 缺少 $name" >&2; exit 1; }
     done
 done
