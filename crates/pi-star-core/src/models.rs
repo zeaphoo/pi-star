@@ -82,6 +82,7 @@ pub fn load_models(config: &Config, scope_all: bool) -> Result<ModelsData> {
         .filter(|patterns| !patterns.is_empty())
         .filter(|_| !scope_all);
     let custom_names = custom_provider_names(config);
+    let auth = read_json(&config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
     let defs = model_defs(config)?;
     let refs = defs
         .values()
@@ -96,6 +97,11 @@ pub fn load_models(config: &Config, scope_all: bool) -> Result<ModelsData> {
     let mut thinking_levels = BTreeMap::new();
     let mut thinking_level_maps = BTreeMap::new();
     for def in defs.values() {
+        // pi only lists models of providers it can authenticate; pi-star must
+        // match, or the selector offers catalog models whose requests fail.
+        if !provider_available(def, &auth) {
+            continue;
+        }
         let key = format!("{}/{}", def.provider, def.id);
         if let Some(scope) = &scope {
             if !scope.contains(&key) {
@@ -196,6 +202,28 @@ fn thinking_pins(
         }
     }
     pins
+}
+
+/// Whether a model's provider has a credential pi-star can send: one pi wrote
+/// to auth.json (api key or OAuth), a key models.json carries, or the
+/// provider's `<ID>_API_KEY` environment variable. Unauthenticated catalog
+/// providers stay out of the selector, as they do in pi.
+fn provider_available(def: &ModelDef, auth: &Value) -> bool {
+    if def
+        .api_key
+        .as_deref()
+        .is_some_and(|key| !key.trim().is_empty())
+    {
+        return true;
+    }
+    if auth.get(&def.provider).is_some() {
+        return true;
+    }
+    let env = format!(
+        "{}_API_KEY",
+        def.provider.to_uppercase().replace(['-', '.'], "_")
+    );
+    std::env::var_os(env).is_some()
 }
 
 /// `name` of each models.json provider: what the panel and selector show instead
@@ -583,6 +611,49 @@ mod tests {
         assert_eq!(
             pins.get("anthropic/claude").map(String::as_str),
             Some("high")
+        );
+    }
+
+    #[test]
+    fn unauthenticated_catalog_providers_stay_out_of_the_list() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("models-store.json"),
+            json!({
+                "configured-one": { "models": [{ "id": "chat", "name": "Chat" }] },
+                "unconfigured-one": { "models": [{ "id": "glm", "name": "GLM" }] }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            json!({ "configured-one": { "type": "api_key", "key": "test-key" } }).to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("models.json"),
+            json!({
+                "providers": {
+                    "custom-one": {
+                        "apiKey": "test-key",
+                        "models": [{ "id": "local", "name": "Local" }]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let config = crate::config::Config::new(Some(dir.path().to_path_buf()), None).unwrap();
+        let data = load_models(&config, false).unwrap();
+        let providers = data
+            .model_list
+            .iter()
+            .map(|model| model.provider.as_str())
+            .collect::<std::collections::BTreeSet<_>>();
+        assert_eq!(
+            providers,
+            ["configured-one", "custom-one"].into_iter().collect()
         );
     }
 

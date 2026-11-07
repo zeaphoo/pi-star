@@ -10,6 +10,16 @@
 
 ### Fixed
 
+- **Vite 开发代理的请求被判定 Untrusted origin**：`/api` 代理原来用字符串 target，Vite 会
+  自动 `changeOrigin: true`，把 `Host` 改写成 30151 而页面 `Origin` 仍是 30152，后端的
+  同源检查因此拒绝所有 POST（输入消息失败、新会话提示 Untrusted origin）。改为对象形式并
+  显式 `changeOrigin: false`，保留页面自己的 Host。需要重启 `npm run dev`。
+
+- **模型选择器只列可用模型**：`/api/models` 现在只返回有凭据的 provider（`auth.json`、
+  models.json 的 `apiKey`，或 `<PROVIDER>_API_KEY` 环境变量），不再把 `models-store.json`
+  里未配置的目录 provider 列出来；设置里的「模型定义」和输入框选择器因此一致。
+  `?scope=all` 仍表示忽略 `enabledModels`，但同样只含可用模型。
+
 - **pi-web 侧聊不再出现在侧栏**：识别 `pi-web:side` 元数据，把侧聊折叠进父会话的 family，
   pi-web 创建的 `Side chat` 不再被当成顶层 fork 显示；侧聊用量只算自身条目、内容搜索跳过，
   删除父会话时一并删除。会话索引版本升到 2，旧缓存里的 fork 关系会重新解析。

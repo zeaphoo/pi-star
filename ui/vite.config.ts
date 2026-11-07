@@ -47,7 +47,15 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": "http://127.0.0.1:30151",
+      // A string target makes Vite set changeOrigin: true, which rewrites Host
+      // to 30151 while the page's Origin stays 30152 — the server's same-origin
+      // check then rejects every POST with "Untrusted origin". Keep the page's
+      // Host so Host and Origin match, as they do when the UI is served by
+      // pi-star itself.
+      "/api": {
+        target: "http://127.0.0.1:30151",
+        changeOrigin: false,
+      },
     },
   },
 });
