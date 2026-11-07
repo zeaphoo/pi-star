@@ -252,6 +252,31 @@ function waitFor(run: Run, timeoutMs: number): Promise<Run> {
   });
 }
 
+
+const SUBAGENT_CANDIDATE_LIMIT = 10;
+
+/**
+ * Names the subagents this session has run when an id finds nothing, so a
+ * mistyped id can be corrected from the error. They come from the details on
+ * the session's tool results.
+ */
+function withSubagentCandidates(text: string, sessionManager?: { getEntries?: () => unknown }): string {
+  if (!text.startsWith("Subagent not found:")) return text;
+  const entries = sessionManager?.getEntries?.();
+  if (!Array.isArray(entries)) return text;
+  const candidates = new Map<string, string>();
+  for (let i = entries.length - 1; i >= 0 && candidates.size < SUBAGENT_CANDIDATE_LIMIT; i -= 1) {
+    const entry = entries[i] as { type?: unknown; message?: { role?: unknown; details?: { kind?: unknown; sessionId?: unknown; description?: unknown } } };
+    if (entry?.type !== "message" || entry.message?.role !== "toolResult") continue;
+    const details = entry.message.details;
+    if (details?.kind !== "pi-web-subagent" || typeof details.sessionId !== "string" || candidates.has(details.sessionId)) continue;
+    candidates.set(details.sessionId, typeof details.description === "string" ? details.description : "");
+  }
+  if (candidates.size === 0) return text;
+  const list = [...candidates].map(([id, description]) => `- ${id}${description ? `: ${description}` : ""}`).join("\n");
+  return `${text}\nThis session's latest subagents:\n${list}`;
+}
+
 export function registerSubagentTools(pi: any) {
   pi.registerTool({
     name: "Agent",
@@ -303,9 +328,9 @@ export function registerSubagentTools(pi: any) {
       },
       required: ["agent_id"],
     },
-    async execute(_toolCallId: string, params: any) {
+    async execute(_toolCallId: string, params: any, _signal: unknown, _onUpdate: unknown, ctx?: { sessionManager?: { getEntries?: () => unknown } }) {
       const run = runs().get(String(params.agent_id));
-      if (!run) return { content: [{ type: "text", text: `Subagent not found: ${params.agent_id}` }], details: undefined, isError: true };
+      if (!run) return { content: [{ type: "text", text: withSubagentCandidates(`Subagent not found: ${params.agent_id}`, ctx?.sessionManager) }], details: undefined, isError: true };
       if (params.wait) {
         const timeoutMs = Number.isFinite(params.wait_timeout) && params.wait_timeout > 0
           ? Number(params.wait_timeout) * 1000

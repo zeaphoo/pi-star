@@ -214,9 +214,17 @@ const publicDir = path.join(repo, "ui", "public");
 fs.rmSync(publicDir, { recursive: true, force: true });
 fs.cpSync(path.join(piWeb, "public"), publicDir, { recursive: true });
 
+const upstream = (() => {
+  try {
+    return JSON.parse(fs.readFileSync(path.join(piWeb, "package.json"), "utf8"));
+  } catch {
+    return {};
+  }
+})();
 fs.writeFileSync(
   path.join(repo, "ui", "UPSTREAM.md"),
   `# UI upstream\n\nCopied from the read-only pi-web checkout at \`${piWeb}\`.\n\n` +
+  `- Upstream version: ${upstream.version ?? "unknown"}\n` +
   `- Source project: https://github.com/agegr/pi-web (MIT)\n` +
   `- Copied client modules: ${seen.size}\n` +
   `- Migrated client tests: ${testFiles.size} files (plus \`ui/public/sw.test.mjs\`)\n` +

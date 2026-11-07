@@ -4,6 +4,10 @@
 API/文件层可用但运行时仍有边界，`○` 表示未实现。任务清单与验收标准在
 `openspec/changes/port-pi-web-to-rust-backend/`。
 
+UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 `SubagentViewer` 与
+「在新对话询问」）；逐项对比、已移植范围与暂缓项见 [`upstream-pi-web.md`](upstream-pi-web.md)，
+重新同步的本地差异见 [`../ui/UPSTREAM.md`](../ui/UPSTREAM.md)。
+
 | 组 | 状态 | 说明 |
 | --- | --- | --- |
 | 会话扫描/增量索引 | ✅ | 文件指纹缓存 + 并行解析 + 持久化 `pi-star-session-index.json`；命中后约 20ms |

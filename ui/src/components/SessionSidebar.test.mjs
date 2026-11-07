@@ -125,9 +125,8 @@ test("on a desktop the files sit below the sessions by default, both in view", (
   // and useIsMobile's server snapshots): the stacked layout.
   const html = render({ selectedCwd: "/work/alpha", onOpenTerminal: noop });
   assert.match(html, /^<div class="session-sidebar is-files-below" style="--sidebar-files-height:320px">/);
-  // No tabs: the brand (its name says the versions a click shows), then New
-  // and the sessions' search. No view options.
-  assert.match(html, /<div class="sidebar-header"><button type="button" class="sidebar-brand" aria-label="Pi Star, versions: [^",]+, pi [^",]+"><svg class="sidebar-brand-logo"[\s\S]*?<\/svg>Pi Star<\/button><span class="sidebar-header-spacer"><\/span><button type="button" class="sidebar-new-button"/);
+  // No tabs: the brand, then New and the sessions' search. No view options.
+  assert.match(html, /<div class="sidebar-header"><span class="sidebar-brand"><svg class="sidebar-brand-logo"[\s\S]*?<\/svg>Pi Star<\/span><span class="sidebar-header-spacer"><\/span><button type="button" class="sidebar-new-button"/);
   assert.doesNotMatch(html, /role="tablist"|role="tab"|role="tabpanel"|View options|sidebar-title/);
   assert.match(html, /<span class="sidebar-new-label">New<\/span><\/button><button type="button" title="Search conversations" aria-label="Search conversations" aria-expanded="false" aria-controls="session-search-input" class="sidebar-search-toggle">/);
   // Two regions, both shown: the sessions, the separator, the files.
@@ -471,4 +470,15 @@ test("a read or a mark in another tab reaches this one: the storage handler adop
   // The listener is registered for the storage event and taken off again.
   assert.match(source, /window\.addEventListener\("storage", onStorage\);/);
   assert.match(source, /window\.removeEventListener\("storage", onStorage\);/);
+});
+
+test("the favicon counts sessions that finished while the tab was hidden (#1484)", () => {
+  // The rows exclude the selected session ("already looking"), which is false
+  // while hidden: the badge takes those ids as a separate prop instead.
+  assert.match(source, /hiddenFinishedSessionIds\?: Set<string>;/);
+  assert.match(source, /countFaviconUnread\(unreadSessionIds, hiddenFinishedSessionIds\)/);
+  assert.match(
+    source,
+    /\}, \[awaitingInputSessionIds, unreadSessionIds, hiddenFinishedSessionIds\]\);/,
+  );
 });

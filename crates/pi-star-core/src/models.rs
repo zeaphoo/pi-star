@@ -39,6 +39,8 @@ pub struct ModelListItem {
     pub id: String,
     pub name: String,
     pub provider: String,
+    /// The provider's display name, as the selector labels its group.
+    pub provider_name: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
 }
@@ -54,6 +56,8 @@ pub struct ModelsData {
     pub thinking_levels: BTreeMap<String, Vec<String>>,
     pub thinking_level_maps: BTreeMap<String, BTreeMap<String, Value>>,
     pub thinking_level_pins: BTreeMap<String, Value>,
+    /// True when `enabledModels` narrows the list.
+    pub is_scoped: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -63,7 +67,7 @@ pub struct DefaultModel {
     pub model_id: String,
 }
 
-pub fn load_models(config: &Config) -> Result<ModelsData> {
+pub fn load_models(config: &Config, scope_all: bool) -> Result<ModelsData> {
     let settings = read_json(&config.settings_path()).unwrap_or(Value::Null);
     let enabled = settings
         .get("enabledModels")
@@ -74,19 +78,27 @@ pub fn load_models(config: &Config) -> Result<ModelsData> {
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
-        });
+        })
+        .filter(|patterns| !patterns.is_empty())
+        .filter(|_| !scope_all);
+    let custom_names = custom_provider_names(config);
     let defs = model_defs(config)?;
+    let refs = defs
+        .values()
+        .map(|def| format!("{}/{}", def.provider, def.id))
+        .collect::<Vec<_>>();
+    let scope = enabled
+        .as_deref()
+        .filter(|patterns| !patterns.is_empty())
+        .map(|patterns| enabled_model_refs(patterns, &refs));
     let mut list = Vec::new();
     let mut models = BTreeMap::new();
     let mut thinking_levels = BTreeMap::new();
     let mut thinking_level_maps = BTreeMap::new();
     for def in defs.values() {
         let key = format!("{}/{}", def.provider, def.id);
-        if let Some(patterns) = &enabled {
-            if !patterns
-                .iter()
-                .any(|pattern| matches_pattern(pattern, &key))
-            {
+        if let Some(scope) = &scope {
+            if !scope.contains(&key) {
                 continue;
             }
         }
@@ -107,6 +119,10 @@ pub fn load_models(config: &Config) -> Result<ModelsData> {
             id: def.id.clone(),
             name: def.name.clone(),
             provider: def.provider.clone(),
+            provider_name: custom_names
+                .get(&def.provider)
+                .cloned()
+                .unwrap_or_else(|| provider_display_name(&def.provider)),
             input: def.input.clone(),
         });
     }
@@ -136,6 +152,7 @@ pub fn load_models(config: &Config) -> Result<ModelsData> {
         .get("defaultThinkingLevel")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    let thinking_level_pins = thinking_pins(enabled.as_deref(), &models);
     Ok(ModelsData {
         models,
         model_list: list,
@@ -144,8 +161,116 @@ pub fn load_models(config: &Config) -> Result<ModelsData> {
         saved_default_thinking_level: saved_default,
         thinking_levels,
         thinking_level_maps,
-        thinking_level_pins: BTreeMap::new(),
+        thinking_level_pins,
+        is_scoped: enabled.is_some() && !scope_all,
     })
+}
+
+/// A `:level` suffix on an `enabledModels` pattern pins that reasoning level.
+fn split_thinking_pin(pattern: &str) -> (&str, Option<&str>) {
+    match pattern.rsplit_once(':') {
+        Some((base, level))
+            if matches!(
+                level,
+                "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"
+            ) =>
+        {
+            (base, Some(level))
+        }
+        _ => (pattern, None),
+    }
+}
+
+fn thinking_pins(
+    patterns: Option<&[String]>,
+    models: &BTreeMap<String, String>,
+) -> BTreeMap<String, Value> {
+    let mut pins = BTreeMap::new();
+    for pattern in patterns.unwrap_or_default() {
+        let (base, level) = split_thinking_pin(pattern);
+        let Some(level) = level else { continue };
+        for key in models.keys() {
+            if matches_pattern(base, key) {
+                pins.insert(key.clone(), Value::String(level.to_string()));
+            }
+        }
+    }
+    pins
+}
+
+/// `name` of each models.json provider: what the panel and selector show instead
+/// of the id.
+pub fn custom_provider_names(config: &Config) -> BTreeMap<String, String> {
+    read_json(&config.models_path())
+        .and_then(|value| {
+            value
+                .get("providers")
+                .and_then(Value::as_object)
+                .map(|providers| {
+                    providers
+                        .iter()
+                        .filter_map(|(id, provider)| {
+                            provider
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .map(str::trim)
+                                .filter(|name| !name.is_empty())
+                                .map(|name| (id.clone(), name.to_string()))
+                        })
+                        .collect()
+                })
+        })
+        .unwrap_or_default()
+}
+
+/// pi's provider display names, as its runtime reports them; a provider
+/// models.json added without a `name` falls back to its id.
+pub fn provider_display_name(id: &str) -> String {
+    match id {
+        "amazon-bedrock" => "Amazon Bedrock",
+        "anthropic" => "Anthropic",
+        "ant-ling" => "Ant Ling",
+        "azure" => "Azure",
+        "baseten" => "Baseten",
+        "cerebras" => "Cerebras",
+        "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
+        "cloudflare-workers-ai" => "Cloudflare Workers AI",
+        "deepseek" => "DeepSeek",
+        "fireworks" => "Fireworks",
+        "github-copilot" => "GitHub Copilot",
+        "google" => "Google",
+        "google-vertex" => "Google Vertex AI",
+        "groq" => "Groq",
+        "huggingface" => "Hugging Face",
+        "kimi-coding" => "Kimi For Coding",
+        "meta" => "Meta",
+        "minimax" => "MiniMax",
+        "minimax-cn" => "MiniMax CN",
+        "mistral" => "Mistral",
+        "moonshotai" => "Moonshot AI",
+        "moonshotai-cn" => "Moonshot AI CN",
+        "nvidia" => "NVIDIA",
+        "openai" => "OpenAI",
+        "openai-codex" => "OpenAI Codex (legacy)",
+        "opencode" => "OpenCode Zen",
+        "opencode-go" => "OpenCode Go",
+        "openrouter" => "OpenRouter",
+        "qwen-token-plan" => "Qwen Token Plan",
+        "qwen-token-plan-cn" => "Qwen Token Plan CN",
+        "qwen-token-plan-individual" => "Qwen Token Plan Individual",
+        "together" => "Together",
+        "typesafe" => "TypeSafe",
+        "vercel-ai-gateway" => "Vercel AI Gateway",
+        "xai" => "xAI",
+        "xiaomi" => "Xiaomi",
+        "xiaomi-token-plan-ams" => "Xiaomi Token Plan AMS",
+        "xiaomi-token-plan-cn" => "Xiaomi Token Plan CN",
+        "xiaomi-token-plan-sgp" => "Xiaomi Token Plan SGP",
+        "zai" => "Z.AI",
+        "zai-coding-cn" => "Z.AI Coding CN",
+        _ => id,
+    }
+    .to_string()
 }
 
 pub fn model_defs(config: &Config) -> Result<HashMap<String, ModelDef>> {
@@ -270,7 +395,90 @@ pub fn find_model(config: &Config, provider: &str, model_id: &str) -> Result<Opt
     Ok(model_defs(config)?.remove(&format!("{provider}/{model_id}")))
 }
 
+/// `enabledModels` patterns resolved against the available model references.
+pub fn resolve_patterns(
+    patterns: &[String],
+    refs: &[String],
+) -> Vec<(String, Vec<String>, Option<String>)> {
+    patterns
+        .iter()
+        .map(|pattern| {
+            let (base, pin) = split_thinking_pin(pattern.trim_start_matches('!'));
+            let matched = refs
+                .iter()
+                .filter(|reference| matches_pattern(base, reference))
+                .cloned()
+                .collect();
+            (pattern.clone(), matched, pin.map(str::to_owned))
+        })
+        .collect()
+}
+
+/// The model references the scope enables: all of them when no pattern narrows.
+pub fn enabled_model_refs(
+    patterns: &[String],
+    refs: &[String],
+) -> std::collections::BTreeSet<String> {
+    // `!ref` is the exclusion an earlier pi-star wrote; pi itself only reads
+    // positive patterns, so a later edit normalizes it away (patterns_for).
+    let positives = patterns.iter().any(|pattern| !pattern.starts_with('!'));
+    let mut enabled = if patterns.is_empty() || !positives {
+        refs.iter().cloned().collect()
+    } else {
+        let mut set = std::collections::BTreeSet::new();
+        for (pattern, matched, _) in resolve_patterns(patterns, refs) {
+            if !pattern.starts_with('!') {
+                set.extend(matched);
+            }
+        }
+        set
+    };
+    for (pattern, matched, _) in resolve_patterns(patterns, refs) {
+        if pattern.starts_with('!') {
+            for reference in matched {
+                enabled.remove(&reference);
+            }
+        }
+    }
+    enabled
+}
+
+/// The thinking level each enabled model is pinned to by a `:level` pattern.
+pub fn thinking_pins_for(patterns: &[String], refs: &[String]) -> BTreeMap<String, String> {
+    let mut pins = BTreeMap::new();
+    for (pattern, matched, pin) in resolve_patterns(patterns, refs) {
+        if pattern.starts_with('!') {
+            continue;
+        }
+        if let Some(pin) = pin {
+            for reference in matched {
+                pins.insert(reference, pin.clone());
+            }
+        }
+    }
+    pins
+}
+
+/// The patterns that spell out `enabled`, keeping pinned thinking levels.
+pub fn patterns_for(
+    enabled: &std::collections::BTreeSet<String>,
+    refs: &[String],
+    pins: &BTreeMap<String, String>,
+) -> Vec<String> {
+    if enabled.len() == refs.len() {
+        return Vec::new();
+    }
+    enabled
+        .iter()
+        .map(|reference| match pins.get(reference) {
+            Some(level) => format!("{reference}:{level}"),
+            None => reference.clone(),
+        })
+        .collect()
+}
+
 fn matches_pattern(pattern: &str, key: &str) -> bool {
+    let (pattern, _) = split_thinking_pin(pattern);
     if pattern == "*" || pattern == key {
         return true;
     }
@@ -358,6 +566,45 @@ pub fn strip_json_comments(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn enabled_patterns_resolve_to_refs_and_pins() {
+        let refs = vec![
+            "anthropic/claude".to_string(),
+            "openai/gpt".to_string(),
+            "openai/o3".to_string(),
+        ];
+        let patterns = vec!["openai/*".to_string(), "anthropic/claude:high".to_string()];
+        let resolutions = resolve_patterns(&patterns, &refs);
+        assert_eq!(resolutions[0].1, vec!["openai/gpt", "openai/o3"]);
+        assert_eq!(resolutions[1].1, vec!["anthropic/claude"]);
+        assert_eq!(resolutions[1].2.as_deref(), Some("high"));
+        let pins = thinking_pins_for(&patterns, &refs);
+        assert_eq!(
+            pins.get("anthropic/claude").map(String::as_str),
+            Some("high")
+        );
+    }
+
+    #[test]
+    fn a_legacy_exclusion_pattern_narrows_from_all() {
+        let refs = vec!["a/x".to_string(), "a/y".to_string()];
+        let enabled = enabled_model_refs(&["!a/y".to_string()], &refs);
+        assert_eq!(enabled.into_iter().collect::<Vec<_>>(), vec!["a/x"]);
+        let enabled = enabled_model_refs(&["a/x".to_string(), "!a/y".to_string()], &refs);
+        assert_eq!(enabled.into_iter().collect::<Vec<_>>(), vec!["a/x"]);
+    }
+
+    #[test]
+    fn enabling_every_model_writes_no_patterns() {
+        let refs = vec!["a/x".to_string(), "a/y".to_string()];
+        let all = enabled_model_refs(&[], &refs);
+        assert_eq!(all.len(), 2);
+        assert!(patterns_for(&all, &refs, &BTreeMap::new()).is_empty());
+        let mut few = all.clone();
+        few.remove("a/y");
+        assert_eq!(patterns_for(&few, &refs, &BTreeMap::new()), vec!["a/x"]);
+    }
 
     #[test]
     fn strips_comments_and_trailing_commas() {

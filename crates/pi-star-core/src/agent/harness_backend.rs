@@ -798,7 +798,7 @@ fn resolve_model(config: &Config, entries: &[Value]) -> Option<ModelDef> {
             .flatten()
     });
     explicit.or_else(|| {
-        load_models(config).ok().and_then(|data| {
+        load_models(config, false).ok().and_then(|data| {
             data.default_model.and_then(|model| {
                 find_model(config, &model.provider, &model.model_id)
                     .ok()

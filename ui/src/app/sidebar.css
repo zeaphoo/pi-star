@@ -478,8 +478,9 @@ a.session-tree-main {
   white-space: nowrap;
 }
 
-.session-tree .session-tree-confirm-delete,
-.session-tree .session-tree-confirm-cancel {
+/* Also the Agents switcher's side-chat Delete (AgentSessionPanel), outside the tree. */
+.session-tree-confirm-delete,
+.session-tree-confirm-cancel {
   display: flex;
   flex: none;
   align-items: center;
@@ -490,23 +491,24 @@ a.session-tree-main {
   border-radius: 6px;
   font-size: 12px;
   white-space: nowrap;
+  cursor: pointer;
 }
 
-.session-tree .session-tree-confirm-delete {
+.session-tree-confirm-delete {
   border: 1px solid #ef4444;
   background: #ef4444;
   color: #fff;
   font-weight: 600;
 }
 
-.session-tree .session-tree-confirm-cancel {
+.session-tree-confirm-cancel {
   border: 1px solid var(--border);
   background: var(--bg);
   color: var(--text-muted);
   font-weight: 500;
 }
 
-.session-tree .session-tree-confirm-cancel:hover {
+.session-tree-confirm-cancel:hover {
   background: var(--bg-hover);
 }
 
@@ -753,6 +755,20 @@ a.session-tree-main {
   font-size: 11px;
 }
 
+/* "No sessions yet" and an unpinned group's "Pin to keep" side by side. */
+.session-tree-group-empty-label {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-tree-group-empty .session-tree-more-toggle {
+  flex: none;
+  margin-left: 14px;
+}
+
 /* "Show more · N" and, once more is shown, "Show less" side by side. A lone
    button takes the whole row; on a narrow sidebar "show more" gives way so
    "Show less" is never clipped. */
@@ -934,7 +950,7 @@ a.session-tree-main {
   display: flex;
   flex: none;
   align-items: stretch;
-  height: 36px;
+  height: var(--top-bar-height);
   box-sizing: border-box;
   border-bottom: 1px solid var(--border);
 }
@@ -1021,12 +1037,10 @@ a.session-tree-main {
 /* With the files below the sessions there is no tab to choose: the brand
    stands where the tabs were (PiWebTitle), the panel's typographic anchor,
    as on the old sidebar. Not a cell: no box, no line on its right; its text
-   in the chevron column (6px in plus a header toggle's 5px). A click shows
-   the versions in the accent for a few seconds. Never cut: New's label
-   gives way first, and on a row too narrow for the versions they take the
-   sidebar's meta size (data-fit 2, which only they reach: "Pi Web" fits
-   beside the two cells at the sidebar's 180px minimum, and the versions at
-   9px with a digit to spare, the logo giving way). */
+   in the chevron column (6px in plus a header toggle's 5px). Never cut:
+   New's label gives way first, and on a row too narrow for it the brand
+   takes the sidebar's meta size (data-fit 2, which only it reaches: "Pi
+   Star" fits beside the two cells at the sidebar's 180px minimum). */
 .sidebar-brand {
   display: inline-flex;
   flex: none;
@@ -1047,7 +1061,6 @@ a.session-tree-main {
   line-height: normal;
   text-align: left;
   white-space: nowrap;
-  cursor: default;
 }
 
 .sidebar-brand-logo {
@@ -1057,19 +1070,6 @@ a.session-tree-main {
   border-radius: 4px;
   pointer-events: none;
   user-select: none;
-}
-
-.sidebar-brand.is-version {
-  color: var(--accent);
-}
-
-.sidebar-brand:focus {
-  outline: none;
-}
-
-.sidebar-brand:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
 }
 
 .sidebar-header-spacer {
@@ -1082,7 +1082,7 @@ a.session-tree-main {
 }
 
 .sidebar-search-toggle {
-  width: 36px;
+  width: var(--top-bar-height);
   padding: 0;
 }
 
@@ -1097,7 +1097,7 @@ a.session-tree-main {
    label is still each one's name. */
 .sidebar-header[data-fit="1"] .sidebar-new-button,
 .sidebar-header[data-fit="2"] .sidebar-new-button {
-  width: 36px;
+  width: var(--top-bar-height);
   padding: 0;
 }
 
@@ -1107,17 +1107,6 @@ a.session-tree-main {
 
 .sidebar-header[data-fit="2"] .sidebar-brand {
   font-size: 11px;
-}
-
-/* The versions are long; at the narrowest header the logo gives way and the
-   text drops to 9px so a prerelease like 0.1.0-rc.1p1.4.0 still fits beside
-   New and Search. */
-.sidebar-header[data-fit="2"] .sidebar-brand.is-version .sidebar-brand-logo {
-  display: none;
-}
-
-.sidebar-header[data-fit="2"] .sidebar-brand.is-version {
-  font-size: 9px;
 }
 
 .sidebar-header[data-fit="1"] .sidebar-new-label,

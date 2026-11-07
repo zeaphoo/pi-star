@@ -19,6 +19,7 @@ use crate::state::AppState;
 #[derive(Debug, Deserialize, Default)]
 pub struct CwdQuery {
     cwd: Option<String>,
+    scope: Option<String>,
 }
 
 pub async fn models(State(state): State<Arc<AppState>>, Query(query): Query<CwdQuery>) -> Response {
@@ -31,7 +32,12 @@ pub async fn models(State(state): State<Arc<AppState>>, Query(query): Query<CwdQ
             return forbidden("Access denied");
         }
     }
-    match state.models() {
+    let data = if query.scope.as_deref() == Some("all") {
+        state.models_all()
+    } else {
+        state.models()
+    };
+    match data {
         Ok(data) => no_store(data),
         Err(error) => internal(error),
     }
@@ -89,9 +95,8 @@ pub async fn enabled_models(
     }
 }
 
-fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
-    let settings_value = settings::read_settings(&state.config);
-    let patterns = settings_value
+fn enabled_patterns(state: &AppState) -> Vec<String> {
+    settings::read_settings(&state.config)
         .get("enabledModels")
         .and_then(Value::as_array)
         .map(|items| {
@@ -100,24 +105,38 @@ fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
                 .filter_map(Value::as_str)
                 .map(str::to_owned)
                 .collect::<Vec<_>>()
-        });
-    let data = state.models()?;
-    let all_enabled = patterns.is_none();
+        })
+        .unwrap_or_default()
+}
+
+fn custom_providers(state: &AppState) -> HashSet<String> {
+    read_json(&state.config.models_path())
+        .and_then(|value| {
+            value
+                .get("providers")
+                .and_then(Value::as_object)
+                .map(|providers| providers.keys().cloned().collect())
+        })
+        .unwrap_or_default()
+}
+
+fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
+    let patterns = enabled_patterns(state);
+    let all_enabled = patterns.is_empty();
+    let data = state.models_all()?;
+    let refs = data
+        .model_list
+        .iter()
+        .map(|model| format!("{}/{}", model.provider, model.id))
+        .collect::<Vec<_>>();
+    let resolutions = models::resolve_patterns(&patterns, &refs);
+    let enabled = models::enabled_model_refs(&patterns, &refs);
+    let pins = models::thinking_pins_for(&patterns, &refs);
+    let custom = custom_providers(state);
+    let custom_names = models::custom_provider_names(&state.config);
     let mut providers: BTreeMap<String, Vec<Value>> = BTreeMap::new();
-    let mut enabled_total = 0usize;
     for model in &data.model_list {
         let reference = format!("{}/{}", model.provider, model.id);
-        let enabled = patterns.as_ref().is_none_or(|patterns| {
-            patterns.iter().any(|pattern| {
-                pattern == "*"
-                    || pattern == &reference
-                    || pattern == &format!("{}/*", model.provider)
-                    || glob_match(pattern, &reference)
-            })
-        });
-        if enabled {
-            enabled_total += 1;
-        }
         providers
             .entry(model.provider.clone())
             .or_default()
@@ -125,7 +144,8 @@ fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
                 "id": model.id,
                 "name": model.name,
                 "ref": reference,
-                "enabled": enabled,
+                "enabled": enabled.contains(&reference),
+                "thinkingPin": pins.get(&reference),
             }));
     }
     let providers = providers
@@ -136,32 +156,33 @@ fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
                 .filter(|model| model.get("enabled").and_then(Value::as_bool) == Some(true))
                 .count();
             json!({
-                "id": id,
-                "name": id,
-                "kind": "builtin",
+                "id": id.clone(),
+                "name": custom_names
+                    .get(&id)
+                    .cloned()
+                    .unwrap_or_else(|| models::provider_display_name(&id)),
+                "kind": if custom.contains(&id) { "custom" } else { "builtin" },
                 "enabledCount": enabled_count,
                 "models": models,
             })
         })
         .collect::<Vec<_>>();
+    let stale = resolutions
+        .iter()
+        .filter(|(_, matched, _)| matched.is_empty())
+        .map(|(pattern, _, _)| pattern.clone())
+        .collect::<Vec<_>>();
     Ok(json!({
         "allEnabled": all_enabled,
-        "patterns": patterns,
-        "stalePatterns": [],
-        "enabledTotal": if all_enabled { data.model_list.len() } else { enabled_total },
-        "availableTotal": data.model_list.len(),
+        "patterns": if all_enabled { Value::Null } else { json!(patterns) },
+        "stalePatterns": stale,
+        "enabledTotal": if all_enabled { refs.len() } else { enabled.len() },
+        "availableTotal": refs.len(),
         "providers": providers,
         "scope": "global",
         "settingsPath": state.config.settings_path().to_string_lossy(),
         "editable": true,
     }))
-}
-
-fn glob_match(pattern: &str, value: &str) -> bool {
-    globset::Glob::new(pattern)
-        .ok()
-        .map(|glob| glob.compile_matcher().is_match(value))
-        .unwrap_or(false)
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -191,49 +212,48 @@ pub async fn set_enabled_models(
     State(state): State<Arc<AppState>>,
     Json(body): Json<EnabledModelsBody>,
 ) -> Response {
-    let settings_value = settings::read_settings(&state.config);
-    let mut patterns = settings_value
-        .get("enabledModels")
-        .and_then(Value::as_array)
-        .map(|items| {
-            items
-                .iter()
-                .filter_map(Value::as_str)
-                .map(str::to_owned)
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
+    let mut patterns = enabled_patterns(&state);
+    let data = match state.models_all() {
+        Ok(data) => data,
+        Err(error) => return internal(error),
+    };
+    let refs = data
+        .model_list
+        .iter()
+        .map(|model| format!("{}/{}", model.provider, model.id))
+        .collect::<Vec<_>>();
     match body.op.as_deref() {
         Some("clear") => patterns.clear(),
         Some("models") | Some("provider") => {
             let enabled = body.enabled.unwrap_or(true);
-            let refs = if let Some(provider) = body.provider {
-                state
-                    .models()
-                    .map(|data| {
-                        data.model_list
-                            .iter()
-                            .filter(|model| model.provider == provider)
-                            .map(|model| format!("{}/{}", model.provider, model.id))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
+            let current = models::enabled_model_refs(&patterns, &refs);
+            let pins = models::thinking_pins_for(&patterns, &refs);
+            let targets = if let Some(provider) = body.provider {
+                refs.iter()
+                    .filter(|reference| reference.starts_with(&format!("{provider}/")))
+                    .cloned()
+                    .collect::<Vec<_>>()
             } else {
-                body.refs.unwrap_or_default()
+                body.refs.clone().unwrap_or_default()
             };
-            for reference in refs {
-                let pattern = reference.clone();
+            let mut next = current;
+            for reference in targets {
                 if enabled {
-                    if !patterns.contains(&pattern) {
-                        patterns.push(pattern);
-                    }
+                    next.insert(reference);
                 } else {
-                    patterns.retain(|existing| existing != &pattern);
-                    patterns.push(format!("!{pattern}"));
+                    next.remove(&reference);
                 }
             }
+            patterns = models::patterns_for(&next, &refs, &pins);
         }
-        Some("prune") => {}
+        Some("prune") => {
+            let resolutions = models::resolve_patterns(&patterns, &refs);
+            patterns = resolutions
+                .into_iter()
+                .filter(|(_, matched, _)| !matched.is_empty())
+                .map(|(pattern, _, _)| pattern)
+                .collect();
+        }
         Some("resync") => {
             // Repair the patterns after models.json changed: carry renames
             // through each entry and keep fully enabled providers fully on.
@@ -250,10 +270,6 @@ pub async fn set_enabled_models(
                     }
                 }
             }
-            let available = state
-                .models()
-                .map(|data| data.model_list)
-                .unwrap_or_default();
             for provider in &body.fully_enabled {
                 let provider = body
                     .renames
@@ -261,10 +277,12 @@ pub async fn set_enabled_models(
                     .find(|rename| &rename.from == provider)
                     .map(|rename| rename.to.clone())
                     .unwrap_or_else(|| provider.clone());
-                for model in available.iter().filter(|model| model.provider == provider) {
-                    let reference = format!("{}/{}", model.provider, model.id);
-                    if !patterns.contains(&reference) {
-                        patterns.push(reference);
+                for reference in refs
+                    .iter()
+                    .filter(|reference| reference.starts_with(&format!("{provider}/")))
+                {
+                    if !patterns.contains(reference) {
+                        patterns.push(reference.clone());
                     }
                 }
             }
@@ -641,19 +659,34 @@ pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
         .and_then(|entry| entry.get("type"))
         .and_then(Value::as_str)
         == Some("oauth");
+    let custom_names = models::custom_provider_names(&state.config);
+    let provider_names = counts
+        .keys()
+        .map(|id| {
+            let name = custom_names
+                .get(id)
+                .cloned()
+                .unwrap_or_else(|| models::provider_display_name(id));
+            (id.clone(), name)
+        })
+        .collect::<BTreeMap<_, _>>();
     let mut providers = counts
         .into_iter()
         .map(|(id, count)| {
+            let name = provider_names
+                .get(&id)
+                .cloned()
+                .unwrap_or_else(|| models::provider_display_name(&id));
             json!({
                 "id": id,
-                "name": id,
+                "name": name,
                 "hasApiKeyLogin": true,
                 "hasOAuth": id == "anthropic",
                 "status": {"configured": auth.get(&id).is_some()},
                 "modelCount": count,
                 "supportsOAuth": id == "anthropic",
                 "configured": auth.get(&id).is_some(),
-                "displayName": id,
+                "displayName": name,
             })
         })
         .collect::<Vec<_>>();
@@ -693,6 +726,7 @@ pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
         "providers": providers,
         "oauthProviders": oauth_providers,
         "apiKeyProviders": providers,
+        "providerNames": provider_names,
     }))
 }
 

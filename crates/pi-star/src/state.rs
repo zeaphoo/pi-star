@@ -70,7 +70,7 @@ pub struct AppState {
     pub ui_state: Arc<UiStateStore>,
     pub session_index: Arc<SessionIndex>,
     pub push: Arc<PushStore>,
-    pub models_cache: Mutex<Option<(Instant, ModelsData)>>,
+    pub models_cache: Mutex<Option<(Instant, ModelsData, ModelsData)>>,
     pub catalog_cache: Mutex<Option<(Instant, Vec<CatalogEntry>)>>,
     pub update_cache: Mutex<Option<(Instant, serde_json::Value)>>,
     pub started: Instant,
@@ -259,17 +259,31 @@ impl AppState {
     }
 
     pub fn models(&self) -> anyhow::Result<ModelsData> {
+        self.models_for(false)
+    }
+
+    /// Every available model, ignoring `enabledModels` (the selector's "all" scope).
+    pub fn models_all(&self) -> anyhow::Result<ModelsData> {
+        self.models_for(true)
+    }
+
+    fn models_for(&self, scope_all: bool) -> anyhow::Result<ModelsData> {
         {
             let cache = self.models_cache.lock();
-            if let Some((at, data)) = cache.as_ref() {
+            if let Some((at, scoped, all)) = cache.as_ref() {
                 if at.elapsed() < Duration::from_secs(5) {
-                    return Ok(data.clone());
+                    return Ok(if scope_all {
+                        all.clone()
+                    } else {
+                        scoped.clone()
+                    });
                 }
             }
         }
-        let data = load_models(&self.config)?;
-        *self.models_cache.lock() = Some((Instant::now(), data.clone()));
-        Ok(data)
+        let scoped = load_models(&self.config, false)?;
+        let all = load_models(&self.config, true)?;
+        *self.models_cache.lock() = Some((Instant::now(), scoped.clone(), all.clone()));
+        Ok(if scope_all { all } else { scoped })
     }
 
     pub fn invalidate_models(&self) {

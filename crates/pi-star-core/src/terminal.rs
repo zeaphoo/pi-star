@@ -73,13 +73,7 @@ impl TerminalManager {
                 pixel_height: 0,
             })
             .map_err(|error| anyhow!("open pty: {error}"))?;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| {
-            if cfg!(windows) {
-                "powershell.exe".to_string()
-            } else {
-                "/bin/sh".to_string()
-            }
-        });
+        let shell = terminal_shell();
         let mut command = CommandBuilder::new(&shell);
         if !cfg!(windows) {
             command.arg("-l");
@@ -265,4 +259,35 @@ impl TerminalManager {
             .filter(|record| *record.exited.lock())
             .count()
     }
+}
+
+/// A new terminal's shell. Windows: PowerShell as pi's `powershell` tool resolves
+/// it (PowerShell 7, then Windows PowerShell, keeping a Store install's alias),
+/// else ComSpec / cmd. Elsewhere: the login shell, or `/bin/sh`.
+fn terminal_shell() -> String {
+    if !cfg!(windows) {
+        return std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    }
+    for name in ["pwsh.exe", "powershell.exe"] {
+        if let Some(found) = find_in_path(name) {
+            return found.to_string_lossy().into_owned();
+        }
+    }
+    let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+    let legacy = std::path::Path::new(&system_root)
+        .join("System32")
+        .join("WindowsPowerShell")
+        .join("v1.0")
+        .join("powershell.exe");
+    if legacy.is_file() {
+        return legacy.to_string_lossy().into_owned();
+    }
+    std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".to_string())
+}
+
+fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|directory| directory.join(name))
+        .find(|candidate| candidate.is_file())
 }

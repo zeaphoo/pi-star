@@ -402,7 +402,7 @@ pub async fn manifest() -> Response {
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
         .unwrap_or_else(|| "Pi Star".to_string());
-    no_store(json!({
+    let body = json!({
         "id": "/",
         "name": name,
         "short_name": name,
@@ -419,5 +419,16 @@ pub async fn manifest() -> Response {
             {"src": "/icons/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
             {"src": "/icons/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"}
         ]
-    }))
+    });
+    (
+        [
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/manifest+json",
+            ),
+            (axum::http::header::CACHE_CONTROL, "no-store"),
+        ],
+        body.to_string(),
+    )
+        .into_response()
 }
