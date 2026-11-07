@@ -157,10 +157,10 @@ JS API。
 
 - `6fbb36b` #1491：`get_subagent_result` 找不到 id 时，从本会话最近的 tool result
   `details` 里列出最多 10 个 `sessionId: description`。pi-star 的
-  `agent-extension/subagent.ts` 与上游结构一致，可直接搬（纯 JS）。
+  `agent-extension/subagent.js` 与上游结构一致，可直接搬。
 - `98ad390` #1473（**暂缓**）：上游在「子会话自己的一轮对话结束」时读文件、按最后一条
   assistant 的 stop reason 写 `completed/aborted/failed`，用于修复重启切断后 run 永远停在
-  `running/queued`。pi-star 目前 RPC 子代理由 `agent-extension/subagent.ts` 直接 spawn，
+  `running/queued`。pi-star 目前 RPC 子代理由 `agent-extension/subagent.js` 直接 spawn，
   既不写 `pi-web:subagent` 元数据也不写 `pi-web:subagent-status`（QuickPI 只在元数据里写
   `running`），而且 pi-star 的子代理面板仍是只读的 `SubagentViewer`，用户无法「在子会话里
   发一轮」——该场景不存在。等子代理运行期生命周期补齐或有可交互面板时再做。

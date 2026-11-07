@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **Agent 扩展改为 JavaScript**：`agent-extension/index.ts`、`subagent.ts` 由 `tsc` 生成等价的
+  `index.js`、`subagent.js`（ES2022，无类型注解、注释保留），并加 `package.json` 声明 ESM；
+  Rust 的扩展探测、打包校验脚本与文档同步改为 `index.js`，仍兼容 `.ts` 回退。
+
 ## [0.1.0-rc.1] - 2026-10-31
 
 首个公开预发布版本。

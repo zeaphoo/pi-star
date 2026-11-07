@@ -693,22 +693,18 @@ fn agent_extension_path() -> Option<PathBuf> {
         return Some(path);
     }
     let mut candidates = Vec::new();
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(dir) = exe.parent() {
-            candidates.push(dir.join("agent-extension").join("index.ts"));
+    let roots = [
+        std::env::current_exe()
+            .ok()
+            .and_then(|exe| exe.parent().map(Path::to_path_buf)),
+        std::env::current_dir().ok(),
+        option_env!("CARGO_MANIFEST_DIR")
+            .map(|manifest| PathBuf::from(manifest).join("..").join("..")),
+    ];
+    for root in roots.into_iter().flatten() {
+        for name in ["index.js", "index.ts"] {
+            candidates.push(root.join("agent-extension").join(name));
         }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join("agent-extension").join("index.ts"));
-    }
-    if let Some(manifest) = option_env!("CARGO_MANIFEST_DIR") {
-        candidates.push(
-            PathBuf::from(manifest)
-                .join("..")
-                .join("..")
-                .join("agent-extension")
-                .join("index.ts"),
-        );
     }
     candidates.into_iter().find(|path| path.exists())
 }

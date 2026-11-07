@@ -6,7 +6,7 @@
  *   app/pi-runtime/
  *     node(.exe)             official Node.js runtime
  *     pi/                    @earendil-works/pi-coding-agent + prod deps
- *     agent-extension/       pi-star's host extension (index.ts, subagent.ts)
+ *     agent-extension/       pi-star's host extension (index.js, subagent.js)
  *     pi-runtime.json        pinned versions / target
  *     NODE-LICENSE, PI-NOTICE
  *
@@ -58,7 +58,8 @@ const required = [
   join(outDir, platform === "win32" ? "node.exe" : "node"),
   join(outDir, "pi/package.json"),
   join(outDir, "pi/dist/bundle/cli.js"),
-  join(outDir, "agent-extension/index.ts"),
+  join(outDir, "agent-extension/index.js"),
+  join(outDir, "agent-extension/subagent.js"),
 ];
 if (platform === "win32") {
   required.push(join(outDir, "git/usr/bin/bash.exe"));

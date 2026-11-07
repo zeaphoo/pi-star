@@ -69,7 +69,7 @@ release 构建会把 `ui/dist` 用 `rust-embed` 编进 `pi-star` 二进制；deb
 - 聊天输入区的 Agent 下拉与 `/api/agent/:id` 的 `backend` 字段使用同一份状态。
 
 `PI_STAR_PI_CLI` 指定 pi 可执行文件，`PI_STAR_AGENT_EXTENSION` 指定
-`agent-extension/index.ts`，`PI_STAR_PI_RPC_MAX_SESSIONS` 限制同时存活的 pi RPC 会话数
+`agent-extension/index.js`，`PI_STAR_PI_RPC_MAX_SESSIONS` 限制同时存活的 pi RPC 会话数
 （默认 8，超出时先回收空闲会话）。PiRpcBackend 覆盖 prompt、steer、follow-up、abort、队列、
 模型/thinking、压缩、重试、会话统计、fork/clone、命令、扩展 UI 和事件流；`get_tools`、
 `set_tools`、`navigate_tree`、`fork_branch`、`reload` 由 `agent-extension/` 通过 pi 扩展 API

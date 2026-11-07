@@ -8,7 +8,7 @@ Pi Star 只发布**桌面应用**，不再提供单独的 Linux 服务包。每�
 | pi-star 服务 | 资源目录下的 `pi-star`（Windows 与壳同目录） |
 | Node 运行时 | `pi-runtime/node`（Windows `node.exe`） |
 | pi CLI | `pi-runtime/pi/`（`@earendil-works/pi-coding-agent` + 生产依赖） |
-| pi-star 扩展 | `pi-runtime/agent-extension/`（`index.ts`、`subagent.ts`） |
+| pi-star 扩展 | `pi-runtime/agent-extension/`（`index.js`、`subagent.js`、`package.json`） |
 | MinGit（仅 Windows） | `pi-runtime/git/`（Git Bash、git、coreutils） |
 
 Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Windows 为安装目录。

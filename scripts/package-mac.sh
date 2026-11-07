@@ -45,7 +45,7 @@ fi
 if [[ "${SKIP_PI_RUNTIME:-0}" != "1" ]]; then
     node "$ROOT/scripts/prepare-pi-runtime.mjs" --out "$RUNTIME_DIR" --platform darwin --arch "$NODE_ARCH"
 fi
-for path in "$RUNTIME_DIR/node" "$RUNTIME_DIR/pi/package.json" "$RUNTIME_DIR/agent-extension/index.ts"; do
+for path in "$RUNTIME_DIR/node" "$RUNTIME_DIR/pi/package.json" "$RUNTIME_DIR/agent-extension/index.js"; do
     [[ -e "$path" ]] || { echo "pi 运行时缺少 $path" >&2; exit 1; }
 done
 
@@ -87,7 +87,7 @@ for path in \
     "Contents/Resources/pi-star" \
     "Contents/Resources/pi-runtime/node" \
     "Contents/Resources/pi-runtime/pi/package.json" \
-    "Contents/Resources/pi-runtime/agent-extension/index.ts"; do
+    "Contents/Resources/pi-runtime/agent-extension/index.js"; do
     [[ -e "$APP_SRC/$path" ]] || { echo "app 缺少 $path" >&2; exit 1; }
 done
 

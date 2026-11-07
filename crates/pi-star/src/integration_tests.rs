@@ -2702,7 +2702,7 @@ async fn pi_rpc_backend_full_e2e_with_fake_model() {
         .join("..")
         .join("..")
         .join("agent-extension")
-        .join("index.ts");
+        .join("index.js");
     let wrapper = temp.path().join("e2e-extension.ts");
     std::fs::write(
         &wrapper,

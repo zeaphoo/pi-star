@@ -36,7 +36,7 @@ fi
 if [[ "${SKIP_PI_RUNTIME:-0}" != "1" ]]; then
     node "$ROOT/scripts/prepare-pi-runtime.mjs" --out "$RUNTIME_DIR" --platform linux --arch "$(uname -m | sed 's/x86_64/x64/;s/aarch64/arm64/')"
 fi
-for path in "$RUNTIME_DIR/node" "$RUNTIME_DIR/pi/package.json" "$RUNTIME_DIR/agent-extension/index.ts"; do
+for path in "$RUNTIME_DIR/node" "$RUNTIME_DIR/pi/package.json" "$RUNTIME_DIR/agent-extension/index.js"; do
     [[ -e "$path" ]] || { echo "pi 运行时缺少 $path；先执行 scripts/prepare-pi-runtime.mjs" >&2; exit 1; }
 done
 
@@ -109,7 +109,7 @@ for file in "${debs[@]}"; do
     pkg="$(dpkg-deb -f "$out" Package)"
     [[ "$pkg" == "pi-star-app" ]] || { echo "deb 包名错误：$pkg" >&2; exit 1; }
     listing="$(dpkg-deb -c "$out")"
-    for path in usr/lib/PiStar/pi-star usr/lib/PiStar/pi-runtime/node usr/lib/PiStar/pi-runtime/pi/package.json usr/lib/PiStar/pi-runtime/agent-extension/index.ts; do
+    for path in usr/lib/PiStar/pi-star usr/lib/PiStar/pi-runtime/node usr/lib/PiStar/pi-runtime/pi/package.json usr/lib/PiStar/pi-runtime/agent-extension/index.js; do
         grep -q "$path$" <<<"$listing" || { echo "deb 缺少 $path" >&2; exit 1; }
     done
     rm -f "$file"

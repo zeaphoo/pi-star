@@ -1,0 +1,5 @@
+{
+  "name": "pi-star-agent-extension",
+  "private": true,
+  "type": "module"
+}

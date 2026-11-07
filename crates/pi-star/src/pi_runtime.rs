@@ -77,7 +77,10 @@ fn from_dir(dir: &Path) -> Option<PiRuntime> {
         .iter()
         .map(|relative| package_dir.join(relative))
         .find(|path| path.is_file())?;
-    let extension = dir.join("agent-extension").join("index.ts");
+    let extension = ["agent-extension/index.js", "agent-extension/index.ts"]
+        .iter()
+        .map(|relative| dir.join(relative))
+        .find(|path| path.is_file());
     let git_dir = dir.join("git");
     let git_bash = ["bin/bash.exe", "usr/bin/bash.exe"]
         .iter()
@@ -88,7 +91,7 @@ fn from_dir(dir: &Path) -> Option<PiRuntime> {
         node,
         cli_js,
         package_dir,
-        extension: extension.is_file().then_some(extension),
+        extension,
         git: git_bash.as_ref().map(|_| git_dir),
         git_bash,
     })
@@ -218,7 +221,7 @@ mod tests {
         std::fs::write(root.join(node_name()), b"").unwrap();
         std::fs::write(root.join("pi/package.json"), "{}").unwrap();
         std::fs::write(root.join("pi/dist/bundle/cli.js"), "").unwrap();
-        std::fs::write(root.join("agent-extension/index.ts"), "").unwrap();
+        std::fs::write(root.join("agent-extension/index.js"), "").unwrap();
         std::fs::create_dir_all(root.join("git/bin")).unwrap();
         std::fs::write(root.join("git/bin/bash.exe"), b"").unwrap();
 
