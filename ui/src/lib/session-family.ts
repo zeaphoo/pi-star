@@ -1,5 +1,12 @@
 import type { SessionInfo } from "./types";
 
+/** Relation kinds that hide a session as a family member instead of a sidebar row. */
+export type HiddenRelation = Extract<SessionInfo["relation"], { kind: "subagent" | "side" }>;
+
+export function isHiddenRelation(relation: SessionInfo["relation"]): relation is HiddenRelation {
+  return relation?.kind === "subagent" || relation?.kind === "side";
+}
+
 export interface SessionFamily {
   root: SessionInfo;
   subagents: SessionInfo[];
@@ -29,7 +36,7 @@ function resolveFamilyRoots(sessions: readonly SessionInfo[]): Map<string, strin
       path.push(currentId);
       const current = byId.get(currentId);
       if (!current) break;
-      if (current.relation?.kind !== "subagent") {
+      if (!isHiddenRelation(current.relation)) {
         rootId = current.id;
         break;
       }
@@ -48,7 +55,7 @@ export function listSessionFamilies(sessions: readonly SessionInfo[]): SessionFa
   const families = new Map<string, SessionFamily>();
 
   for (const session of sessions) {
-    if (session.relation?.kind === "subagent") continue;
+    if (isHiddenRelation(session.relation)) continue;
     families.set(session.id, {
       root: session,
       subagents: [],
@@ -56,6 +63,8 @@ export function listSessionFamilies(sessions: readonly SessionInfo[]): SessionFa
     });
   }
 
+  // Side chats fold into the parent's root but are not listed as family members:
+  // pi-star does not have side-chat UI, so they stay invisible.
   for (const session of sessions) {
     if (session.relation?.kind !== "subagent") continue;
     const rootId = rootsBySessionId.get(session.id);
@@ -73,10 +82,9 @@ export function getSessionFamily(
   sessionId: string | null | undefined,
 ): SessionFamily | null {
   if (!sessionId) return null;
-  return listSessionFamilies(sessions).find((family) => (
-    family.root.id === sessionId
-    || family.subagents.some((session) => session.id === sessionId)
-  )) ?? null;
+  const rootId = resolveFamilyRoots(sessions).get(sessionId);
+  if (!rootId) return null;
+  return listSessionFamilies(sessions).find((family) => family.root.id === rootId) ?? null;
 }
 
 /** Subagents of a family that the sidebar's running poll lists. */

@@ -8,6 +8,15 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **pi-web 侧聊不再出现在侧栏**：识别 `pi-web:side` 元数据，把侧聊折叠进父会话的 family，
+  pi-web 创建的 `Side chat` 不再被当成顶层 fork 显示；侧聊用量只算自身条目、内容搜索跳过，
+  删除父会话时一并删除。会话索引版本升到 2，旧缓存里的 fork 关系会重新解析。
+
+- **对话右侧 minimap 触底**：小地图不再只覆盖消息区，而是作为整列浮层延伸到页面底部
+  （输入框右侧原本就预留了 36px），锁图标和轨道都到页面底端；扩展状态栏同步留出右侧空间。
+
 ### Changed
 
 - **Agent 扩展改为 JavaScript**：`agent-extension/index.ts`、`subagent.ts` 由 `tsc` 生成等价的

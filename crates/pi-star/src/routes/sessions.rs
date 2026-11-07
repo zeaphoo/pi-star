@@ -122,7 +122,11 @@ pub async fn get_session(
             .is_some_and(|value| value != "0"),
     );
     let tree = build_tree(&entries);
-    let stats = compute_stats(&entries);
+    let stats_entries = match &info.relation {
+        Some(session::SessionRelation::Side { .. }) => session::side_own_entries(&entries),
+        _ => entries.clone(),
+    };
+    let stats = compute_stats(&stats_entries);
     let tool_names = entries
         .iter()
         .find(|entry| {
@@ -141,7 +145,7 @@ pub async fn get_session(
         "snapshotRevision": revision,
         "context": context,
         "stats": stats,
-        "totalActiveMs": total_active_ms(&entries),
+        "totalActiveMs": total_active_ms(&stats_entries),
     });
     if let Some(rebuilt) = wrapper_rebuilt {
         response["wrapperRebuilt"] = Value::Bool(rebuilt);
@@ -259,7 +263,14 @@ pub async fn stats(State(state): State<Arc<AppState>>, Json(body): Json<StatsBod
     for id in body.ids {
         if let Some(path) = session::resolve_session_path(&state.config, &id) {
             if let Ok(session) = read_session(&path) {
-                let value = compute_stats(&session.entries);
+                let info = session.info();
+                let own = matches!(info.relation, Some(session::SessionRelation::Side { .. }));
+                let entries = if own {
+                    session::side_own_entries(&session.entries)
+                } else {
+                    session.entries.clone()
+                };
+                let value = compute_stats(&entries);
                 let (thinking_level, model) = session::session_settings(&session.entries, None);
                 stats.insert(
                     id,
@@ -267,7 +278,7 @@ pub async fn stats(State(state): State<Arc<AppState>>, Json(body): Json<StatsBod
                         "tokens": value.tokens,
                         "cost": value.cost,
                         "toolCalls": value.tool_calls,
-                        "totalActiveMs": total_active_ms(&session.entries),
+                        "totalActiveMs": total_active_ms(&entries),
                         "model": model,
                         "thinkingLevel": thinking_level,
                     }),
@@ -298,6 +309,10 @@ pub async fn search(
     let mut results = Vec::new();
     let mut truncated = false;
     for info in state.session_index.scan(&state.config, false) {
+        // A side chat copies its parent's whole text and never opens as the main chat.
+        if matches!(info.relation, Some(session::SessionRelation::Side { .. })) {
+            continue;
+        }
         if results.len() >= 30 {
             truncated = true;
             break;

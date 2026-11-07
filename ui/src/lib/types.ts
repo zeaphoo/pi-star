@@ -367,7 +367,8 @@ export interface SessionInfo {
   detailsPending?: boolean;
   parentSessionId?: string; // source session for a fork, or parent session for a subagent
   /** How this session relates to another session. Forks remain top-level in the
-   *  UI; only subagent relations form a visible parent/child tree. */
+   *  UI; subagent and side relations form a visible parent/child tree (side
+   *  chats stay hidden, like subagents). */
   relation?:
     | { kind: "fork"; originSessionId?: string }
     | {
@@ -376,7 +377,9 @@ export interface SessionInfo {
         profile: string;
         description: string;
         status: SubagentSessionStatus;
-      };
+      }
+    /** A pi-web `/side` chat: hidden in its parent's family, not a sidebar row. */
+    | { kind: "side"; parentSessionId: string };
   /** Main repo root shared by all worktrees of this cwd (cwd itself for non-git dirs).
    *  Always set by the server; optional because the client builds transient
    *  SessionInfo objects before the first refresh. Fall back to cwd. */

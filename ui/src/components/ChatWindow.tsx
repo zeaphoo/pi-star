@@ -13,6 +13,7 @@ import { extractTurnWrittenFiles, type WrittenFile } from "@/lib/turn-written-fi
 import { getFinalAnswerViews, keepWrittenFiles, type FinalAnswerViews } from "@/lib/turn-views";
 import { formatTurnDuration, getTurnDurationMs } from "@/lib/turn-duration";
 import { buildQuotedSelection } from "@/lib/quoted-selection";
+import { isHiddenRelation } from "@/lib/session-family";
 import { dropMentionText, splitDroppedItems, uploadFiles, type DroppedItem } from "@/lib/file-upload-client";
 import { MessageView } from "./MessageView";
 import { MarkdownBody } from "./MarkdownBody";
@@ -253,7 +254,7 @@ function ProcessDetailsGroup({ messageCount, toolCallCount, durationMs, cacheMis
 export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initialScrollPosition, onScrollPositionChange, sessionRunning, newSessionCwd, newSessionDraftKey, newSessionContextBar, initialNewSessionChoices, onNewSessionChoicesChange, onAgentEnd, onToolEnd, onAttentionNeeded, onSessionCreated, onSessionForked, modelsRefreshKey, chatInputRef, onBranchDataChange, onSystemPromptChange, onSystemToolsChange, onSystemInfoLoaderChange, onDebugSnapshotReaderChange, onSessionStatsChange, onSessionStatsPanelOpen, onOpenSettings, onContextUsageChange, onOpenFile, onFilesUploaded, onOpenSubagent, onAskInNewChat, quoteSelectionEnabled = false, initialPrompt, onInitialPromptConsumed, soundEnabled = true, onSoundToggle, playDoneSound = () => {}, unlockAudio, holdAudio }: Props) {
   const { t } = useI18n();
   const isMobile = useIsMobile();
-  const completionNotificationsEnabled = session?.relation?.kind !== "subagent";
+  const completionNotificationsEnabled = !isHiddenRelation(session?.relation);
 
   // Wrap onAgentEnd to play the completion sound. This is more reliable than
   // wrapping handleAgentEventRef because useAgentSession overwrites that ref
@@ -1366,15 +1367,10 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
             </div>
           </div>
         </div>
+        {/* The minimap is placed over the whole chat column, below, so its rail
+            reaches the page bottom; this spacer keeps the message column's width. */}
         {isMobile || pendingScrollRestore ? null : (
-          <ChatMinimap
-            messages={messages}
-            getStreamingMessage={getStreamingMessage}
-            scrollContainer={scrollContainerRef}
-            messageRefs={messageRefs}
-            onRevealHistory={revealHistoryForMinimap}
-            turnsBefore={earlierTurnCount}
-          />
+          <div aria-hidden="true" style={{ width: CHAT_MINIMAP_WIDTH, flexShrink: 0 }} />
         )}
         </>}
       </div>
@@ -1516,8 +1512,24 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           widgets={extensionWidgets}
           onCommand={handleSend}
           commandsDisabled={sessionBusy}
+          rightInset={isMobile || pendingScrollRestore || isEmptyNew ? 0 : CHAT_MINIMAP_WIDTH}
         />
       </div>
+      {/* The chat's history rail, over the whole column so it reaches the page
+          bottom instead of ending where the composer starts. The composer
+          reserves the same 36px on its right. */}
+      {!isMobile && !pendingScrollRestore && !isEmptyNew && (
+        <div style={{ position: "absolute", top: 0, right: 0, bottom: 0, zIndex: 30, display: "flex" }}>
+          <ChatMinimap
+            messages={messages}
+            getStreamingMessage={getStreamingMessage}
+            scrollContainer={scrollContainerRef}
+            messageRefs={messageRefs}
+            onRevealHistory={revealHistoryForMinimap}
+            turnsBefore={earlierTurnCount}
+          />
+        </div>
+      )}
       {isEmptyNew && <div className="min-h-0 flex-1" />}
     </div>
   );

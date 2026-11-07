@@ -316,6 +316,9 @@ f6c8699 feat(models) provider 名称    8d2fb36 fix(chat) 粘贴
   的 `providerNames` 与显示名、enabled-models 的 `stalePatterns`/`thinkingPin`/`kind` 与
   `prune`、运行中切模型（客户端 + 现有 Rust 透传）、Windows 终端 PowerShell 优先、
   子代理候选列表、通知 `shownAt` 去重、manifest 的 `application/manifest+json`。
+- **侧聊只识别/隐藏**：识别 `pi-web:side` 关系，把 pi-web 创建的 `Side chat` 折叠进父会话
+  family（侧栏不显示，Agents 面板/徽标只统计子代理），统计只算侧聊自身条目、搜索跳过、
+  随父会话删除；`/side`、`SessionChatPanel`、侧聊标签等创建/交互 UI 未移植。
 - **暂缓**：`98ad390` 子代理 run 收敛（pi-star 没有可交互的子会话，见 B.4）、`c319c85`
   工具顺序（客户端路径，收益是 prompt cache，见 B.5）。
 - **未动**：pi 1.5.0 升级（`packaging/pi-runtime.json` 仍是 1.4.0）。本次移植不依赖它：

@@ -64,12 +64,15 @@ export function ExtensionStatusBar({
   widgets = [],
   onCommand,
   commandsDisabled = false,
+  rightInset = 0,
 }: {
   statuses: ExtensionStatusItem[];
   widgets?: ExtensionWidgetItem[];
   /** Sends the command of a `command:` status; without it those buttons stay disabled. */
   onCommand?: (command: string) => void;
   commandsDisabled?: boolean;
+  /** Keeps statuses clear of the chat minimap's rail on its right. */
+  rightInset?: number;
 }) {
   const cells = buildExtensionStatusCells(statuses);
   if (cells.length === 0 && widgets.length === 0) return null;
@@ -111,6 +114,7 @@ export function ExtensionStatusBar({
   return (
     <div
       className={`extension-status-shelf${widgets.length > 0 ? " has-widgets" : ""}${cells.length > 0 ? " has-status" : ""}${hasCommands ? " has-commands" : ""}`}
+      style={rightInset > 0 ? { paddingRight: rightInset } : undefined}
     >
       {widgets.length > 0 ? <ExtensionWidgets widgets={widgets}>{statusLine}</ExtensionWidgets> : statusLine}
     </div>

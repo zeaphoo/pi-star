@@ -62,6 +62,22 @@ test("a fork is a family of its own, and its subagents fold into it, not into it
   assert.equal(getSessionFamily([fork, origin, forkAgent], "fork-agent")?.root.id, "fork");
 });
 
+test("a side chat folds into its parent's family and never becomes a sidebar row", () => {
+  const parent = session("parent", "2026-01-02T00:00:00.000Z");
+  const side = session("side", "2026-01-03T00:00:00.000Z", { kind: "side", parentSessionId: "parent" });
+  const child = session("child", "2026-01-04T00:00:00.000Z", {
+    kind: "subagent", parentSessionId: "parent", profile: "explore", description: "Explore", status: "completed",
+  });
+
+  const families = listSessionFamilies([parent, side, child]);
+  assert.deepEqual(families.map((family) => family.root.id), ["parent"]);
+  // A side chat is not an agent row either; only the subagent is listed.
+  assert.deepEqual(families[0].subagents.map((item) => item.id), ["child"]);
+  // Navigating to a side chat still resolves its parent's family (archive/pin follow it).
+  assert.equal(getSessionFamily([parent, side, child], "side")?.root.id, "parent");
+  assert.equal(getSessionFamily([side], "side"), null);
+});
+
 test("the Agents badge counts running subagents while any runs, else all of them", () => {
   const subagents = ["a", "b", "c"].map((id) => session(id, "2026-01-01T00:00:00.000Z", {
     kind: "subagent", parentSessionId: "main", profile: "explore", description: id, status: "completed",

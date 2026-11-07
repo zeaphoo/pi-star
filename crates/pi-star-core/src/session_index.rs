@@ -158,7 +158,8 @@ impl SessionIndex {
         }
         *last = SystemTime::now();
         let file = IndexFile {
-            version: 1,
+            // Bump when `SessionInfo` gains fields/relations the cache must not keep stale.
+            version: 2,
             entries: self.entries.lock().clone(),
         };
         if let Ok(bytes) = serde_json::to_vec(&file) {
@@ -187,7 +188,7 @@ fn load_index(path: &Path) -> HashMap<String, CachedInfo> {
     let Ok(file) = serde_json::from_str::<IndexFile>(&text) else {
         return HashMap::new();
     };
-    if file.version != 1 {
+    if file.version != 2 {
         return HashMap::new();
     }
     file.entries

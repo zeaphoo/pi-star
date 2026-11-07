@@ -16,6 +16,7 @@ import type {
 import { listTrackedEventSources, readHttpProtocol, readPageVisibility, readRunningPoll } from "@/lib/page-debug";
 import { projectNameOf } from "@/lib/session-tree";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
+import { isHiddenRelation } from "@/lib/session-family";
 import { workspaceKeyOf } from "@/lib/workspace-memory";
 import { MCP_SESSION_STATE_KEYS } from "./mcp-config-helpers";
 
@@ -969,7 +970,7 @@ export function groupDebugSessions(
     const seen = new Set([info.id]);
     for (let step = 0; step < MAX_FAMILY_DEPTH; step++) {
       const relation = node.relation;
-      if (relation?.kind !== "subagent") break;
+      if (!isHiddenRelation(relation)) break;
       const parent = byId.get(relation.parentSessionId);
       if (!parent) break;
       if (seen.has(parent.id)) return info;
