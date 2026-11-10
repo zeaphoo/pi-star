@@ -67,7 +67,7 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 
 - 主窗口使用原生装饰，没有任何 Tauri IPC 权限；仅内置 splash 可调用 `desktop_action`。
 - release `pi-star` 内嵌 UI，安装包不再需要 `ui/dist`；debug 仍读磁盘。
-- 桌面偏好：`~/.local/share/xyz.pi-star.desktop/desktop.toml`；日志：`pi-star.log`、`desktop.log`。
+- 桌面偏好：`~/.local/share/net.quadhub.pi-star/desktop.toml`；日志：`pi-star.log`、`desktop.log`。
 - frameless 标题栏/`windowControl`、原生通知、自动更新、签名与公证仍是后续边界。
 
 ## 端口
