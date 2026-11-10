@@ -166,8 +166,6 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/provider-usage/query",
             post(routes::settings::provider_usage),
         )
-        .route("/push/config", get(routes::misc::push_config))
-        .route("/push/subscribe", post(routes::misc::push_subscribe))
         .route("/app-update", get(routes::misc::app_update))
         .route(
             "/web-auth",

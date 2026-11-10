@@ -34,7 +34,6 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | 项目信任 | ✅ | 继承、决策、项目 MCP 清单 |
 | 静态服务/SPA | ✅ | 缓存头、SPA fallback、API JSON 404 |
 | 认证/安全 | ✅ | Host/Origin、body limit、cookie/Basic Auth、失败指数退避 |
-| Web Push | ✅ | VAPID 自动生成、订阅持久化、aes128gcm 加密发送、404/410 清理 |
 | Debug / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
 | app-update | ✅ | 可配置发布源（`PI_STAR_UPDATE_URL`），12h 缓存，支持 `PI_STAR_SKIP_VERSION_CHECK=1` |
 | 内嵌前端资源 | ✅ | release 用 `rust-embed` 编入 `ui/dist`；debug 读磁盘；`--ui-dir` 显式覆盖；健康响应暴露 `assets` |

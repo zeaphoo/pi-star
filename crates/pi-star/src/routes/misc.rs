@@ -84,29 +84,6 @@ pub async fn web_auth_logout() -> Response {
         .into_response()
 }
 
-pub async fn push_config(State(state): State<Arc<AppState>>) -> Response {
-    match state.push.public_key() {
-        Ok(public_key) => no_store(json!({"publicKey": public_key, "enabled": true})),
-        Err(error) => internal(error),
-    }
-}
-
-pub async fn push_subscribe(
-    State(state): State<Arc<AppState>>,
-    Json(body): Json<Value>,
-) -> Response {
-    let Some(subscription) = body
-        .get("subscription")
-        .and_then(pi_star_core::push::parse_subscription)
-    else {
-        return bad_request("Invalid push subscription");
-    };
-    match state.push.add_subscription(subscription) {
-        Ok(()) => no_store(json!({"ok": true})),
-        Err(error) => internal(error),
-    }
-}
-
 fn parse_version(value: &str) -> Option<Vec<u64>> {
     let value = value.trim().trim_start_matches('v');
     let core = value.split(['-', '+']).next().unwrap_or(value);

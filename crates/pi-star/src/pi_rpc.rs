@@ -843,6 +843,7 @@ impl PiRpcRegistry {
         }
     }
 
+    #[allow(dead_code)] // exercised by integration tests; no production push caller now
     pub fn set_completion_callback(&self, callback: Arc<dyn Fn(&str, Option<&str>) + Send + Sync>) {
         *self.completion.lock() = Some(callback.clone());
         let sessions: Vec<Arc<PiRpcSession>> = self.sessions.lock().values().cloned().collect();

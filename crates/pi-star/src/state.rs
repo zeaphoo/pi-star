@@ -13,7 +13,6 @@ use pi_star_core::agent::backend::{self, BackendKind};
 use pi_star_core::file_access::AllowedRoots;
 use pi_star_core::model_catalog::CatalogEntry;
 use pi_star_core::models::{ModelsData, load_models};
-use pi_star_core::push::PushStore;
 use pi_star_core::session_index::SessionIndex;
 use pi_star_core::terminal::TerminalManager;
 use pi_star_core::ui_state::UiStateStore;
@@ -69,7 +68,6 @@ pub struct AppState {
     pub terminals: Arc<TerminalManager>,
     pub ui_state: Arc<UiStateStore>,
     pub session_index: Arc<SessionIndex>,
-    pub push: Arc<PushStore>,
     pub models_cache: Mutex<Option<(Instant, ModelsData, ModelsData)>>,
     pub catalog_cache: Mutex<Option<(Instant, Vec<CatalogEntry>)>>,
     pub update_cache: Mutex<Option<(Instant, serde_json::Value)>>,
@@ -114,26 +112,11 @@ impl AppState {
                 roots.add(project_root);
             }
         }
-        let push = Arc::new(PushStore::load(config.agent_dir.join("web-push.json")));
         let agents = Arc::new(AgentRegistry::new(config.clone(), roots.clone()));
         let pi_rpc = Arc::new(PiRpcRegistry::new(config.clone()));
         agents.set_max_subagents(
             pi_star_core::settings::subagent_settings(&config).max_concurrent as usize,
         );
-        let completion: Arc<dyn Fn(&str, Option<&str>) + Send + Sync> = {
-            let push = push.clone();
-            Arc::new(move |session_id, session_name| {
-                let push = push.clone();
-                let session_id = session_id.to_string();
-                let session_name = session_name.map(str::to_owned);
-                tokio::spawn(async move {
-                    push.notify_session_complete(&session_id, session_name.as_deref())
-                        .await;
-                });
-            })
-        };
-        agents.set_completion_callback(completion.clone());
-        pi_rpc.set_completion_callback(completion);
         let ui_state = Arc::new(UiStateStore::new(config.ui_state_path()));
         let terminals = Arc::new(TerminalManager::new());
         let password = password
@@ -167,7 +150,6 @@ impl AppState {
             terminals,
             ui_state,
             session_index,
-            push,
             models_cache: Mutex::new(None),
             catalog_cache: Mutex::new(None),
             update_cache: Mutex::new(None),

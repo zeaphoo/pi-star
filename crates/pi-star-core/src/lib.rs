@@ -12,7 +12,6 @@ pub mod model_catalog;
 pub mod models;
 pub mod project;
 pub mod prompt;
-pub mod push;
 pub mod resources;
 pub mod session;
 pub mod session_index;

@@ -745,54 +745,6 @@ async fn password_login_throttles_failures() {
 }
 
 #[tokio::test]
-async fn push_config_and_subscription_round_trip() {
-    let fixture = write_fixture();
-    let app = router(&fixture).await;
-    let (status, body) = call(
-        app.clone(),
-        Request::builder()
-            .uri("/api/push/config")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-    let public_key = body["publicKey"].as_str().unwrap().to_string();
-    assert_eq!(public_key.len() > 80, true);
-
-    let (status, _) = call(
-        app.clone(),
-        Request::builder()
-            .method("POST")
-            .uri("/api/push/subscribe")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Body::from(json!({
-                "subscription": {
-                    "endpoint": "https://example.com/push",
-                    "keys": {
-                        "p256dh": "BNDyYhDuDZJ1unUIFxBAM4UggPNXfTQ10VPlJdJ8Vx9psbztEuRj8L_iTuQr3pXbVhct3UVHo_yX1kmvZdpuCzE",
-                        "auth": "46yScNguYqUuUyzJTB_CCw"
-                    },
-                    "locale": "en"
-                }
-            }).to_string()))
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(status, StatusCode::OK);
-
-    let (_, body) = call(
-        app,
-        Request::builder()
-            .uri("/api/push/config")
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    assert_eq!(body["publicKey"], public_key);
-}
-
-#[tokio::test]
 async fn real_pi_session_fixture_reads_and_forks() {
     let temp = tempfile::tempdir().unwrap();
     let agent_dir = temp.path().join("agent");
