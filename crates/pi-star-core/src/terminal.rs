@@ -75,8 +75,11 @@ impl TerminalManager {
             .map_err(|error| anyhow!("open pty: {error}"))?;
         let shell = terminal_shell();
         let mut command = CommandBuilder::new(&shell);
-        if !cfg!(windows) {
-            command.arg("-l");
+        #[cfg(unix)]
+        {
+            for arg in shell_arguments(&shell) {
+                command.arg(arg);
+            }
         }
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
@@ -261,6 +264,26 @@ impl TerminalManager {
     }
 }
 
+/// Arguments for the shell started in a new PTY.
+///
+/// Bash is the one common shell whose login mode skips `.bashrc`: `bash -l`
+/// reads `.bash_profile` / `.profile`, so aliases such as `ls --color=auto`
+/// never arrive. Load the login environment first, then `exec` an interactive
+/// non-login bash so `.bashrc` is read too. Zsh and fish read their interactive
+/// rc in login mode already, so they keep the plain `-l`.
+#[cfg(unix)]
+fn shell_arguments(shell: &str) -> Vec<&'static str> {
+    let name = Path::new(shell)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    if name.eq_ignore_ascii_case("bash") {
+        vec!["-l", "-c", "exec \"${BASH:-bash}\" -i"]
+    } else {
+        vec!["-l"]
+    }
+}
+
 /// A new terminal's shell. Windows: PowerShell as pi's `powershell` tool resolves
 /// it (PowerShell 7, then Windows PowerShell, keeping a Store install's alias),
 /// else ComSpec / cmd. Elsewhere: the login shell, or `/bin/sh`.
@@ -290,4 +313,24 @@ fn find_in_path(name: &str) -> Option<std::path::PathBuf> {
     std::env::split_paths(&path)
         .map(|directory| directory.join(name))
         .find(|candidate| candidate.is_file())
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::shell_arguments;
+
+    #[test]
+    fn bash_loads_login_environment_then_bashrc() {
+        assert_eq!(
+            shell_arguments("/bin/bash"),
+            vec!["-l", "-c", "exec \"${BASH:-bash}\" -i"]
+        );
+    }
+
+    #[test]
+    fn other_shells_keep_their_login_shell() {
+        assert_eq!(shell_arguments("/usr/bin/zsh"), vec!["-l"]);
+        assert_eq!(shell_arguments("/usr/bin/fish"), vec!["-l"]);
+        assert_eq!(shell_arguments("/bin/sh"), vec!["-l"]);
+    }
 }
