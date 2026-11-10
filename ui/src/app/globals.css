@@ -2724,6 +2724,86 @@ span.token.table {
   border-right: 1px solid var(--border);
 }
 
+/* Chat/Code/Git switch: flat tabs matching the rest of the toolbar rather
+   than a rounded segmented control. The active tab uses the same underline as
+   the Git Changes/History tabs. */
+.main-view-tabs {
+  display: inline-flex;
+  align-items: stretch;
+  height: 28px;
+  flex-shrink: 0;
+}
+.main-view-tab {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 100%;
+  padding: 0 12px;
+  box-sizing: border-box;
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+  transition: background 0.12s, color 0.12s, border-color 0.12s;
+}
+.main-view-tab[data-compact="true"] {
+  padding: 0 8px;
+  font-size: 11px;
+}
+.main-view-tab:hover:not([aria-selected="true"]) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.main-view-tab[aria-selected="true"] {
+  border-bottom-color: var(--accent);
+  background: var(--bg-selected);
+  color: var(--text);
+  font-weight: 600;
+}
+
+/* Repository picker in the Git toolbar: the same quiet input language as the
+   rest of the app, with a smaller radius than the old standalone control. */
+.git-repo-select {
+  height: 24px;
+  min-width: 0;
+  padding: 0 26px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background-color: var(--bg);
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 22px;
+  outline: none;
+  appearance: none;
+  -webkit-appearance: none;
+  background-image:
+    linear-gradient(45deg, transparent 40%, var(--text-dim) 40%, var(--text-dim) 60%, transparent 60%),
+    linear-gradient(-45deg, transparent 40%, var(--text-dim) 40%, var(--text-dim) 60%, transparent 60%);
+  background-size: 4px 4px;
+  background-position: right 13px center, right 9px center;
+  background-repeat: no-repeat;
+  cursor: pointer;
+}
+.git-repo-select:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--text-muted) 45%, var(--border));
+}
+.git-repo-select:focus-visible {
+  border-color: var(--accent);
+}
+.git-repo-select:disabled {
+  cursor: default;
+  color: var(--text-dim);
+  background-color: var(--bg-panel);
+}
+
 .right-panel-overlay-backdrop {
   display: none;
 }

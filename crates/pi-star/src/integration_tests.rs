@@ -2916,3 +2916,114 @@ async fn pi_rpc_refuses_a_session_owned_by_a_subagent() {
     };
     assert!(error.to_string().contains("owned by a running subagent"));
 }
+
+#[tokio::test]
+async fn git_tab_scans_status_history_and_commit_detail() {
+    let fixture = write_fixture();
+    let run_git = |args: &[&str]| {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(&fixture.cwd)
+            .args(args)
+            .env("LC_ALL", "C")
+            .output()
+            .unwrap();
+        assert!(
+            status.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&status.stderr)
+        );
+        String::from_utf8_lossy(&status.stdout).into_owned()
+    };
+    run_git(&["init", "-q"]);
+    run_git(&["add", "-A"]);
+    run_git(&[
+        "-c",
+        "user.name=Test",
+        "-c",
+        "user.email=test@example.com",
+        "commit",
+        "-qm",
+        "initial",
+    ]);
+    std::fs::write(fixture.cwd.join("hello.txt"), "changed\n").unwrap();
+
+    let app = router(&fixture).await;
+    let cwd = urlencoding(&fixture.cwd);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/git/repos?root={cwd}&depth=3"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let repos = body["repos"].as_array().unwrap();
+    assert_eq!(repos.len(), 1);
+    assert_eq!(repos[0]["isCurrent"], true);
+    assert_eq!(
+        repos[0]["path"].as_str(),
+        Some(fixture.cwd.to_string_lossy().as_ref())
+    );
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/git/status?cwd={cwd}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["branch"].is_string());
+    assert_eq!(body["files"][0]["status"], "modified");
+    assert_eq!(body["files"][0]["worktreeStatus"], "M");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/git/history?cwd={cwd}&limit=10"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let commits = body["commits"].as_array().unwrap();
+    assert_eq!(commits.len(), 1);
+    let sha = commits[0]["sha"].as_str().unwrap().to_string();
+    assert_eq!(commits[0]["subject"], "initial");
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/git/commit?cwd={cwd}&sha={sha}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["subject"], "initial");
+    assert!(
+        body["files"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|file| file["path"] == "hello.txt")
+    );
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/api/git/commit-diff?cwd={cwd}&sha={sha}&path=hello.txt"
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["patch"].as_str().unwrap().contains("diff --git"));
+}

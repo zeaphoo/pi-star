@@ -28,31 +28,28 @@ function CodeIcon() {
   );
 }
 
+function GitIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="6" r="2.5" />
+      <circle cx="6" cy="18" r="2.5" />
+      <circle cx="18" cy="6" r="2.5" />
+      <path d="M6 8.5v7M8.5 6h4a5.5 5.5 0 0 1 5.5 5.5v.5" />
+    </svg>
+  );
+}
+
 /** The chat/code switch that sits in the centre of the chat toolbar. */
 export function MainViewTabs({ value, onChange, compact = false }: Props) {
   const { t } = useI18n();
   const tabs: Array<{ id: MainView; label: string; icon: ReactNode }> = [
     { id: "chat", label: t("mainView.chat"), icon: <ChatIcon /> },
     { id: "code", label: t("mainView.code"), icon: <CodeIcon /> },
+    { id: "git", label: t("mainView.git"), icon: <GitIcon /> },
   ];
 
   return (
-    <div
-      role="tablist"
-      aria-label={t("mainView.label")}
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 2,
-        height: 26,
-        padding: 2,
-        boxSizing: "border-box",
-        border: "1px solid var(--border)",
-        borderRadius: 8,
-        background: "var(--bg)",
-        flexShrink: 0,
-      }}
-    >
+    <div role="tablist" aria-label={t("mainView.label")} className="main-view-tabs">
       {tabs.map((tab) => {
         const selected = tab.id === value;
         return (
@@ -63,31 +60,9 @@ export function MainViewTabs({ value, onChange, compact = false }: Props) {
             aria-selected={selected}
             title={compact ? tab.label : undefined}
             aria-label={compact ? tab.label : undefined}
+            data-compact={compact ? "true" : undefined}
+            className="main-view-tab"
             onClick={() => onChange(tab.id)}
-            style={{
-              display: "inline-flex",
-              alignItems: "center",
-              justifyContent: "center",
-              gap: 5,
-              height: 20,
-              padding: compact ? "0 7px" : "0 10px",
-              border: "none",
-              borderRadius: 6,
-              background: selected ? "var(--bg-selected)" : "transparent",
-              color: selected ? "var(--text)" : "var(--text-muted)",
-              cursor: "pointer",
-              fontSize: 11,
-              fontWeight: selected ? 600 : 500,
-              lineHeight: 1,
-              whiteSpace: "nowrap",
-              transition: "background 0.12s, color 0.12s",
-            }}
-            onMouseEnter={(event) => {
-              if (!selected) event.currentTarget.style.color = "var(--text)";
-            }}
-            onMouseLeave={(event) => {
-              event.currentTarget.style.color = selected ? "var(--text)" : "var(--text-muted)";
-            }}
           >
             {tab.icon}
             {!compact && <span>{tab.label}</span>}
@@ -95,5 +70,6 @@ export function MainViewTabs({ value, onChange, compact = false }: Props) {
         );
       })}
     </div>
+
   );
 }

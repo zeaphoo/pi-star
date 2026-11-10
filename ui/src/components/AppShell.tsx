@@ -11,6 +11,13 @@ import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { MainViewTabs } from "./MainViewTabs";
 import { CodeWorkspace } from "./CodeWorkspace";
+import { GitWorkspace } from "./GitWorkspace";
+import {
+  emptyGitWorkspace,
+  loadGitWorkspaces,
+  saveGitWorkspace,
+  type GitWorkspaceState,
+} from "@/lib/git-workspace";
 import {
   emptyCodeWorkspace,
   loadCodeWorkspaces,
@@ -119,9 +126,11 @@ export function AppShell() {
   const searchParams = useSearchParams();
   const [mainView, setMainView] = useState<MainView>(() => loadMainView());
   const [codeMounted, setCodeMounted] = useState(() => loadMainView() === "code");
+  const [gitMounted, setGitMounted] = useState(() => loadMainView() === "git");
   const handleMainViewChange = useCallback((next: MainView) => {
     setMainView(next);
     if (next === "code") setCodeMounted(true);
+    if (next === "git") setGitMounted(true);
     saveMainView(next);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
@@ -587,6 +596,7 @@ export function AppShell() {
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [codeWorkspaces, setCodeWorkspaces] = useState<Record<string, CodeWorkspaceState>>(() => loadCodeWorkspaces());
+  const [gitWorkspaces, setGitWorkspaces] = useState<Record<string, GitWorkspaceState>>(() => loadGitWorkspaces());
   const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
   // Bumped on every workspace switch. The active viewer reports its state as
   // it unmounts, tagged with the generation it rendered in, so the report of a
@@ -1300,6 +1310,18 @@ export function AppShell() {
     saveMainView("code");
   }, [codeRoot, codeWorkspace, updateCodeWorkspace]);
 
+  const gitProjectRoot = activeProjectKey ?? selectedSession?.projectRoot ?? codeRoot;
+  const gitWorkspace = useMemo(() => {
+    if (!gitProjectRoot) return emptyGitWorkspace("");
+    return gitWorkspaces[gitProjectRoot] ?? emptyGitWorkspace(gitProjectRoot);
+  }, [gitProjectRoot, gitWorkspaces]);
+
+  const updateGitWorkspace = useCallback((next: GitWorkspaceState) => {
+    if (!gitProjectRoot) return;
+    setGitWorkspaces((prev) => ({ ...prev, [gitProjectRoot]: next }));
+    saveGitWorkspace(gitProjectRoot, next);
+  }, [gitProjectRoot]);
+
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
     if (initialLinkedSessionId) skipWorkspaceRestoreRef.current = true;
@@ -1771,7 +1793,6 @@ export function AppShell() {
         background: activeTopPanel === "agents" ? "var(--bg-selected)" : "none",
         border: "none",
         borderTop: activeTopPanel === "agents" ? "2px solid var(--accent)" : "2px solid transparent",
-        borderRight: "1px solid var(--border)",
         color: activeTopPanel === "agents" ? "var(--text)" : activeSessionFamily ? "var(--text-muted)" : "var(--text-dim)",
         cursor: activeSessionFamily ? "pointer" : "not-allowed", opacity: activeSessionFamily ? 1 : 0.45,
         flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
@@ -1811,7 +1832,6 @@ export function AppShell() {
             background: "none",
             border: "none",
             borderTop: "2px solid transparent",
-            borderRight: "1px solid var(--border)",
             color: selectedSession ? "var(--text-muted)" : "var(--text-dim)",
             cursor: selectedSession ? "pointer" : "not-allowed",
             opacity: selectedSession ? 1 : 0.45,
@@ -1892,7 +1912,6 @@ export function AppShell() {
                 height: "100%", padding: mobile ? 0 : "0 12px",
                 background: "none", border: "none",
                 borderTop: "2px solid transparent",
-                borderRight: "1px solid var(--border)",
                 color: isError ? "#dc2626" : isSuccess ? "var(--accent)" : disabled ? "var(--text-dim)" : "var(--text-muted)",
                 cursor: disabled ? "not-allowed" : "pointer",
                 opacity: disabled && autoNameStatus.kind !== "naming" ? 0.45 : 1,
@@ -1985,7 +2004,6 @@ export function AppShell() {
             background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
             border: "none",
             borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
             cursor: mobile && !showChat ? "not-allowed" : "pointer",
             color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
             opacity: mobile && !showChat ? 0.45 : 1,
@@ -2941,6 +2959,17 @@ export function AppShell() {
                 onChange={updateCodeWorkspace}
                 onAtMention={handleAtMention}
                 onMentionLines={handleFileLineMention}
+              />
+            </div>
+          )}
+          {gitMounted && (
+            <div style={{ display: mainView === "git" ? "flex" : "none", width: "100%", height: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
+              <GitWorkspace
+                projectRoot={gitProjectRoot ?? null}
+                state={gitWorkspace}
+                active={mainView === "git"}
+                isMobile={isMobile}
+                onChange={updateGitWorkspace}
               />
             </div>
           )}

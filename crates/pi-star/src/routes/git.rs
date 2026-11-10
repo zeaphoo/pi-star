@@ -18,6 +18,7 @@ use crate::state::AppState;
 pub struct CwdQuery {
     cwd: Option<String>,
     path: Option<String>,
+    scope: Option<String>,
 }
 
 pub async fn status(State(state): State<Arc<AppState>>, Query(query): Query<CwdQuery>) -> Response {
@@ -58,7 +59,11 @@ pub async fn diff(State(state): State<Arc<AppState>>, Query(query): Query<CwdQue
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    no_store(git::diff(&cwd, &path))
+    no_store(git::diff_scoped(
+        &cwd,
+        &path,
+        query.scope.as_deref().unwrap_or("all"),
+    ))
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -223,3 +228,136 @@ pub async fn remove_worktree(
 }
 
 use axum::response::IntoResponse;
+
+#[derive(Debug, Deserialize, Default)]
+pub struct ReposQuery {
+    root: Option<String>,
+    depth: Option<usize>,
+}
+
+/// Scans the current project's directory for Git repositories. The root must be
+/// one of the project roots the server has already admitted; discoveries stay
+/// inside that root and are filtered through the same allow-list again.
+pub async fn repos(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<ReposQuery>,
+) -> Response {
+    let Some(root) = query.root.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("root must be an absolute path");
+    };
+    let root = PathBuf::from(root);
+    if !root.is_absolute() {
+        return bad_request("root must be an absolute path");
+    }
+    if !state.roots.is_allowed(&root) || !state.roots.is_allowed_existing(&root) {
+        return forbidden("Access denied");
+    }
+    if !root.is_dir() {
+        return not_found("Directory not found");
+    }
+    let depth = query.depth.unwrap_or(3).clamp(1, 5);
+    let mut repositories = git::scan_repositories(&root, depth);
+    repositories.retain(|repository| state.roots.is_allowed_existing(Path::new(&repository.path)));
+    no_store(json!({
+        "root": root.to_string_lossy(),
+        "repos": repositories,
+    }))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct HistoryQuery {
+    cwd: Option<String>,
+    limit: Option<usize>,
+    skip: Option<usize>,
+}
+
+pub async fn history(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<HistoryQuery>,
+) -> Response {
+    let Some(cwd) = query.cwd.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("cwd must be an absolute path");
+    };
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_absolute() {
+        return bad_request("cwd must be an absolute path");
+    }
+    if !state.roots.is_allowed(&cwd) || !state.roots.is_allowed_existing(&cwd) {
+        return forbidden("Access denied");
+    }
+    if !cwd.is_dir() {
+        return not_found("Directory not found");
+    }
+    let commits = git::history(&cwd, query.limit.unwrap_or(50), query.skip.unwrap_or(0));
+    no_store(json!({ "commits": commits }))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct CommitQuery {
+    cwd: Option<String>,
+    sha: Option<String>,
+}
+
+pub async fn commit(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CommitQuery>,
+) -> Response {
+    let Some(cwd) = query.cwd.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("cwd must be an absolute path");
+    };
+    let Some(sha) = query.sha.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("sha is required");
+    };
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_absolute() {
+        return bad_request("cwd must be an absolute path");
+    }
+    if !state.roots.is_allowed(&cwd) || !state.roots.is_allowed_existing(&cwd) {
+        return forbidden("Access denied");
+    }
+    if !cwd.is_dir() {
+        return not_found("Directory not found");
+    }
+    match git::commit_detail(&cwd, &sha) {
+        Some(detail) => no_store(detail),
+        None => not_found("Commit not found"),
+    }
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct CommitDiffQuery {
+    cwd: Option<String>,
+    sha: Option<String>,
+    path: Option<String>,
+    #[serde(rename = "oldPath")]
+    old_path: Option<String>,
+}
+
+pub async fn commit_diff(
+    State(state): State<Arc<AppState>>,
+    Query(query): Query<CommitDiffQuery>,
+) -> Response {
+    let Some(cwd) = query.cwd.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("cwd must be an absolute path");
+    };
+    let Some(sha) = query.sha.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("sha is required");
+    };
+    let Some(path) = query.path.filter(|value| !value.trim().is_empty()) else {
+        return bad_request("path is required");
+    };
+    let cwd = PathBuf::from(cwd);
+    if !cwd.is_absolute() {
+        return bad_request("cwd must be an absolute path");
+    }
+    if !state.roots.is_allowed(&cwd) || !state.roots.is_allowed_existing(&cwd) {
+        return forbidden("Access denied");
+    }
+    if !cwd.is_dir() {
+        return not_found("Directory not found");
+    }
+    match git::commit_diff(&cwd, &sha, &path, query.old_path.as_deref()) {
+        Some(patch) => no_store(json!({ "patch": patch })),
+        None => not_found("Diff not found"),
+    }
+}

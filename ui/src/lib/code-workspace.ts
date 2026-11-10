@@ -10,7 +10,7 @@ import { openFileTab } from "@/components/file-tab-state";
  * projects restores that project's previous workspace.
  */
 
-export type MainView = "chat" | "code";
+export type MainView = "chat" | "code" | "git";
 
 export interface CodeWorkspaceState {
   projectKey: string;
@@ -50,8 +50,7 @@ export function loadMainView(): MainView {
   if (typeof window !== "undefined") {
     try {
       const view = new URL(window.location.href).searchParams.get("view");
-      if (view === "code") return "code";
-      if (view === "chat") return "chat";
+      if (view === "code" || view === "chat" || view === "git") return view;
     } catch {
       // Fall through to the remembered value.
     }

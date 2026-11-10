@@ -66,6 +66,10 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/file-index", get(routes::files::file_index))
         .route("/git/status", get(routes::git::status))
         .route("/git/diff", get(routes::git::diff))
+        .route("/git/repos", get(routes::git::repos))
+        .route("/git/history", get(routes::git::history))
+        .route("/git/commit", get(routes::git::commit))
+        .route("/git/commit-diff", get(routes::git::commit_diff))
         .route(
             "/worktrees",
             get(routes::git::worktrees)
