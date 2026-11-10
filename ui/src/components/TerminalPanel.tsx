@@ -29,9 +29,24 @@ interface Props {
   onRestart: () => void;
   onClosed: () => void;
   onCloseError: () => void;
+  /** Mark this pane active when something inside it is pressed. */
+  onActivate?: () => void;
+  /** Present in split panes: close this pane instead of only the whole tab. */
+  onClose?: () => void;
+  /** Extra mobile keys belong to the active pane only. */
+  showExtraKeys?: boolean;
 }
 
-export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }: Props) {
+export function TerminalPanel({
+  tab,
+  active,
+  onRestart,
+  onClosed,
+  onCloseError,
+  onActivate,
+  onClose,
+  showExtraKeys: extraKeysEnabled = true,
+}: Props) {
   const { t } = useI18n();
   const { id, cwd, restored } = tab;
   const containerRef = useRef<HTMLDivElement>(null);
@@ -46,7 +61,10 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
   const [reconnectKey, setReconnectKey] = useState(0);
   const [modifiers, setModifiers] = useState<TerminalModifiers>(NO_TERMINAL_MODIFIERS);
   const modifiersRef = useRef(modifiers);
-  const showExtraKeys = useTerminalExtraKeysVisible();
+  // Always call the hook: `extraKeysEnabled` only decides whether the keys
+  // render, never whether this component calls a hook.
+  const extraKeysVisible = useTerminalExtraKeysVisible();
+  const showExtraKeys = extraKeysEnabled && extraKeysVisible;
   const theme = useTerminalTheme();
   const themeRef = useRef(theme);
   themeRef.current = theme;
@@ -275,7 +293,12 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
   const themeLabel = nextTheme === "light" ? "terminal.lightTheme" : "terminal.darkTheme";
 
   return (
-    <section className="terminal-panel" data-terminal-theme={theme} aria-label={t("terminal.title")}>
+    <section
+      className="terminal-panel"
+      data-terminal-theme={theme}
+      aria-label={t("terminal.title")}
+      onPointerDown={() => onActivate?.()}
+    >
       <header className="terminal-panel-header">
         <div className="terminal-panel-path">
           <span className={`terminal-status-dot is-${status}`} title={t(`terminal.${status}`)} />
@@ -300,6 +323,13 @@ export function TerminalPanel({ tab, active, onRestart, onClosed, onCloseError }
               </svg>
             )}
           </button>
+          {onClose && (
+            <button type="button" onClick={onClose} disabled={Boolean(tab.closing)} title={t("terminal.closePane")} aria-label={t("terminal.closePane")}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+                <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+              </svg>
+            </button>
+          )}
           <button type="button" onClick={onRestart} disabled={Boolean(tab.closing)} title={t("terminal.restart")} aria-label={t("terminal.restart")}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
               <path d="M20 11a8 8 0 1 0-2.34 5.66" /><polyline points="20 4 20 11 13 11" />

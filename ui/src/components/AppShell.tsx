@@ -12,12 +12,19 @@ import { TabBar, type Tab } from "./TabBar";
 import { MainViewTabs } from "./MainViewTabs";
 import { CodeWorkspace } from "./CodeWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
+import { TerminalWorkspace } from "./TerminalWorkspace";
 import {
   emptyGitWorkspace,
   loadGitWorkspaces,
   saveGitWorkspace,
   type GitWorkspaceState,
 } from "@/lib/git-workspace";
+import {
+  emptyTerminalWorkspace,
+  loadTerminalWorkspaces,
+  saveTerminalWorkspace,
+  type TerminalWorkspaceState,
+} from "@/lib/terminal-workspace";
 import {
   emptyCodeWorkspace,
   loadCodeWorkspaces,
@@ -127,10 +134,12 @@ export function AppShell() {
   const [mainView, setMainView] = useState<MainView>(() => loadMainView());
   const [codeMounted, setCodeMounted] = useState(() => loadMainView() === "code");
   const [gitMounted, setGitMounted] = useState(() => loadMainView() === "git");
+  const [terminalMounted, setTerminalMounted] = useState(() => loadMainView() === "terminal");
   const handleMainViewChange = useCallback((next: MainView) => {
     setMainView(next);
     if (next === "code") setCodeMounted(true);
     if (next === "git") setGitMounted(true);
+    if (next === "terminal") setTerminalMounted(true);
     saveMainView(next);
     if (typeof window !== "undefined") {
       const url = new URL(window.location.href);
@@ -597,6 +606,7 @@ export function AppShell() {
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
   const [codeWorkspaces, setCodeWorkspaces] = useState<Record<string, CodeWorkspaceState>>(() => loadCodeWorkspaces());
   const [gitWorkspaces, setGitWorkspaces] = useState<Record<string, GitWorkspaceState>>(() => loadGitWorkspaces());
+  const [terminalWorkspaces, setTerminalWorkspaces] = useState<Record<string, TerminalWorkspaceState>>(() => loadTerminalWorkspaces());
   const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
   // Bumped on every workspace switch. The active viewer reports its state as
   // it unmounts, tagged with the generation it rendered in, so the report of a
@@ -1322,6 +1332,18 @@ export function AppShell() {
     saveGitWorkspace(gitProjectRoot, next);
   }, [gitProjectRoot]);
 
+  const terminalDefaultCwd = activeCwd ?? gitProjectRoot;
+  const terminalWorkspace = useMemo(() => {
+    if (!gitProjectRoot) return emptyTerminalWorkspace("");
+    return terminalWorkspaces[gitProjectRoot] ?? emptyTerminalWorkspace(gitProjectRoot);
+  }, [gitProjectRoot, terminalWorkspaces]);
+
+  const updateTerminalWorkspace = useCallback((next: TerminalWorkspaceState) => {
+    if (!gitProjectRoot) return;
+    setTerminalWorkspaces((prev) => ({ ...prev, [gitProjectRoot]: next }));
+    saveTerminalWorkspace(gitProjectRoot, next);
+  }, [gitProjectRoot]);
+
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
     if (initialLinkedSessionId) skipWorkspaceRestoreRef.current = true;
@@ -1779,6 +1801,7 @@ export function AppShell() {
   const renderAgentsButton = (mobile: boolean) => (
     <button
       type="button"
+      className="main-toolbar-action"
       // On a narrow phone it sits outside the More menu, so it leaves that menu as it is.
       onClick={() => toggleTopPanel("agents", mobile && !isNarrowMobile)}
       disabled={!activeSessionFamily}
@@ -1814,6 +1837,7 @@ export function AppShell() {
       <div style={{ display: "flex", alignItems: "stretch", height: "100%" }}>
         <button
           type="button"
+          className="main-toolbar-action"
           onClick={() => {
             handleViewFullHistory();
             if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
@@ -1899,6 +1923,7 @@ export function AppShell() {
           return (
             <button
               type="button"
+              className="main-toolbar-action"
               onClick={() => {
                 void handleAutoName();
                 if (mobile && isNarrowMobile) setMobileToolbarMoreOpen(true);
@@ -1992,6 +2017,7 @@ export function AppShell() {
         <button
           ref={systemBtnRef}
           type="button"
+          className="main-toolbar-action"
           onClick={() => handleSystemInfoToggle("system", mobile)}
           disabled={mobile && !showChat}
           title={translate("system.prompt")}
@@ -2028,6 +2054,7 @@ export function AppShell() {
         </button>
         <button
           type="button"
+          className="main-toolbar-action"
           onClick={() => handleSystemInfoToggle("tools", mobile)}
           disabled={mobile && !showChat}
           title={translate("tools.title")}
@@ -2970,6 +2997,18 @@ export function AppShell() {
                 active={mainView === "git"}
                 isMobile={isMobile}
                 onChange={updateGitWorkspace}
+              />
+            </div>
+          )}
+          {terminalMounted && (
+            <div style={{ display: mainView === "terminal" ? "flex" : "none", width: "100%", height: "100%", minWidth: 0, minHeight: 0, flex: 1 }}>
+              <TerminalWorkspace
+                projectRoot={gitProjectRoot ?? null}
+                defaultCwd={terminalDefaultCwd ?? null}
+                state={terminalWorkspace}
+                active={mainView === "terminal"}
+                isMobile={isMobile}
+                onChange={updateTerminalWorkspace}
               />
             </div>
           )}

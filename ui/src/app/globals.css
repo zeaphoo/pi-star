@@ -2768,6 +2768,95 @@ span.token.table {
   font-weight: 600;
 }
 
+/* Narrow desktops keep the centre switch centred: the action labels collapse
+   to their icons before the toolbar can reach the middle. */
+@media (max-width: 1200px) {
+  .main-toolbar-action > span {
+    display: none;
+  }
+  .main-toolbar-action {
+    padding-left: 8px !important;
+    padding-right: 8px !important;
+  }
+}
+
+@media (max-width: 900px) {
+  .main-view-tab > span {
+    display: none;
+  }
+  .main-view-tab {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+  .main-toolbar-action {
+    padding-left: 6px !important;
+    padding-right: 6px !important;
+  }
+}
+
+/* Closing a terminal tab is destructive: use the app's dialog language rather
+   than the browser's native confirm. */
+.terminal-close-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(0, 0, 0, 0.4);
+}
+.terminal-close-dialog {
+  width: 420px;
+  max-width: 100%;
+  padding: 18px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.24);
+  outline: none;
+}
+.terminal-close-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+}
+.terminal-close-body {
+  margin-top: 8px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.6;
+}
+.terminal-close-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 18px;
+}
+.terminal-close-button {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  font-size: 12px;
+}
+.terminal-close-button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.terminal-close-button.is-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: var(--accent-contrast);
+  font-weight: 600;
+}
+.terminal-close-button.is-primary:hover {
+  filter: brightness(1.04);
+}
+
 /* Repository picker in the Git toolbar: the same quiet input language as the
    rest of the app, with a smaller radius than the old standalone control. */
 .git-repo-select {

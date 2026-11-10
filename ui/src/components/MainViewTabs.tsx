@@ -39,6 +39,16 @@ function GitIcon() {
   );
 }
 
+function TerminalIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="16" rx="2" />
+      <polyline points="7 9 10 12 7 15" />
+      <line x1="13" y1="15" x2="17" y2="15" />
+    </svg>
+  );
+}
+
 /** The chat/code switch that sits in the centre of the chat toolbar. */
 export function MainViewTabs({ value, onChange, compact = false }: Props) {
   const { t } = useI18n();
@@ -46,6 +56,7 @@ export function MainViewTabs({ value, onChange, compact = false }: Props) {
     { id: "chat", label: t("mainView.chat"), icon: <ChatIcon /> },
     { id: "code", label: t("mainView.code"), icon: <CodeIcon /> },
     { id: "git", label: t("mainView.git"), icon: <GitIcon /> },
+    { id: "terminal", label: t("mainView.terminal"), icon: <TerminalIcon /> },
   ];
 
   return (
