@@ -60,15 +60,17 @@ pub async fn get_file(
         }
         "read" => {
             let mime = files::mime_for(&file_path);
-            let binary = !mime.starts_with("text/")
-                && !matches!(
-                    mime.as_str(),
-                    "application/json"
-                        | "application/javascript"
-                        | "application/xml"
-                        | "image/svg+xml"
-                );
-            if binary {
+            // Only media the browser renders from a raw response is served as
+            // bytes. Everything else goes through the JSON text chunk, which
+            // also reports genuinely binary files. Deciding from the MIME type
+            // alone made unknown text files such as `.editorconfig` (which
+            // `mime_guess` reports as application/octet-stream) return raw text
+            // that the viewer then tried to parse as JSON.
+            let raw = mime.starts_with("image/")
+                || mime.starts_with("audio/")
+                || mime.starts_with("video/")
+                || mime == "application/pdf";
+            if raw {
                 return file_response(&file_path, &mime, &headers, false).await;
             }
             match files::read_text_chunk(&file_path, query.offset.unwrap_or(0)) {

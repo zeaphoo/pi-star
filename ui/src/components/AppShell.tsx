@@ -9,6 +9,19 @@ import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessio
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import { FileViewer } from "./FileViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { MainViewTabs } from "./MainViewTabs";
+import { CodeWorkspace } from "./CodeWorkspace";
+import {
+  emptyCodeWorkspace,
+  loadCodeWorkspaces,
+  loadMainView,
+  makeCodeWorkspaceKey,
+  openCodeFileTab,
+  saveCodeWorkspace,
+  saveMainView,
+  type CodeWorkspaceState,
+  type MainView,
+} from "@/lib/code-workspace";
 import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
 import { openFileTab, saveFileViewerState, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
@@ -104,6 +117,19 @@ function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
 export function AppShell() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const [mainView, setMainView] = useState<MainView>(() => loadMainView());
+  const [codeMounted, setCodeMounted] = useState(() => loadMainView() === "code");
+  const handleMainViewChange = useCallback((next: MainView) => {
+    setMainView(next);
+    if (next === "code") setCodeMounted(true);
+    saveMainView(next);
+    if (typeof window !== "undefined") {
+      const url = new URL(window.location.href);
+      if (next === "code") url.searchParams.set("view", "code");
+      else url.searchParams.delete("view");
+      router.replace(`${url.pathname}${url.search}`, { scroll: false });
+    }
+  }, [router]);
   const [initialNavigation, setInitialNavigation] = useState(() => getInitialNavigation(searchParams));
   // Keep the system-theme subscription mounted for the lifetime of the app.
   useTheme();
@@ -560,6 +586,7 @@ export function AppShell() {
   // Files unmount when inactive; workspace terminals stay mounted until closed.
   const [fileTabs, setFileTabs] = useState<Tab[]>([]);
   const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  const [codeWorkspaces, setCodeWorkspaces] = useState<Record<string, CodeWorkspaceState>>(() => loadCodeWorkspaces());
   const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
   // Bumped on every workspace switch. The active viewer reports its state as
   // it unmounts, tagged with the generation it rendered in, so the report of a
@@ -672,6 +699,7 @@ export function AppShell() {
   const initialSessionId = initialNavigation.sessionId;
   const initialLinkedSessionId = linkedSessionId(initialNavigation);
   const [activeCwd, setActiveCwd] = useState<string | null>(null);
+  const [activeProjectKey, setActiveProjectKey] = useState<string | null>(null);
   const activeProjectKeyRef = useRef<string | null>(null);
   // True once the initial ?session= URL param has been resolved (or confirmed absent)
   const [initialSessionRestored, setInitialSessionRestored] = useState<boolean>(() => !initialSessionId);
@@ -861,6 +889,7 @@ export function AppShell() {
     const currentProject = activeProjectKeyRef.current
       ?? (selectedSession ? workspaceKeyOf(selectedSession) : null);
     activeProjectKeyRef.current = newProject;
+    setActiveProjectKey(newProject);
 
     // Keep the project identity in sync during the initial URL restore without
     // remounting the just-created or restored chat.
@@ -934,6 +963,7 @@ export function AppShell() {
       setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     }
     activeProjectKeyRef.current = projectKey;
+    setActiveProjectKey(projectKey);
     // Re-clicking the already-open session must not remount the chat and
     // re-run the full load/positioning cycle. Only skip when the effective
     // cwd context already matches — otherwise a pending cwd move still needs
@@ -999,6 +1029,7 @@ export function AppShell() {
       changeFileWorkspace(activeProjectKeyRef.current, targetProject);
     }
     activeProjectKeyRef.current = targetProject;
+    setActiveProjectKey(targetProject);
     // A draft parked in this cwd comes back, unless one was carried here: it
     // stays parked for the next time, never merged into what was carried.
     if (!getDraft(draftKey)) rekeyDraft(parkedNewSessionDraftKey(cwd), draftKey);
@@ -1244,6 +1275,31 @@ export function AppShell() {
   }, [handleSessionForked, translate]);
 
   // The sidebar calls this when the initial session is not in its list.
+  const codeRoot = activeCwd ?? selectedSession?.cwd ?? newSessionCwd ?? null;
+  const codeProjectIdentity = activeProjectKey ?? selectedSession?.projectKey ?? codeRoot;
+  const codeWorkspaceKey = codeRoot
+    ? makeCodeWorkspaceKey(codeProjectIdentity, codeRoot)
+    : null;
+  const codeWorkspace = useMemo(() => {
+    if (!codeRoot || !codeWorkspaceKey) return null;
+    return codeWorkspaces[codeWorkspaceKey]
+      ?? emptyCodeWorkspace(codeProjectIdentity ?? codeRoot, codeRoot);
+  }, [codeProjectIdentity, codeRoot, codeWorkspaceKey, codeWorkspaces]);
+
+  const updateCodeWorkspace = useCallback((next: CodeWorkspaceState) => {
+    if (!codeWorkspaceKey) return;
+    setCodeWorkspaces((prev) => ({ ...prev, [codeWorkspaceKey]: next }));
+    saveCodeWorkspace(codeWorkspaceKey, next);
+  }, [codeWorkspaceKey]);
+
+  const openCodeFile = useCallback((filePath: string, fileName: string, page?: number) => {
+    if (!codeRoot || !codeWorkspace) return;
+    updateCodeWorkspace(openCodeFileTab(codeWorkspace, filePath, fileName, page));
+    setMainView("code");
+    setCodeMounted(true);
+    saveMainView("code");
+  }, [codeRoot, codeWorkspace, updateCodeWorkspace]);
+
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
     if (initialLinkedSessionId) skipWorkspaceRestoreRef.current = true;
@@ -1284,6 +1340,10 @@ export function AppShell() {
     fileName: string,
     options?: { sourceSessionId?: string | null; modeHint?: "diff"; page?: number },
   ) => {
+    if (mainView === "code") {
+      openCodeFile(filePath, fileName, options?.page);
+      return;
+    }
     const sourceSessionId = options?.sourceSessionId;
     const modeHint = options?.modeHint;
     const page = options?.page;
@@ -1300,7 +1360,7 @@ export function AppShell() {
     setRightPanelOpen(true);
     // On mobile the file panel is full-screen; close the drawer so it shows.
     if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
+  }, [isMobile, mainView, openCodeFile]);
 
   const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
@@ -2392,6 +2452,27 @@ export function AppShell() {
               </svg>
             )}
           </button>
+          {!isMobile && (
+            <div
+              className="main-view-tabs-slot"
+              style={{
+                position: "absolute",
+                left: "50%",
+                top: "env(safe-area-inset-top)",
+                bottom: 0,
+                transform: "translateX(-50%)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                zIndex: 6,
+                pointerEvents: "none",
+              }}
+            >
+              <div style={{ pointerEvents: "auto" }}>
+                <MainViewTabs value={mainView} onChange={handleMainViewChange} />
+              </div>
+            </div>
+          )}
           {isMobile && (
             <div
               ref={mobileToolbarRef}
@@ -2437,6 +2518,12 @@ export function AppShell() {
                   )}
                 </button>
               )}
+              <div
+                className="main-view-tabs-mobile"
+                style={{ display: "flex", alignItems: "center", flexShrink: 0, padding: "0 4px" }}
+              >
+                <MainViewTabs compact value={mainView} onChange={handleMainViewChange} />
+              </div>
               {!isNarrowMobile && renderChatToolbarActions(true)}
               {!isNarrowMobile && renderDebugButton(true)}
               {renderSessionStatsButton(true)}
@@ -2746,6 +2833,7 @@ export function AppShell() {
 
         {/* Chat content */}
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
+          <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", height: "100%", minHeight: 0 }}>
           {showChat ? (
             <ChatWindow
               key={sessionKey}
@@ -2838,6 +2926,24 @@ export function AppShell() {
               </div>
             )
           ) : null}
+          </div>
+          {codeMounted && (
+            <div style={{ display: mainView === "code" ? "flex" : "none", height: "100%", minHeight: 0 }}>
+              <CodeWorkspace
+                root={codeRoot}
+                projectKey={codeProjectIdentity ?? null}
+                projectName={codeRoot ? getFileName(codeRoot) || codeRoot : null}
+                state={codeWorkspace}
+                active={mainView === "code"}
+                isMobile={isMobile}
+                refreshKey={explorerRefreshKey}
+                onOpenFile={openCodeFile}
+                onChange={updateCodeWorkspace}
+                onAtMention={handleAtMention}
+                onMentionLines={handleFileLineMention}
+              />
+            </div>
+          )}
         </div>
       </div>
 

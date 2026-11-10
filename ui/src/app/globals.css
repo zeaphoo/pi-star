@@ -2717,6 +2717,13 @@ span.token.table {
 .panel-resize-handle.is-resizing::after {
   background: color-mix(in srgb, var(--text-muted) 70%, var(--border));
 }
+
+/* Match every other pane boundary: the theme's 1px border, with the
+   resize handle lighting up only on hover/drag. */
+.code-workspace-tree {
+  border-right: 1px solid var(--border);
+}
+
 .right-panel-overlay-backdrop {
   display: none;
 }

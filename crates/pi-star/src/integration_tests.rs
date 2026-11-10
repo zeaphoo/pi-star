@@ -31,6 +31,7 @@ fn write_fixture() -> Fixture {
     std::fs::create_dir_all(ui_dir.join("assets")).unwrap();
     std::fs::write(ui_dir.join("assets/app.js"), "console.log('fixture')\n").unwrap();
     std::fs::write(cwd.join("hello.txt"), "hello from the fixture\n").unwrap();
+    std::fs::write(cwd.join(".editorconfig"), "root = true\n").unwrap();
 
     let session_id = "test-session-0001";
     let encoded = pi_star_core::config::encode_cwd(&cwd);
@@ -283,6 +284,20 @@ async fn files_list_read_and_index() {
             .unwrap()
             .contains("hello from the fixture")
     );
+
+    // Unknown text extensions (mime_guess reports application/octet-stream)
+    // still come back as the JSON text chunk, not as raw bytes.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/files/{encoded}/.editorconfig?type=read"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["content"], "root = true\n");
+    assert_eq!(body["binary"], false);
 
     let (status, body) = call(
         app.clone(),
