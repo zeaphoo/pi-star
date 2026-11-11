@@ -137,16 +137,22 @@ fn enabled_models_view(state: &AppState) -> anyhow::Result<Value> {
     let mut providers: BTreeMap<String, Vec<Value>> = BTreeMap::new();
     for model in &data.model_list {
         let reference = format!("{}/{}", model.provider, model.id);
+        let mut entry = json!({
+            "id": model.id,
+            "name": model.name,
+            "ref": reference,
+            "enabled": enabled.contains(&reference),
+            "thinkingPin": pins.get(&reference),
+        });
+        // The panel shows this as the override box's placeholder. Absent when
+        // pi resolves no window for the model, as in pi-web.
+        if let Some(context_window) = model.context_window {
+            entry["contextWindow"] = Value::from(context_window);
+        }
         providers
             .entry(model.provider.clone())
             .or_default()
-            .push(json!({
-                "id": model.id,
-                "name": model.name,
-                "ref": reference,
-                "enabled": enabled.contains(&reference),
-                "thinkingPin": pins.get(&reference),
-            }));
+            .push(entry);
     }
     let providers = providers
         .into_iter()

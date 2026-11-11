@@ -43,6 +43,11 @@ pub struct ModelListItem {
     pub provider_name: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub input: Vec<String>,
+    /// The context window pi resolves for this model, catalog plus models.json.
+    /// Absent when nothing declares one; the Models panel then leaves its
+    /// override box blank.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -130,6 +135,7 @@ pub fn load_models(config: &Config, scope_all: bool) -> Result<ModelsData> {
                 .cloned()
                 .unwrap_or_else(|| provider_display_name(&def.provider)),
             input: def.input.clone(),
+            context_window: def.context_window,
         });
     }
     list.sort_by(|a, b| {
@@ -996,6 +1002,67 @@ mod tests {
             providers,
             ["configured-one", "custom-one"].into_iter().collect()
         );
+    }
+
+    #[test]
+    fn the_model_list_carries_the_resolved_context_window() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("models-store.json"),
+            json!({
+                "catalog-one": {
+                    "models": [
+                        { "id": "with-window", "name": "With", "contextWindow": 128000 },
+                        { "id": "no-window", "name": "Without" }
+                    ]
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            json!({ "catalog-one": { "type": "api_key", "key": "test-key" } }).to_string(),
+        )
+        .unwrap();
+        // A models.json entry for the same model wins over the catalog's.
+        std::fs::write(
+            dir.path().join("models.json"),
+            json!({
+                "providers": {
+                    "catalog-one": {
+                        "apiKey": "test-key",
+                        "models": [{ "id": "with-window", "name": "With", "contextWindow": 200000 }]
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .unwrap();
+        let config = crate::config::Config::new(Some(dir.path().to_path_buf()), None).unwrap();
+        let data = load_models(&config, false).unwrap();
+        let windows = |id: &str| {
+            data.model_list
+                .iter()
+                .find(|model| model.id == id)
+                .and_then(|model| model.context_window)
+        };
+        assert_eq!(windows("with-window"), Some(200000));
+        assert_eq!(windows("no-window"), None);
+        // The panel's placeholder must be able to tell "no window" from "not
+        // reported": the field is omitted, never serialised as null.
+        let serialized = serde_json::to_value(&data.model_list).unwrap();
+        let entry = |id: &str| {
+            serialized
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|model| model["id"] == json!(id))
+                .unwrap()
+                .clone()
+        };
+        assert_eq!(entry("with-window")["contextWindow"], json!(200000));
+        assert!(entry("no-window").get("contextWindow").is_none());
     }
 
     #[test]
