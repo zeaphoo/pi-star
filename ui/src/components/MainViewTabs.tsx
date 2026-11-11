@@ -28,13 +28,15 @@ function CodeIcon() {
   );
 }
 
-function GitIcon() {
+/** Lucide's file-diff: a file with a plus and a minus, not a Git branch:
+ *  the tab will hold diffs from more than Git (revisions, comparisons). */
+function DiffIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-      <circle cx="6" cy="6" r="2.5" />
-      <circle cx="6" cy="18" r="2.5" />
-      <circle cx="18" cy="6" r="2.5" />
-      <path d="M6 8.5v7M8.5 6h4a5.5 5.5 0 0 1 5.5 5.5v.5" />
+      <path d="M6 22a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h8a2.4 2.4 0 0 1 1.704.706l3.588 3.588A2.4 2.4 0 0 1 20 8v12a2 2 0 0 1-2 2z" />
+      <path d="M9 10h6" />
+      <path d="M12 13V7" />
+      <path d="M9 17h6" />
     </svg>
   );
 }
@@ -55,7 +57,7 @@ export function MainViewTabs({ value, onChange, compact = false }: Props) {
   const tabs: Array<{ id: MainView; label: string; icon: ReactNode }> = [
     { id: "chat", label: t("mainView.chat"), icon: <ChatIcon /> },
     { id: "code", label: t("mainView.code"), icon: <CodeIcon /> },
-    { id: "git", label: t("mainView.git"), icon: <GitIcon /> },
+    { id: "git", label: t("mainView.diff"), icon: <DiffIcon /> },
     { id: "terminal", label: t("mainView.terminal"), icon: <TerminalIcon /> },
   ];
 
