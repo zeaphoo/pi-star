@@ -1686,13 +1686,15 @@
 .settings-general {
   width: 100%;
   height: 100%;
-  padding: 26px clamp(18px, 4vw, 40px) 40px;
+  padding: 14px clamp(18px, 3vw, 28px) 40px;
   overflow-y: auto;
 }
 
+/* A readable column inside the split view's detail pane, aligned with its
+   header rather than centred in whatever width the pane has. */
 .settings-general > * {
   max-width: 600px;
-  margin-inline: auto;
+  margin-inline: 0;
 }
 
 .settings-general-section {

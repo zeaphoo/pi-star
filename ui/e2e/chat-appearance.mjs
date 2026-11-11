@@ -86,8 +86,17 @@ export async function checkChatAppearance(page) {
   await checkFontPreferences(page);
   for (const viewport of [{ width: 1280, height: 600 }, { width: 320, height: 568 }]) {
     await page.setViewportSize(viewport);
-    await page.locator(".settings-general").evaluate((el) => { el.scrollTop = el.scrollHeight; });
-    assert.equal(await page.locator(".settings-language-options button:last-child").evaluate((el) => {
+    // On a phone General is a section of its own now: its two rows (Appearance,
+    // Chat) lead to the settings, so open Appearance before measuring.
+    if (viewport.width <= 640) {
+      const appearance = page.getByRole("button", { name: "Appearance", exact: true }).first();
+      if (await appearance.count()) await appearance.click();
+    }
+    // The last language row must be reachable (and not covered) in a short
+    // panel; the column scrolls, so bring the row itself into view.
+    const lastLanguage = page.locator(".settings-language-options button:last-child");
+    await lastLanguage.scrollIntoViewIfNeeded();
+    assert.equal(await lastLanguage.evaluate((el) => {
       const rect = el.getBoundingClientRect();
       return el.contains(document.elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2));
     }), true, "Every language option must remain reachable in a short settings panel");

@@ -9,7 +9,9 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { SessionArtifact } from "@/lib/session-artifacts";
 import { FileViewer } from "./FileViewer";
 import { getFileIcon } from "./FileIcons";
+import { SubagentViewer } from "./SubagentViewer";
 import { TabBar, type Tab } from "./TabBar";
+import { agentTabSessionId } from "./file-tab-state";
 
 export interface ArtifactPaneState {
   tabs: Tab[];
@@ -26,13 +28,23 @@ interface Props {
   scanning: boolean;
   pane: ArtifactPaneState;
   onChange: (pane: ArtifactPaneState) => void;
-  onOpenFile: (filePath: string, page?: number) => void;
+  /** Sub-agent tabs report whether their run is live. */
+  runningSessionIds: ReadonlySet<string>;
+  /**
+   * Opens a file in this pane. `sourceSessionId` is the session whose cwd the
+   * path belongs to: the pane's own, or a sub-agent's when its tab linked it.
+   */
+  onOpenFile: (filePath: string, page?: number, sourceSessionId?: string | null) => void;
+  /** Opens another sub-agent's transcript beside this one. */
+  onOpenSubagent?: (sessionId: string, label: string) => void;
   onOpenInCode: (filePath: string) => void;
   onOpenCodeView: () => void;
   onViewerStateChange: (tabId: string, revision: number, state: FileViewerState) => void;
   onClose: () => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
+  /** The chat column is too narrow to split: float over it instead. */
+  overlay?: boolean;
   style?: CSSProperties;
 }
 
@@ -102,18 +114,22 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
   scanning,
   pane,
   onChange,
+  runningSessionIds,
   onOpenFile,
+  onOpenSubagent,
   onOpenInCode,
   onOpenCodeView,
   onViewerStateChange,
   onClose,
   onAtMention,
   onMentionLines,
+  overlay = false,
   style,
 }, ref) {
   const { t, locale } = useI18n();
   const activeTab = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? null;
   const showList = activeTab === null;
+  const activeAgentSessionId = activeTab ? agentTabSessionId(activeTab.id) : null;
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -127,7 +143,14 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
 
   const now = new Date();
   return (
-    <div ref={ref} id="session-artifacts" className="artifacts-panel" style={style} role="complementary" aria-label={t("artifacts.title")}>
+    <div
+      ref={ref}
+      id="session-artifacts"
+      className={`artifacts-panel${overlay ? " is-overlay" : ""}`}
+      style={style}
+      role="complementary"
+      aria-label={t("artifacts.title")}
+    >
       <div className="artifacts-header">
         <button
           type="button"
@@ -234,18 +257,27 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
               </div>
             ))}
           </div>
+        ) : activeAgentSessionId ? (
+          <SubagentViewer
+            key={activeAgentSessionId}
+            sessionId={activeAgentSessionId}
+            fallbackLabel={activeTab.label}
+            running={runningSessionIds.has(activeAgentSessionId)}
+            onOpenFile={(filePath, page) => onOpenFile(filePath, page, activeAgentSessionId)}
+            onOpenSubagent={onOpenSubagent}
+          />
         ) : activeTab ? (
           <FileViewer
             key={`${sessionId ?? ""}:${activeTab.id}:${activeTab.viewerRevision ?? 0}`}
             filePath={activeTab.filePath}
             cwd={cwd ?? undefined}
-            sourceSessionId={sessionId}
+            sourceSessionId={activeTab.sourceSessionId ?? sessionId}
             initialDisplayMode={activeTab.initialDisplayMode}
             initialPage={activeTab.page}
             initialState={activeTab.viewerState}
             watchEnabled
             onStateChange={(state) => onViewerStateChange(activeTab.id, activeTab.viewerRevision ?? 0, state)}
-            onOpenFile={(filePath, page) => onOpenFile(filePath, page)}
+            onOpenFile={(filePath, page) => onOpenFile(filePath, page, activeTab.sourceSessionId ?? sessionId)}
             onAtMention={onAtMention}
             onMentionLines={onMentionLines}
           />

@@ -7,8 +7,7 @@ import { SessionSidebar, type SelectSessionOptions, type SessionSidebarControl }
 import { ChatWindow } from "./ChatWindow";
 import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessionContextBar";
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
-import { FileViewer } from "./FileViewer";
-import { TabBar, type Tab } from "./TabBar";
+import type { Tab } from "./TabBar";
 import { MainViewTabs } from "./MainViewTabs";
 import { CodeWorkspace } from "./CodeWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
@@ -36,23 +35,19 @@ import {
   type CodeWorkspaceState,
   type MainView,
 } from "@/lib/code-workspace";
-import { movePanelTab, orderPanelTabs } from "@/lib/panel-tab-order";
-import { openFileTab, saveFileViewerState, saveParkedFileViewerState, switchFileWorkspace, type ParkedFileWorkspace } from "./file-tab-state";
+import { agentTabId, agentTabSessionId, openAgentTab, openFileTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
-import { SystemPromptPanel } from "./SystemPromptPanel";
-import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { ArtifactsIcon, EMPTY_ARTIFACT_PANE, SessionArtifactsPane, type ArtifactPaneState } from "./SessionArtifactsPane";
-import { SubagentViewer } from "./SubagentViewer";
-import { TerminalPanel } from "./TerminalPanel";
-import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
+import { RightDock } from "./RightDock";
+import { DockPanelIcon } from "./dock-icons";
 import { useTheme } from "@/hooks/useTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { useI18n } from "@/hooks/useI18n";
-import { useIsMobile, useIsNarrowMobile } from "@/hooks/useIsMobile";
+import { useIsMobile, useIsNarrowMobile, useViewportWidth } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
 import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { useAudio } from "@/hooks/useAudio";
@@ -86,16 +81,24 @@ import {
   workspaceKeyOf,
 } from "@/lib/workspace-memory";
 import {
-  getDefaultRightPanelWidth,
-  getRightPanelMaxWidth,
   getSidebarMaxWidth,
-  RIGHT_PANEL_FALLBACK_WIDTH,
-  RIGHT_PANEL_MAX_WIDTH,
-  RIGHT_PANEL_MIN_WIDTH,
   SIDEBAR_DEFAULT_WIDTH,
   SIDEBAR_MAX_WIDTH,
   SIDEBAR_MIN_WIDTH,
 } from "@/lib/panel-layout";
+import {
+  DOCK_DEFAULT_WIDTH,
+  DOCK_MAX_WIDTH,
+  DOCK_MIN_CHAT_WIDTH,
+  DOCK_MIN_VIEWPORT,
+  DOCK_MIN_WIDTH,
+  emptyDockState,
+  ensureDockLeafState,
+  loadDockStates,
+  saveDockStates,
+  type DockContext,
+  type DockState,
+} from "@/lib/dock-state";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
 import type { ChatInputHandle } from "./ChatInput";
@@ -125,15 +128,12 @@ const MAX_STORED_ARTIFACT_PANES = 30;
 const ARTIFACTS_DEFAULT_WIDTH = 420;
 const ARTIFACTS_MIN_WIDTH = 300;
 const ARTIFACTS_MAX_WIDTH = 720;
+// Below this much room for the chat, the artifacts pane overlays instead of splitting.
+const ARTIFACTS_DOCK_MIN_WIDTH = 760;
+const DOCK_OPEN_KEY = "pi-star:dock-open";
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
 const TOOL_END_REFRESH_MS = 1000;
-
-/** Panel tab id of the last sub-agent tab, or null when there is none. */
-function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
-  const last = tabs.at(-1);
-  return last ? `agent:${last.sessionId}` : null;
-}
 
 /** File tabs parked per session, for the artifacts pane; viewer state is not persisted. */
 function loadStoredArtifactPanes(): Record<string, ArtifactPaneState> {
@@ -151,7 +151,8 @@ function loadStoredArtifactPanes(): Record<string, ArtifactPaneState> {
         if (!tab || typeof tab !== "object" || Array.isArray(tab)) return [];
         const filePath = typeof (tab as { filePath?: unknown }).filePath === "string" ? (tab as { filePath: string }).filePath : "";
         const id = typeof (tab as { id?: unknown }).id === "string" ? (tab as { id: string }).id : "";
-        if (!filePath || !id) return [];
+        // Sub-agent tabs are transient: their child sessions need not survive a reload.
+        if (!filePath || !id || agentTabSessionId(id)) return [];
         const page = typeof (tab as { page?: unknown }).page === "number" ? (tab as { page: number }).page : undefined;
         const sourceSessionId = typeof (tab as { sourceSessionId?: unknown }).sourceSessionId === "string"
           ? (tab as { sourceSessionId: string }).sourceSessionId
@@ -184,7 +185,9 @@ function saveStoredArtifactPanes(panes: Record<string, ArtifactPaneState>): void
       .slice(-MAX_STORED_ARTIFACT_PANES)
       .map(([key, pane]) => [key, {
         activeTabId: pane.activeTabId,
-        tabs: pane.tabs.map(({ id, label, filePath, page, sourceSessionId }) => ({ id, label, filePath, page, sourceSessionId })),
+        tabs: pane.tabs
+          .filter(({ id }) => !agentTabSessionId(id))
+          .map(({ id, label, filePath, page, sourceSessionId }) => ({ id, label, filePath, page, sourceSessionId })),
       }] as const);
     window.localStorage.setItem(ARTIFACT_PANES_KEY, JSON.stringify(Object.fromEntries(stored)));
   } catch {
@@ -342,8 +345,38 @@ export function AppShell() {
   const [projectTrustError, setProjectTrustError] = useState<ProjectTrustFailure | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
-  const [rightPanelOpen, setRightPanelOpen] = useState(false);
-  const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
+  // The right dock: a project-scoped workbench of independent views. Open and
+  // expanded are the user's own preference; the layout and every leaf's state
+  // are parked per project (see lib/dock-state.ts).
+  const [dockOpen, setDockOpen] = useState(false);
+  const [dockExpanded, setDockExpanded] = useState(false);
+  const [dockStates, setDockStates] = useState<Record<string, DockState>>(() => loadDockStates());
+  const dockPrefsRestoredRef = useRef(false);
+  const viewportWidth = useViewportWidth();
+  // Whether there is room for the dock at all: it needs its own minimum and
+  // must leave the chat one. Set after the sidebar's width is known (below).
+  const [canDock, setCanDock] = useState(false);
+  useEffect(() => {
+    if (!dockOpen || !canDock) setDockExpanded(false);
+  }, [canDock, dockOpen]);
+  // Whether the dock was open is the user's preference, read after hydration so
+  // the server's markup and the first client render agree.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(DOCK_OPEN_KEY) === "1") setDockOpen(true);
+    } catch {
+      // Storage is best-effort.
+    }
+    dockPrefsRestoredRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!dockPrefsRestoredRef.current) return;
+    try {
+      window.localStorage.setItem(DOCK_OPEN_KEY, dockOpen ? "1" : "0");
+    } catch {
+      // Storage is best-effort.
+    }
+  }, [dockOpen]);
   // The session's own artifacts pane: remembered open state, and file tabs
   // parked per session (a switch never carries one session's files to another).
   const [artifactsOpen, setArtifactsOpen] = useState(false);
@@ -354,41 +387,21 @@ export function AppShell() {
   const [historyArtifacts, setHistoryArtifacts] = useState<SessionArtifact[]>([]);
   const [artifactsScanning, setArtifactsScanning] = useState(false);
   const artifactScanCacheRef = useRef(new Map<string, SessionArtifact[]>());
-  const rightPanelFullWidth = rightPanelOpen && rightPanelExpanded && !isMobile;
-  useEffect(() => {
-    if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
-  }, [rightPanelOpen, isMobile]);
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
   const moreControlsLabel = mobileToolbarMoreOpen ? translate("chat.close") : translate("chat.moreControls");
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
-  const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
+  const dockWidthRef = useRef(DOCK_DEFAULT_WIDTH);
   const artifactsWidthRef = useRef(ARTIFACTS_DEFAULT_WIDTH);
-  const getResponsiveRightPanelWidth = useCallback(
-    () => typeof window === "undefined"
-      ? RIGHT_PANEL_FALLBACK_WIDTH
-      : getDefaultRightPanelWidth(window.innerWidth),
-    [],
-  );
   const getResponsiveSidebarMaxWidth = useCallback(
     () => typeof window === "undefined"
       ? SIDEBAR_MAX_WIDTH
       : getSidebarMaxWidth({
         viewportWidth: window.innerWidth,
-        rightPanelOpen,
-        rightPanelWidth: rightPanelWidthRef.current,
+        panelOpen: dockOpen,
+        panelWidth: dockWidthRef.current,
       }),
-    [rightPanelOpen],
-  );
-  const getResponsiveRightPanelMaxWidth = useCallback(
-    () => typeof window === "undefined"
-      ? RIGHT_PANEL_MAX_WIDTH
-      : getRightPanelMaxWidth({
-        viewportWidth: window.innerWidth,
-        sidebarOpen,
-        sidebarWidth: sidebarWidthRef.current,
-      }),
-    [sidebarOpen],
+    [dockOpen],
   );
   const sidebarResizer = useResizablePanel({
     ariaLabel: translate("layout.resizeSidebar"),
@@ -401,17 +414,24 @@ export function AppShell() {
     storageKey: "pi-sidebar-width",
     widthRef: sidebarWidthRef,
   });
-  const rightPanelResizer = useResizablePanel({
-    ariaLabel: translate("layout.resizeFilePanel"),
-    cssVariable: "--right-panel-width",
-    defaultWidth: RIGHT_PANEL_FALLBACK_WIDTH,
-    getDefaultWidth: getResponsiveRightPanelWidth,
-    getMaxWidth: getResponsiveRightPanelMaxWidth,
+  useEffect(() => {
+    const room = viewportWidth - (sidebarOpen ? sidebarResizer.width : 0);
+    setCanDock(!isMobile && viewportWidth >= DOCK_MIN_VIEWPORT && room >= DOCK_MIN_WIDTH + DOCK_MIN_CHAT_WIDTH);
+  }, [isMobile, sidebarOpen, sidebarResizer.width, viewportWidth]);
+  const dockResizer = useResizablePanel({
+    ariaLabel: translate("dock.resize"),
+    cssVariable: "--dock-width",
+    defaultWidth: DOCK_DEFAULT_WIDTH,
+    // The chat keeps a workable column: the dock takes what is left of it.
+    getMaxWidth: () => Math.min(
+      DOCK_MAX_WIDTH,
+      Math.max(DOCK_MIN_WIDTH, window.innerWidth - (sidebarOpen ? sidebarWidthRef.current : 0) - DOCK_MIN_CHAT_WIDTH),
+    ),
     growthDirection: "left",
-    maxWidth: RIGHT_PANEL_MAX_WIDTH,
-    minWidth: RIGHT_PANEL_MIN_WIDTH,
-    storageKey: "pi-right-panel-width",
-    widthRef: rightPanelWidthRef,
+    maxWidth: DOCK_MAX_WIDTH,
+    minWidth: DOCK_MIN_WIDTH,
+    storageKey: "pi-star:dock-width",
+    widthRef: dockWidthRef,
   });
   const artifactsResizer = useResizablePanel({
     ariaLabel: translate("artifacts.resize"),
@@ -419,7 +439,7 @@ export function AppShell() {
     defaultWidth: ARTIFACTS_DEFAULT_WIDTH,
     getMaxWidth: () => {
       const reserved = (sidebarOpen ? sidebarWidthRef.current : 0)
-        + (rightPanelOpen ? rightPanelWidthRef.current : 0)
+        + (dockOpen && canDock ? dockWidthRef.current : 0)
         + 360;
       return Math.min(ARTIFACTS_MAX_WIDTH, Math.max(ARTIFACTS_MIN_WIDTH, window.innerWidth - reserved));
     },
@@ -430,7 +450,38 @@ export function AppShell() {
     widthRef: artifactsWidthRef,
   });
   const reclampSidebarWidth = sidebarResizer.reclampWidth;
-  const reclampRightPanelWidth = rightPanelResizer.reclampWidth;
+
+  // Centre the view switch in whatever the groups leave, and drop its labels
+  // when that gap gets tight.
+  useEffect(() => {
+    if (isMobile) return;
+    const bar = topBarRef.current;
+    if (!bar) return;
+    const update = () => {
+      const width = bar.clientWidth;
+      const leftInset = topBarLeftRef.current?.offsetWidth ?? 0;
+      const rightInset = topBarRightRef.current?.offsetWidth ?? 0;
+      const slotWidth = tabSlotRef.current?.offsetWidth ?? 0;
+      // Centred like upstream, but never under either group's buttons.
+      const maxLeft = Math.max(leftInset, width - rightInset - slotWidth);
+      const left = Math.min(Math.max((width - slotWidth) / 2, leftInset), maxLeft);
+      // The decision reads the chat column's width, never the groups' own: their
+      // labels collapse with `compact`, so measuring them would oscillate. Below
+      // this the labelled groups and the labelled switch no longer fit together.
+      const compact = width < 940;
+      setTabSlot((current) => (
+        Math.abs(current.left - left) < 0.5 && current.compact === compact
+          ? current
+          : { left, compact }
+      ));
+    };
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(bar);
+    if (topBarLeftRef.current) observer.observe(topBarLeftRef.current);
+    if (topBarRightRef.current) observer.observe(topBarRightRef.current);
+    return () => observer.disconnect();
+  }, [isMobile]);
 
   // The pane remembers whether it was open; the read runs after hydration so
   // the server's markup and the first client render agree.
@@ -469,7 +520,7 @@ export function AppShell() {
   const reclampArtifactsWidth = artifactsResizer.reclampWidth;
   useEffect(() => {
     if (artifactsOpen) reclampArtifactsWidth();
-  }, [artifactsOpen, rightPanelOpen, sidebarOpen, reclampArtifactsWidth]);
+  }, [artifactsOpen, dockOpen, sidebarOpen, reclampArtifactsWidth]);
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   // Mobile drawer actions must not change the remembered desktop preference.
@@ -479,14 +530,23 @@ export function AppShell() {
   useEffect(() => {
     setMobileSidebarReady(true);
   }, []);
+  // The dock's width is saved; the sidebar has to give way when it opens.
+  const reclampDockWidth = dockResizer.reclampWidth;
   useEffect(() => {
-    if (!rightPanelOpen) return;
+    if (!dockOpen) return;
     reclampSidebarWidth();
-    reclampRightPanelWidth();
-  }, [reclampRightPanelWidth, reclampSidebarWidth, rightPanelOpen]);
+    reclampDockWidth();
+  }, [dockOpen, reclampDockWidth, reclampSidebarWidth]);
   const chatInputRef = useRef<ChatInputHandle | null>(null);
   const [pendingQuotePrompt, setPendingQuotePrompt] = useState<{ sessionId: string; text: string } | null>(null);
   const topBarRef = useRef<HTMLDivElement>(null);
+  // The two toolbar groups the centred view switch must stay between: it is
+  // absolutely positioned, so on a narrow chat (an open dock) it would else
+  // draw over their buttons.
+  const topBarLeftRef = useRef<HTMLDivElement>(null);
+  const topBarRightRef = useRef<HTMLDivElement>(null);
+  const tabSlotRef = useRef<HTMLDivElement>(null);
+  const [tabSlot, setTabSlot] = useState({ left: 0, compact: false });
   const mobileToolbarRef = useRef<HTMLDivElement>(null);
   // Branch navigator state — populated by ChatWindow via onBranchDataChange
   const [branchTree, setBranchTree] = useState<SessionTreeNode[]>([]);
@@ -511,8 +571,6 @@ export function AppShell() {
   const [systemInfoLoading, setSystemInfoLoading] = useState(false);
   const systemInfoLoaderRef = useRef<(() => Promise<void>) | null>(null);
   const systemInfoLoadIdRef = useRef(0);
-  const systemBtnRef = useRef<HTMLButtonElement>(null);
-
   const handleSystemPromptChange = useCallback((prompt: string | null) => {
     setSystemPrompt(prompt);
     setSystemInfoLoading(false);
@@ -527,6 +585,20 @@ export function AppShell() {
     systemInfoLoaderRef.current = loader;
     setSystemInfoLoading(false);
   }, []);
+
+  // Settings › Session context reads on demand: the chat owns the request (it
+  // may have to start the session first), this only asks it to run.
+  const loadSystemInfo = useCallback(() => {
+    const load = systemInfoLoaderRef.current;
+    if (!load || systemInfoLoading) return;
+    const loadId = ++systemInfoLoadIdRef.current;
+    setSystemInfoLoading(true);
+    void load()
+      .catch((error) => { console.error("Failed to load system information:", error); })
+      .finally(() => {
+        if (systemInfoLoadIdRef.current === loadId) setSystemInfoLoading(false);
+      });
+  }, [systemInfoLoading]);
 
   // The debug panel's reader of the chat's own state: kept in a ref, so registering renders
   // nothing, and read only by the open panel (DebugPanel), never on AppShell's renders.
@@ -572,7 +644,7 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "system" | "tools" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "session" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -588,11 +660,12 @@ export function AppShell() {
   }, [hasSubagentSessions]);
 
   useEffect(() => {
-    if (rightPanelFullWidth) setActiveTopPanel(null);
-  }, [rightPanelFullWidth]);
+    if (!dockExpanded) return;
+    setActiveTopPanel(null);
+  }, [dockExpanded]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "system" | "tools" | "session" | "debug",
+    panel: "agents" | "branches" | "session" | "debug",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -610,27 +683,6 @@ export function AppShell() {
     setActiveTopPanel((panel) => panel === "debug" ? null : panel);
     if (restoreFocus) requestAnimationFrame(() => focusIfLost(document, debugButtonRef.current));
   }, []);
-
-  const handleSystemInfoToggle = useCallback((
-    panel: "system" | "tools",
-    keepMobileToolbarOpen = false,
-  ) => {
-    const opening = activeTopPanel !== panel;
-    toggleTopPanel(panel, keepMobileToolbarOpen);
-    if (!opening || systemInfoLoading) return;
-
-    const load = systemInfoLoaderRef.current;
-    if (!load) return;
-    const loadId = ++systemInfoLoadIdRef.current;
-    setSystemInfoLoading(true);
-    void load().catch((error) => {
-      console.error("Failed to load system information:", error);
-    }).finally(() => {
-      if (systemInfoLoadIdRef.current === loadId) {
-        setSystemInfoLoading(false);
-      }
-    });
-  }, [activeTopPanel, systemInfoLoading, toggleTopPanel]);
 
   const openSessionStatsPanel = useCallback(() => {
     if (isMobile) setSidebarOpen(false);
@@ -662,23 +714,15 @@ export function AppShell() {
     setMobileToolbarMoreOpen((open) => !open);
   }, []);
 
-  const handleRightPanelToggle = useCallback(() => {
-    if (isMobile) {
-      setSidebarOpen(false);
-      setActiveTopPanel(null);
-      setMobileToolbarMoreOpen(false);
-    }
-    setRightPanelOpen((open) => {
-      const next = !open;
-      // On a phone both panels are overlays: only one at a time.
-      if (next && isMobile) setArtifactsOpen(false);
-      return next;
-    });
-  }, [isMobile]);
-
-  const handleRightPanelExpandToggle = useCallback(() => {
+  const handleDockToggle = useCallback(() => {
     setActiveTopPanel(null);
-    setRightPanelExpanded((expanded) => !expanded);
+    setMobileToolbarMoreOpen(false);
+    setDockOpen((open) => !open);
+  }, []);
+
+  const handleDockExpandToggle = useCallback(() => {
+    setActiveTopPanel(null);
+    setDockExpanded((expanded) => !expanded);
   }, []);
 
   useEffect(() => {
@@ -728,114 +772,23 @@ export function AppShell() {
     return () => ro.disconnect();
   }, [activeTopPanel, isMobile]);
 
-  // Files unmount when inactive; workspace terminals stay mounted until closed.
-  const [fileTabs, setFileTabs] = useState<Tab[]>([]);
-  const [activeFileTabId, setActiveFileTabId] = useState<string | null>(null);
+  // Project workspaces: the main view's Code/Git/Terminal state. The right dock
+  // keeps its own copies of these, per leaf (lib/dock-state.ts).
   const [codeWorkspaces, setCodeWorkspaces] = useState<Record<string, CodeWorkspaceState>>(() => loadCodeWorkspaces());
   const [gitWorkspaces, setGitWorkspaces] = useState<Record<string, GitWorkspaceState>>(() => loadGitWorkspaces());
   const [terminalWorkspaces, setTerminalWorkspaces] = useState<Record<string, TerminalWorkspaceState>>(() => loadTerminalWorkspaces());
-  const fileWorkspaceStatesRef = useRef(new Map<string, ParkedFileWorkspace>());
-  // Bumped on every workspace switch. The active viewer reports its state as
-  // it unmounts, tagged with the generation it rendered in, so the report of a
-  // tab just parked goes to its workspace, not to a same-path tab restored.
-  const [fileWorkspaceGeneration, setFileWorkspaceGeneration] = useState(0);
-  const fileWorkspaceGenerationRef = useRef(0);
-  const [terminalTabs, setTerminalTabs] = useState<TerminalTab[]>([]);
-  const [terminalsRestored, setTerminalsRestored] = useState(false);
-  // Subagent work tabs are session-scoped and transient: no persistence, and
-  // they are dropped when the project changes (they belong to its sessions).
-  const [agentTabs, setAgentTabs] = useState<{ sessionId: string; label: string }[]>([]);
-  const [panelTabOrder, setPanelTabOrder] = useState<string[]>([]);
-  const panelTabs: Tab[] = orderPanelTabs([
-    ...fileTabs,
-    ...terminalTabs.map((tab) => ({
-      id: tab.id,
-      label: getFileName(tab.cwd) || tab.cwd,
-      filePath: tab.cwd,
-      kind: "terminal" as const,
-      closing: Boolean(tab.closing),
-    })),
-    ...agentTabs.map((tab) => ({
-      id: `agent:${tab.sessionId}`,
-      label: tab.label,
-      filePath: tab.label,
-      kind: "agent" as const,
-    })),
-  ], panelTabOrder);
-  // A closed tab leaves the saved order, so reopening it appends it like any new tab.
-  const panelTabIds = panelTabs.map((tab) => tab.id).join("\n");
-  useEffect(() => {
-    const open = new Set(panelTabIds.split("\n"));
-    setPanelTabOrder((order) => order.every((id) => open.has(id)) ? order : order.filter((id) => open.has(id)));
-  }, [panelTabIds]);
-
-  useEffect(() => {
-    try {
-      const saved = restoreTerminalTabs(window.sessionStorage.getItem(TERMINAL_TABS_KEY));
-      setTerminalTabs(saved.tabs);
-      if (saved.activeId) {
-        setActiveFileTabId(saved.activeId);
-        setRightPanelOpen(saved.open);
-      }
-    } catch { /* storage is optional */ }
-    setTerminalsRestored(true);
-  }, []);
-
-  useEffect(() => {
-    if (!terminalsRestored) return;
-    try {
-      window.sessionStorage.setItem(TERMINAL_TABS_KEY, JSON.stringify({
-        tabs: terminalTabs.map(({ id, cwd }) => ({ id, cwd })),
-        activeId: activeFileTabId,
-        open: rightPanelOpen,
-      }));
-    } catch { /* storage is optional */ }
-  }, [terminalTabs, activeFileTabId, rightPanelOpen, terminalsRestored]);
-
-  const handleFileViewerStateChange = useCallback((
-    generation: number,
-    tabId: string,
-    viewerRevision: number,
-    viewerState: FileViewerState,
-  ) => {
-    if (generation !== fileWorkspaceGenerationRef.current) {
-      saveParkedFileViewerState(fileWorkspaceStatesRef.current, generation, tabId, viewerRevision, viewerState);
-      return;
-    }
-    setFileTabs((prev) => saveFileViewerState(prev, tabId, viewerRevision, viewerState));
-  }, []);
-
-  const changeFileWorkspace = useCallback((currentKey: string | null, nextKey: string) => {
-    if (currentKey === nextKey) return;
-    const activeFileId = activeFileTabId?.startsWith("file:") ? activeFileTabId : null;
-    const next = switchFileWorkspace(fileWorkspaceStatesRef.current, currentKey, nextKey, {
-      tabs: fileTabs,
-      activeTabId: activeFileId,
-      open: rightPanelOpen && Boolean(activeFileId),
-    }, fileWorkspaceGenerationRef.current);
-    fileWorkspaceGenerationRef.current += 1;
-    setFileWorkspaceGeneration(fileWorkspaceGenerationRef.current);
-    setFileTabs(next.tabs);
-    // Subagent tabs belong to the previous project's sessions: dropped, not parked.
-    setAgentTabs([]);
-    // Terminal tabs span workspaces and keep control of the panel while active.
-    if (!activeFileTabId || activeFileId || activeFileTabId.startsWith("agent:")) {
-      setActiveFileTabId(next.activeTabId);
-      setRightPanelOpen(next.open);
-    }
-  }, [activeFileTabId, fileTabs, rightPanelOpen]);
 
   // Same @mention format as the chat input's @ autocomplete, so the agent's
   // read tool resolves it the same way (it strips the @ prefix).
   const handleAtMention = useCallback((relativePath: string, isDir: boolean) => {
     chatInputRef.current?.insertText(buildAtMentionText(relativePath, isDir));
-    if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
+    if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
 
 
   const handleFileLineMention = useCallback((relativePath: string, startLine: number, endLine: number) => {
     chatInputRef.current?.insertText(buildFileLineMentionText(relativePath, startLine, endLine));
-    if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
+    if (isMobile) setSidebarOpen(false);
   }, [isMobile]);
 
   const initialSessionId = initialNavigation.sessionId;
@@ -1079,15 +1032,12 @@ export function AppShell() {
     // The debug panel stays open across the switch: it follows whichever session is shown.
     setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     if (currentProject !== newProject) {
-      // Keep #281's project isolation, but park each workspace's file tabs
-      // instead of discarding them so they return when the user switches back.
-      changeFileWorkspace(currentProject, newProject);
       // Restore the workspace we switched to: its last open session, or keep
       // the default welcome page when none is remembered.
       if (!skipWorkspaceRestore) restoreWorkspaceContext(newProject, cwd);
     }
     router.replace(typeof window !== "undefined" ? window.location.pathname : "/", { scroll: false });
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
+  }, [activeCwd, invalidateWorkspaceRestore, newSessionCwd, router, selectedSession, restoreWorkspaceContext]);
 
   const handleSelectSession = useCallback((session: SessionInfo, isRestore = false, entryId?: string, blockIndex?: number, options?: SelectSessionOptions) => {
     setSearchTarget(entryId ? { sessionId: session.id, entryId, blockIndex } : null);
@@ -1101,7 +1051,6 @@ export function AppShell() {
     // Adopt an explicitly selected session before the sidebar reports its cwd.
     const projectKey = workspaceKeyOf(session);
     if (activeProjectKeyRef.current !== projectKey) {
-      changeFileWorkspace(activeProjectKeyRef.current, projectKey);
       setActiveTopPanel((panel) => panel === "debug" ? panel : null);
     }
     activeProjectKeyRef.current = projectKey;
@@ -1144,7 +1093,7 @@ export function AppShell() {
     if (!isRestore || new URLSearchParams(window.location.search).get("session") !== session.id) {
       router.replace(`?session=${encodeURIComponent(session.id)}`, { scroll: false });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
+  }, [activeCwd, invalidateWorkspaceRestore, router, isMobile, newSessionCwd, selectedSession]);
 
   const handleNewSession = useCallback((sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => {
     invalidateWorkspaceRestore();
@@ -1167,9 +1116,6 @@ export function AppShell() {
     // explicit session pick does. Without a key (Ctrl+Alt+N) the current cwd
     // keeps its project.
     const targetProject = projectKey ?? (cwd === activeCwd ? activeProjectKeyRef.current : null) ?? cwd;
-    if (activeProjectKeyRef.current !== targetProject) {
-      changeFileWorkspace(activeProjectKeyRef.current, targetProject);
-    }
     activeProjectKeyRef.current = targetProject;
     setActiveProjectKey(targetProject);
     // A draft parked in this cwd comes back, unless one was carried here: it
@@ -1199,7 +1145,7 @@ export function AppShell() {
         chatInputRef.current?.focus();
       });
     }
-  }, [activeCwd, changeFileWorkspace, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
+  }, [activeCwd, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
@@ -1464,6 +1410,40 @@ export function AppShell() {
     saveTerminalWorkspace(gitProjectRoot, next);
   }, [gitProjectRoot]);
 
+  // ── Right dock ─────────────────────────────────────────────────────────
+  // A project's own workbench. Every leaf is an independent instance of Code,
+  // Diff or Terminal, laid out in a split tree; nothing is shared with the main
+  // view, so the two can show different things at once (lib/dock-state.ts).
+  const dockProjectKey = gitProjectRoot;
+  const dockContext: DockContext | null = dockProjectKey
+    ? { projectKey: dockProjectKey, root: codeRoot ?? dockProjectKey }
+    : null;
+  const dockState = useMemo(
+    () => (dockProjectKey ? dockStates[dockProjectKey] ?? emptyDockState() : null),
+    [dockProjectKey, dockStates],
+  );
+  const dockVisible = canDock && dockOpen && dockContext !== null && dockState !== null;
+  const dockFullWidth = dockVisible && dockExpanded;
+  const updateDockState = useCallback((next: DockState) => {
+    if (!dockProjectKey) return;
+    setDockStates((prev) => ({ ...prev, [dockProjectKey]: next }));
+  }, [dockProjectKey]);
+  // A restored layout can name a leaf whose state was dropped: give it one.
+  useEffect(() => {
+    if (!dockProjectKey || !dockContext || !dockState?.layout.root) return;
+    const ensured = ensureDockLeafState(dockState, dockContext);
+    if (ensured !== dockState) updateDockState(ensured);
+  }, [dockContext, dockProjectKey, dockState, updateDockState]);
+  useEffect(() => {
+    saveDockStates(dockStates);
+  }, [dockStates]);
+  // The artifacts pane overlays the chat once the chat column gets narrow, so
+  // the dock and the sidebar never squeeze it into a sliver.
+  const artifactsAvailableWidth = viewportWidth
+    - (sidebarOpen ? sidebarResizer.width : 0)
+    - (dockVisible ? dockResizer.width : 0);
+  const artifactsOverlay = isMobile || artifactsAvailableWidth < ARTIFACTS_DOCK_MIN_WIDTH;
+
   const handleInitialRestoreDone = useCallback(() => {
     setInitialSessionRestored(true);
     if (initialLinkedSessionId) skipWorkspaceRestoreRef.current = true;
@@ -1499,97 +1479,6 @@ export function AppShell() {
     }
   }, [invalidateWorkspaceRestore, router]);
 
-  const handleOpenFile = useCallback((
-    filePath: string,
-    fileName: string,
-    options?: { sourceSessionId?: string | null; modeHint?: "diff"; page?: number },
-  ) => {
-    if (mainView === "code") {
-      openCodeFile(filePath, fileName, options?.page);
-      return;
-    }
-    const sourceSessionId = options?.sourceSessionId;
-    const modeHint = options?.modeHint;
-    const page = options?.page;
-    const tabId = `file:${filePath}`;
-    setFileTabs((prev) => openFileTab(prev, {
-      fileName,
-      filePath,
-      modeHint,
-      page,
-      sourceSessionId,
-      tabId,
-    }));
-    setActiveFileTabId(tabId);
-    setRightPanelOpen(true);
-    // On mobile the file panel is full-screen; close the drawer so it shows.
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile, mainView, openCodeFile]);
-
-  const handleOpenLinkedFile = useCallback((filePath: string, page?: number) => {
-    handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
-  }, [handleOpenFile, selectedSession?.id]);
-
-  // Subagent work opens in a right-panel tab instead of hijacking the main chat.
-  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
-    setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId) ? prev : [...prev, { sessionId, label }]);
-    setActiveFileTabId(`agent:${sessionId}`);
-    setRightPanelOpen(true);
-    if (isMobile) setSidebarOpen(false);
-  }, [isMobile]);
-
-  // The agent switcher's side-panel button: opens a subagent's tab, or closes
-  // it when the open panel already has it (the panel closes with its last tab).
-  // The switcher stays open beside the panel, except on phones, where the
-  // panel covers the chat.
-  const openSubagentTabIds = useMemo(
-    () => new Set(rightPanelOpen ? agentTabs.map((tab) => tab.sessionId) : []),
-    [agentTabs, rightPanelOpen],
-  );
-  const handleToggleSubagentTab = (sessionId: string, label: string) => {
-    if (openSubagentTabIds.has(sessionId)) {
-      handleCloseFileTab(`agent:${sessionId}`);
-      return;
-    }
-    if (isMobile) setActiveTopPanel(null);
-    handleOpenSubagentTab(sessionId, label);
-  };
-
-  const handleTerminalClosed = (tab: TerminalTab) => {
-    const replacement = tab.closing === "restart" ? newTerminalTab(tab.cwd) : null;
-    const remaining = terminalTabs.filter((item) => item.id !== tab.id);
-    setTerminalTabs((tabs) => tabs.flatMap((item) => item.id !== tab.id ? [item] : replacement ? [replacement] : []));
-    setActiveFileTabId((current) => current !== tab.id ? current : replacement?.id ?? remaining.at(-1)?.id ?? fileTabs.at(-1)?.id ?? lastAgentTabId(agentTabs));
-    if (!replacement && !remaining.length && !fileTabs.length && !agentTabs.length) setRightPanelOpen(false);
-  };
-
-  const handleCloseFileTab = useCallback((tabId: string) => {
-    if (terminalTabs.some((tab) => tab.id === tabId)) {
-      setTerminalTabs((tabs) => tabs.map((tab) => tab.id === tabId && !tab.closing ? { ...tab, closing: "close" } : tab));
-      return;
-    }
-    if (tabId.startsWith("agent:")) {
-      const remainingAgents = agentTabs.filter((tab) => `agent:${tab.sessionId}` !== tabId);
-      setAgentTabs(remainingAgents);
-      setActiveFileTabId((cur) => {
-        if (cur !== tabId) return cur;
-        return fileTabs.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(remainingAgents);
-      });
-      if (fileTabs.length === 0 && terminalTabs.length === 0 && remainingAgents.length === 0) setRightPanelOpen(false);
-      return;
-    }
-    setFileTabs((prev) => {
-      const next = prev.filter((t) => t.id !== tabId);
-      if (next.length === 0 && terminalTabs.length === 0 && agentTabs.length === 0) setRightPanelOpen(false);
-      return next;
-    });
-    setActiveFileTabId((cur) => {
-      if (cur !== tabId) return cur;
-      const remaining = fileTabs.filter((t) => t.id !== tabId);
-      return remaining.at(-1)?.id ?? terminalTabs.at(-1)?.id ?? lastAgentTabId(agentTabs);
-    });
-  }, [fileTabs, terminalTabs, agentTabs]);
-
   const handleViewFullHistory = useCallback(() => {
     if (!selectedSession) return;
     window.open(
@@ -1624,28 +1513,72 @@ export function AppShell() {
     });
   }, [artifactPaneKey]);
 
-  const handleOpenArtifactFile = useCallback((filePath: string, page?: number) => {
-    if (!artifactPaneKey) {
-      handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
+  // Sub-agent work opens as a transcript tab in the session's artifacts pane,
+  // beside the files, instead of taking over the whole chat.
+  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
+    if (!artifactPaneKey) return;
+    updateArtifactPane((current) => ({
+      tabs: openAgentTab(current.tabs, sessionId, label),
+      activeTabId: agentTabId(sessionId),
+    }));
+    setArtifactsOpen(true);
+    // The pane lives on the chat's right: a sub-agent's work is session-scoped.
+    if (mainView !== "chat") {
+      setMainView("chat");
+      saveMainView("chat");
+    }
+    if (isMobile) setSidebarOpen(false);
+  }, [artifactPaneKey, isMobile, mainView, updateArtifactPane]);
+
+  const openSubagentTabIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!artifactsOpen) return ids;
+    for (const tab of artifactPane.tabs) {
+      const sessionId = agentTabSessionId(tab.id);
+      if (sessionId) ids.add(sessionId);
+    }
+    return ids;
+  }, [artifactPane.tabs, artifactsOpen]);
+
+  // The agent switcher's row button: opens the transcript tab, or closes it
+  // when the pane already shows it.
+  const handleToggleSubagentTab = useCallback((sessionId: string, label: string) => {
+    const tabId = agentTabId(sessionId);
+    if (artifactPane.tabs.some((tab) => tab.id === tabId)) {
+      updateArtifactPane((current) => {
+        const tabs = current.tabs.filter((tab) => tab.id !== tabId);
+        if (tabs.length === current.tabs.length) return current;
+        return {
+          tabs,
+          activeTabId: current.activeTabId === tabId ? (tabs.at(-1)?.id ?? null) : current.activeTabId,
+        };
+      });
       return;
     }
+    if (isMobile) setActiveTopPanel(null);
+    handleOpenSubagentTab(sessionId, label);
+  }, [artifactPane.tabs, handleOpenSubagentTab, isMobile, updateArtifactPane]);
+
+  const handleOpenArtifactFile = useCallback((
+    filePath: string,
+    page?: number,
+    sourceSessionId?: string | null,
+  ) => {
+    if (!artifactPaneKey) return;
     const tabId = `file:${filePath}`;
     updateArtifactPane((current) => ({
       tabs: openFileTab(current.tabs, {
         fileName: getFileName(filePath),
         filePath,
         page,
-        sourceSessionId: selectedSession?.id ?? null,
+        sourceSessionId: sourceSessionId ?? selectedSession?.id ?? null,
         tabId,
       }),
       activeTabId: tabId,
     }));
     setArtifactsOpen(true);
-    if (isMobile) {
-      setSidebarOpen(false);
-      setRightPanelOpen(false);
-    }
-  }, [artifactPaneKey, handleOpenFile, isMobile, selectedSession?.id, updateArtifactPane]);
+    if (isMobile) setSidebarOpen(false);
+  }, [artifactPaneKey, isMobile, selectedSession?.id, updateArtifactPane]);
 
   const handleArtifactViewerStateChange = useCallback((tabId: string, revision: number, viewerState: FileViewerState) => {
     updateArtifactPane((current) => {
@@ -1675,10 +1608,7 @@ export function AppShell() {
   const handleArtifactsToggle = useCallback(() => {
     setArtifactsOpen((open) => {
       const next = !open;
-      if (next && isMobile) {
-        setSidebarOpen(false);
-        setRightPanelOpen(false);
-      }
+      if (next && isMobile) setSidebarOpen(false);
       return next;
     });
   }, [isMobile]);
@@ -1858,9 +1788,6 @@ export function AppShell() {
     if (cwd === projectTrustCwd) setProjectTrust(status);
   }, [projectTrustCwd]);
 
-  const activeFileTab = fileTabs.find((tab) => tab.id === activeFileTabId) ?? null;
-  // Subagent work tabs: like files, only the active one is mounted.
-  const activeAgentTab = agentTabs.find((tab) => `agent:${tab.sessionId}` === activeFileTabId) ?? null;
   const activeCwdName = activeCwd ? getFileName(activeCwd) || activeCwd : null;
   const windowTitle = activeCwdName ? `${activeCwdName} - Pi Star` : "Pi Star";
 
@@ -2247,79 +2174,6 @@ export function AppShell() {
             hasSession
           />
         ))}
-        <button
-          ref={systemBtnRef}
-          type="button"
-          className="main-toolbar-action"
-          onClick={() => handleSystemInfoToggle("system", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("system.prompt")}
-          aria-label={translate("system.prompt")}
-          aria-pressed={activeTopPanel === "system"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "system" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "system" ? "2px solid var(--accent)" : "2px solid transparent",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "system" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "system" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemPrompt ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="8" y1="13" x2="16" y2="13" />
-            <line x1="8" y1="17" x2="13" y2="17" />
-          </svg>
-          {!mobile && <span>{translate("system.label")}</span>}
-        </button>
-        <button
-          type="button"
-          className="main-toolbar-action"
-          onClick={() => handleSystemInfoToggle("tools", mobile)}
-          disabled={mobile && !showChat}
-          title={translate("tools.title")}
-          aria-label={translate("tools.title")}
-          aria-pressed={activeTopPanel === "tools"}
-          style={{
-            display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
-            width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
-            height: "100%", padding: mobile ? 0 : "0 12px",
-            background: activeTopPanel === "tools" ? "var(--bg-selected)" : "none",
-            border: "none",
-            borderTop: activeTopPanel === "tools" ? "2px solid var(--accent)" : "2px solid transparent",
-            borderRight: "1px solid var(--border)",
-            cursor: mobile && !showChat ? "not-allowed" : "pointer",
-            color: activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)",
-            opacity: mobile && !showChat ? 0.45 : 1,
-            fontSize: 11, whiteSpace: "nowrap", transition: "color 0.1s, background 0.1s",
-          }}
-          onMouseEnter={(event) => {
-            if (mobile && !showChat) return;
-            event.currentTarget.style.color = "var(--text)";
-          }}
-          onMouseLeave={(event) => {
-            event.currentTarget.style.color = activeTopPanel === "tools" ? "var(--text)" : "var(--text-muted)";
-          }}
-          data-mobile-toolbar-action={mobile ? "tools" : undefined}
-        >
-          <svg width={mobile ? 16 : 12} height={mobile ? 16 : 12} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ color: systemTools?.some((tool) => tool.active) ? "var(--accent)" : "var(--text-dim)", flexShrink: 0 }} aria-hidden="true">
-            <path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.8-3.8a6 6 0 0 1-7.9 7.9l-6.9 6.9a2.1 2.1 0 0 1-3-3l6.9-6.9a6 6 0 0 1 7.9-7.9z" />
-          </svg>
-          {!mobile && <span>{translate("tools.label")}</span>}
-        </button>
       </div>
     );
   };
@@ -2508,7 +2362,7 @@ export function AppShell() {
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
+          ...(mobile ? {} : { borderLeft: "1px solid var(--border)" }),
           color: open ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
         }}
@@ -2545,7 +2399,9 @@ export function AppShell() {
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
+          ...(mobile
+            ? { borderRight: "1px solid var(--border)" }
+            : { borderLeft: showChat && mainView === "chat" ? "none" : "1px solid var(--border)" }),
           color: open ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
         }}
@@ -2566,38 +2422,32 @@ export function AppShell() {
     );
   };
 
-  const renderMainFileToggle = (mobile: boolean) => {
-    const covered = mobile && isNarrowMobile && mobileToolbarMoreOpen;
+  // The dock's toggle, left of the session stats on a desktop toolbar. It only
+  // opens or closes the pane: every leaf loads its own view.
+  const renderDockButton = () => {
+    if (!canDock) return null;
     return (
       <button
         type="button"
-        onClick={handleRightPanelToggle}
-        disabled={covered}
-        tabIndex={covered ? -1 : undefined}
-        aria-controls="file-panel"
-        aria-expanded={rightPanelOpen}
-        aria-hidden={covered ? true : undefined}
-        title={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
-        aria-label={rightPanelOpen ? translate("files.hidePanel") : translate("files.showPanel")}
-        data-mobile-toolbar-file={mobile ? "true" : undefined}
+        onClick={handleDockToggle}
+        aria-controls="right-dock"
+        aria-expanded={dockVisible}
+        aria-label={translate(dockVisible ? "dock.hide" : "dock.show")}
+        title={translate(dockVisible ? "dock.hide" : "dock.show")}
+        data-dock-toggle="true"
         style={{
-          // With a chat the Debug button is right-aligned instead (renderDebugButton).
-          marginLeft: !mobile && !showChat ? "auto" : 0,
+          marginLeft: !showChat ? "auto" : 0,
           display: "flex", alignItems: "center", justifyContent: "center",
-          width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-          visibility: covered ? "hidden" : "visible",
-          pointerEvents: covered ? "none" : "auto",
-          background: rightPanelOpen ? "var(--bg-selected)" : "none",
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+          background: dockVisible ? "var(--bg-selected)" : "none",
           border: "none", borderLeft: "1px solid var(--border)",
-          color: rightPanelOpen ? "var(--text)" : "var(--text-muted)",
+          color: dockVisible ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
         }}
-        onMouseEnter={(event) => { if (!covered) event.currentTarget.style.color = "var(--text)"; }}
-        onMouseLeave={(event) => { event.currentTarget.style.color = rightPanelOpen ? "var(--text)" : "var(--text-muted)"; }}
+        onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.color = dockVisible ? "var(--text)" : "var(--text-muted)"; }}
       >
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
-        </svg>
+        <DockPanelIcon size={16} />
       </button>
     );
   };
@@ -2716,7 +2566,7 @@ export function AppShell() {
       <div
         ref={sidebarResizer.panelRef}
         id="session-sidebar"
-        inert={rightPanelFullWidth}
+        inert={dockFullWidth}
         className={`sidebar-container${sidebarOpen ? " sidebar-open" : " sidebar-closed"}${mobileSidebarReady ? "" : " sidebar-mobile-pending"}${sidebarResizer.isResizing ? " sidebar-resizing" : ""}`}
         style={{
           "--sidebar-width": `${sidebarResizer.width}px`,
@@ -2735,7 +2585,7 @@ export function AppShell() {
       {sidebarOpen && (
         <div
           {...sidebarResizer.separatorProps}
-          inert={rightPanelFullWidth}
+          inert={dockFullWidth}
           aria-controls="session-sidebar"
           className={`panel-resize-handle sidebar-resize-handle${sidebarResizer.isResizing ? " is-resizing" : ""}`}
           data-resize-handle="sidebar"
@@ -2744,10 +2594,15 @@ export function AppShell() {
       )}
 
       {/* Center: chat */}
-      <div inert={rightPanelFullWidth} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
+      <div inert={dockFullWidth} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         {/* Top bar with sidebar toggle */}
         <div ref={topBarRef} style={{ flexShrink: 0, background: "var(--bg-panel)" }}>
-        <div style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}>
+        <div
+          data-toolbar-tight={tabSlot.compact ? "true" : undefined}
+          style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}
+        >
+          {/* The two groups the centred view switch keeps clear of (see tabSlot). */}
+          <div ref={topBarLeftRef} style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0 }}>
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -2772,23 +2627,33 @@ export function AppShell() {
             )}
           </button>
           {!isMobile && (
+            <>
+              {renderProjectTrustWarning(false)}
+              {renderChatToolbarActions(false)}
+            </>
+          )}
+          </div>
+          {!isMobile && (
             <div
+              ref={tabSlotRef}
               className="main-view-tabs-slot"
               style={{
                 position: "absolute",
-                left: "50%",
+                // Centred in the bar, and kept clear of both button groups so a
+                // narrow chat (an open dock) never slides it under them.
+                left: tabSlot.left,
                 top: "env(safe-area-inset-top)",
                 bottom: 0,
-                transform: "translateX(-50%)",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
+                overflow: "hidden",
                 zIndex: 6,
                 pointerEvents: "none",
               }}
             >
-              <div style={{ pointerEvents: "auto" }}>
-                <MainViewTabs value={mainView} onChange={handleMainViewChange} />
+              <div style={{ pointerEvents: "auto", minWidth: 0 }}>
+                <MainViewTabs value={mainView} onChange={handleMainViewChange} compact={tabSlot.compact} />
               </div>
             </div>
           )}
@@ -2847,8 +2712,7 @@ export function AppShell() {
               {!isNarrowMobile && renderArtifactsButton(true)}
               {!isNarrowMobile && renderDebugButton(true)}
               {renderSessionStatsButton(true)}
-              {renderMainFileToggle(true)}
-              {isNarrowMobile && mobileToolbarMoreOpen && (
+                  {isNarrowMobile && mobileToolbarMoreOpen && (
                 <div
                   id="mobile-toolbar-actions"
                   role="toolbar"
@@ -2880,16 +2744,16 @@ export function AppShell() {
               )}
             </div>
           )}
+          <div ref={topBarRightRef} style={{ display: "flex", alignItems: "stretch", height: "100%", marginLeft: "auto", flexShrink: 0 }}>
           {!isMobile && (
             <>
-              {renderProjectTrustWarning(false)}
-              {renderChatToolbarActions(false)}
               {renderArtifactsButton(false)}
               {renderDebugButton(false)}
               {renderSessionStatsButton(false)}
             </>
           )}
-          {!isMobile && renderMainFileToggle(false)}
+          {!isMobile && renderDockButton()}
+          </div>
           {isMobile && sessionHasBranches && (
             <BranchNavigator
               tree={branchTree}
@@ -2925,20 +2789,6 @@ export function AppShell() {
                   onSelectSession={handleSelectSession}
                   openSubagentTabIds={openSubagentTabIds}
                   onToggleSubagentTab={handleToggleSubagentTab}
-                />
-              )}
-              {activeTopPanel === "system" && (
-                <SystemPromptPanel
-                  loading={systemInfoLoading}
-                  prompt={systemPrompt}
-                  translate={translate}
-                />
-              )}
-              {activeTopPanel === "tools" && (
-                <ToolDefinitionsPanel
-                  loading={systemInfoLoading}
-                  tools={systemTools}
-                  translate={translate}
                 />
               )}
               {activeTopPanel === "session" && (
@@ -3158,7 +3008,7 @@ export function AppShell() {
           <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", height: "100%", minHeight: 0 }}>
           {showChat ? (
             <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
-              {artifactsOpen && mainView === "chat" && (
+              {artifactsOpen && mainView === "chat" && artifactsOverlay && (
                 <div className="artifacts-overlay-backdrop" aria-hidden="true" onClick={closeArtifacts} />
               )}
               <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
@@ -3208,13 +3058,15 @@ export function AppShell() {
               </div>
               {artifactsOpen && mainView === "chat" && (
                 <>
-                  <div
-                    {...artifactsResizer.separatorProps}
-                    aria-controls="session-artifacts"
-                    className={`panel-resize-handle artifacts-resize-handle${artifactsResizer.isResizing ? " is-resizing" : ""}`}
-                    data-resize-handle="artifacts"
-                    title={`${translate("artifacts.resize")}: ${translate("layout.resizeHint")}`}
-                  />
+                  {!artifactsOverlay && (
+                    <div
+                      {...artifactsResizer.separatorProps}
+                      aria-controls="session-artifacts"
+                      className={`panel-resize-handle artifacts-resize-handle${artifactsResizer.isResizing ? " is-resizing" : ""}`}
+                      data-resize-handle="artifacts"
+                      title={`${translate("artifacts.resize")}: ${translate("layout.resizeHint")}`}
+                    />
+                  )}
                   <SessionArtifactsPane
                     ref={artifactsResizer.panelRef}
                     sessionId={selectedSession?.id ?? null}
@@ -3222,8 +3074,11 @@ export function AppShell() {
                     artifacts={sessionArtifacts}
                     scanning={artifactsScanning}
                     pane={artifactPane}
+                    overlay={artifactsOverlay}
+                    runningSessionIds={runningSessionIds}
                     onChange={(next) => updateArtifactPane(() => next)}
                     onOpenFile={handleOpenArtifactFile}
+                    onOpenSubagent={handleOpenSubagentTab}
                     onOpenInCode={handleOpenArtifactInCode}
                     onOpenCodeView={handleOpenArtifactsCodeView}
                     onViewerStateChange={handleArtifactViewerStateChange}
@@ -3328,145 +3183,40 @@ export function AppShell() {
         </div>
       </div>
 
-      <div
-        aria-hidden="true"
-        className={`right-panel-overlay-backdrop${rightPanelOpen ? " is-open" : ""}`}
-        onClick={() => setRightPanelOpen(false)}
-      />
-      {rightPanelOpen && (
+      {dockVisible && dockContext && dockState && (
         <div
-          {...rightPanelResizer.separatorProps}
-          inert={rightPanelFullWidth}
-          aria-controls="file-panel"
-          className={`panel-resize-handle right-panel-resize-handle${rightPanelResizer.isResizing ? " is-resizing" : ""}`}
-          data-resize-handle="right-panel"
-          title={`${translate("layout.resizeFilePanel")}: ${translate("layout.resizeHint")}`}
+          {...dockResizer.separatorProps}
+          inert={dockFullWidth}
+          aria-controls="right-dock"
+          className={`panel-resize-handle dock-resize-handle${dockResizer.isResizing ? " is-resizing" : ""}`}
+          data-resize-handle="right-dock"
+          title={`${translate("dock.resize")}: ${translate("layout.resizeHint")}`}
         />
       )}
 
-      {/* Right panel: file viewer — always mounted, width animated via CSS */}
-      <div
-        ref={rightPanelResizer.panelRef}
-        id="file-panel"
-        className={`right-panel-container${rightPanelOpen ? " right-panel-open" : " right-panel-closed"}${rightPanelFullWidth ? " right-panel-full-width" : ""}${rightPanelResizer.isResizing ? " right-panel-resizing" : ""}`}
-        style={{
-          "--right-panel-width": `${rightPanelResizer.width}px`,
-          display: "flex",
-          flexDirection: "column",
-          borderLeft: "1px solid var(--border)",
-          background: "var(--bg)",
-        } as React.CSSProperties}
-      >
-        {/* Right panel tab bar */}
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          flexShrink: 0,
-          height: "calc(36px + env(safe-area-inset-top))",
-          paddingTop: "env(safe-area-inset-top)",
-          background: "var(--bg-panel)",
-          borderBottom: "1px solid var(--border)",
-        }}>
-          <div style={{ flex: 1, overflow: "hidden" }}>
-            <TabBar
-              tabs={panelTabs}
-              activeTabId={activeFileTabId ?? ""}
-              onSelectTab={setActiveFileTabId}
-              onCloseTab={handleCloseFileTab}
-              onReorderTab={(source, target, after) => setPanelTabOrder(movePanelTab(panelTabs.map((tab) => tab.id), source, target, after))}
-            />
-          </div>
-          <button
-            type="button"
-            className="file-panel-expand-button"
-            onClick={handleRightPanelExpandToggle}
-            aria-controls="file-panel"
-            aria-pressed={rightPanelFullWidth}
-            title={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
-            aria-label={translate(rightPanelFullWidth ? "files.restorePanelWidth" : "files.expandPanel")}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d={rightPanelFullWidth
-                ? "M9 3v6H3m12-6v6h6M9 21v-6H3m12 6v-6h6M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"
-                : "M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5M3 3l6 6m12-6-6 6M3 21l6-6m12 6-6-6"} />
-            </svg>
-          </button>
-          <button
-            type="button"
-            onClick={() => setRightPanelOpen(false)}
-            aria-controls="file-panel"
-            aria-expanded={rightPanelOpen}
-            title={translate("files.hidePanel")}
-            aria-label={translate("files.hidePanel")}
-            style={{
-              display: "flex", alignItems: "center", justifyContent: "center",
-              width: TOP_BAR_ICON_BUTTON_SIZE, height: TOP_BAR_ICON_BUTTON_SIZE, padding: 0,
-              background: "var(--bg-selected)", border: "none", borderLeft: "1px solid var(--border)",
-              color: "var(--text)", cursor: "pointer", flexShrink: 0, transition: "color 0.12s",
-            }}
-            onMouseEnter={(event) => { event.currentTarget.style.color = "var(--accent)"; }}
-            onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text)"; }}
-          >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <rect x="3" y="3" width="18" height="18" rx="2" /><line x1="15" y1="3" x2="15" y2="21" />
-            </svg>
-          </button>
-        </div>
-
-        {/* Only the active viewer is mounted. Lightweight per-tab state is restored on activation. */}
-        <div style={{ flex: 1, minHeight: 0, overflow: "hidden", paddingBottom: "env(safe-area-inset-bottom)" }}>
-          {activeFileTab?.filePath ? (
-            <FileViewer
-              key={`${fileWorkspaceGeneration}:${activeFileTab.id}:${activeFileTab.viewerRevision ?? 0}`}
-              filePath={activeFileTab.filePath}
-              cwd={activeCwd ?? undefined}
-              sourceSessionId={activeFileTab.sourceSessionId}
-              gitRefreshKey={explorerRefreshKey}
-              initialDisplayMode={activeFileTab.initialDisplayMode}
-              initialPage={activeFileTab.page}
-              initialState={activeFileTab.viewerState}
-              watchEnabled={rightPanelOpen}
-              onStateChange={(viewerState) => handleFileViewerStateChange(
-                fileWorkspaceGeneration,
-                activeFileTab.id,
-                activeFileTab.viewerRevision ?? 0,
-                viewerState,
-              )}
-              onMentionLines={rightPanelOpen ? handleFileLineMention : undefined}
-              onAtMention={handleAtMention}
-              onOpenFile={(filePath, page) => handleOpenFile(
-                filePath,
-                getFileName(filePath),
-                { sourceSessionId: activeFileTab.sourceSessionId, page },
-              )}
-            />
-          ) : !terminalTabs.some((tab) => tab.id === activeFileTabId) && !activeAgentTab ? (
-            <div style={{ height: "100%", display: "flex", alignItems: "center", justifyContent: "center", color: "var(--text-dim)", fontSize: 12 }}>
-               {translate("files.noneOpen")}
-            </div>
-          ) : null}
-          {terminalTabs.map((tab) => (
-            <div key={tab.id} hidden={tab.id !== activeFileTabId} style={{ width: "100%", height: "100%" }}>
-              <TerminalPanel
-                tab={tab}
-                active={rightPanelOpen && tab.id === activeFileTabId}
-                onRestart={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: "restart" } : item))}
-                onClosed={() => handleTerminalClosed(tab)}
-                onCloseError={() => setTerminalTabs((tabs) => tabs.map((item) => item.id === tab.id ? { ...item, closing: undefined } : item))}
-              />
-            </div>
-          ))}
-          {activeAgentTab && (
-            <SubagentViewer
-              key={activeAgentTab.sessionId}
-              sessionId={activeAgentTab.sessionId}
-              fallbackLabel={activeAgentTab.label}
-              running={runningSessionIds.has(activeAgentTab.sessionId)}
-              onOpenFile={handleOpenLinkedFile}
-            />
-          )}
-        </div>
-      </div>
+      {/* Right dock: a project's own Code/Diff/Terminal views, side by side. */}
+      {dockVisible && dockContext && dockState && (
+        <RightDock
+          ref={dockResizer.panelRef}
+          context={dockContext}
+          state={dockState}
+          // Rendered only when visible, so its leaves are live whenever they exist.
+          active
+          isMobile={isMobile}
+          codeRoot={codeRoot}
+          gitRoot={gitProjectRoot}
+          defaultCwd={terminalDefaultCwd}
+          projectName={codeRoot ? getFileName(codeRoot) || codeRoot : null}
+          refreshKey={explorerRefreshKey}
+          expanded={dockExpanded}
+          onChange={updateDockState}
+          onToggleExpanded={handleDockExpandToggle}
+          onClose={() => setDockOpen(false)}
+          onAtMention={handleAtMention}
+          onMentionLines={handleFileLineMention}
+          style={{ "--dock-width": `${dockResizer.width}px` } as React.CSSProperties}
+        />
+      )}
     </div>
     {settingsSection && (
       <SettingsPanel
@@ -3484,6 +3234,10 @@ export function AppShell() {
         projectTrust={projectTrust}
         onOpenTrustDialog={openProjectTrustDialog}
         onProjectTrustChanged={handleProjectTrustChanged}
+        systemPrompt={systemPrompt}
+        systemTools={systemTools}
+        systemInfoLoading={systemInfoLoading}
+        onLoadSystemInfo={loadSystemInfo}
       />
     )}
     {/* After Settings, so it opens above it (z-index 1100 over 1000) when Settings › MCP asks for it. */}

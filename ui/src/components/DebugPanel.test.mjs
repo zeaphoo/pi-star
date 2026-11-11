@@ -722,7 +722,7 @@ test("a tooltip holds the view still: the mouse on a titled element freezes what
 });
 
 test("the Debug button only toggles its panel, left of the session stats", () => {
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
+  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderDockButton");
   assert.match(button, /onClick=\{\(\) => toggleTopPanel\("debug", mobile\)\}/);
   assert.doesNotMatch(button, /handleSystemInfoToggle|sendAgentCommand|fetch\(|setSessionKey|loadSession|systemInfoLoaderRef/);
   assert.match(button, /aria-label=\{translate\("debug\.title"\)\}/);
@@ -731,13 +731,18 @@ test("the Debug button only toggles its panel, left of the session stats", () =>
   assert.match(button, /if \(!showChat\) return null;/);
   assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
 
-  // Desktop: after the chat's actions and the session's artifacts button,
-  // right before the stats; the artifacts button takes the free space then.
-  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderArtifactsButton\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
+  // Desktop: the session's actions sit in the bar's left group (right of the
+  // sidebar toggle); the panel icons keep their own group on the right.
+  assert.ok(
+    shellSource.indexOf("renderChatToolbarActions(false)") < shellSource.indexOf('className="main-view-tabs-slot"'),
+    "the chat's actions stay left of the centred view switch",
+  );
+  assert.match(shellSource, /\{renderArtifactsButton\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
   assert.match(button, /marginLeft: mobile \|\| \(showChat && mainView === "chat"\) \? 0 : "auto"/);
   const stats = between(shellSource, "const renderSessionStatsButton = (mobile: boolean) => {", "const renderDebugButton");
   assert.match(stats, /\n\s*marginLeft: 0,/);
-  assert.match(shellSource, /marginLeft: !mobile && !showChat \? "auto" : 0,/);
+  // The dock button follows the stats in the same right-hand group.
+  assert.match(shellSource, /marginLeft: !showChat \? "auto" : 0,/);
   // Phones: before the stats on a wide one, in the "more" overlay on a narrow one.
   assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderArtifactsButton\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
   assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderArtifactsButton\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);
@@ -746,7 +751,7 @@ test("the Debug button only toggles its panel, left of the session stats", () =>
 test("Escape with focus in the panel gives it back to the Debug button, after the panel left the page", () => {
   assert.match(panelSource, /<section ref=\{sectionRef\} className="debug-panel"/);
   assert.match(panelSource, /createDebugPanelEscapeListener\(\s*document,\s*\(\) => sectionRef\.current,\s*\(restoreFocus\) => onCloseRef\.current\(restoreFocus\),\s*\)/);
-  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderMainFileToggle");
+  const button = between(shellSource, "const renderDebugButton = (mobile: boolean) => {", "const renderDockButton");
   assert.match(button, /<button\s+ref=\{debugButtonRef\}/);
   const close = between(shellSource, "const closeDebugPanel = useCallback(", "}, []);");
   assert.match(close, /\(restoreFocus: boolean\) => \{\s*setActiveTopPanel\(\(panel\) => panel === "debug" \? null : panel\);\s*if \(restoreFocus\) requestAnimationFrame\(\(\) => focusIfLost\(document, debugButtonRef\.current\)\);/);
@@ -785,7 +790,7 @@ test("AppShell keeps the chat's reader in a ref and the panel open across sessio
   assert.match(shellSource, /onDebugSnapshotReaderChange=\{handleDebugSnapshotReaderChange\}/);
   assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanel\s/);
   assert.match(shellSource, /useEffect\(\(\) => \{\s*startPageVisibilityTracking\(\);\s*\}, \[\]\);/);
-  for (const [name, next] of [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"], ["handleSessionDeleted", "handleOpenFile"]]) {
+  for (const [name, next] of [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"], ["handleSessionDeleted", "handleViewFullHistory"]]) {
     const body = between(shellSource, `const ${name} = useCallback`, `const ${next} = useCallback`);
     assert.match(body, /setActiveTopPanel\(\(panel\) => panel === "debug" \? panel : null\);/, name);
     assert.doesNotMatch(body, /setActiveTopPanel\(null\)/, name);

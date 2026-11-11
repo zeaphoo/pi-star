@@ -45,8 +45,31 @@ These are intentional and must be re-applied after a re-sync:
   the header's New menu (a split button: new session in the current project, or the folder
   picker and the projects used last). The Code view's tree header carries the files' upload,
   ignored-files and search keys that the retired sidebar files panel had.
+- Settings › General is a split view with two rows, **Appearance** (theme, fonts
+  & layout, language, version) and **Chat** (thinking expansion, quote selection,
+  send key, cache/cost notices, the Windows shell tool), instead of one long
+  page. On a phone it follows the same list → detail levels as the other
+  sections.
+- Upstream's toolbar "System" and "Tools" panels are gone: both read the same
+  session information and sat next to each other, so they became one read-only
+  Settings section, **Session context** (`components/SessionContextSettings.tsx`,
+  `settings.context`), with a refresh button. The chat still owns the request
+  (`onSystemInfoLoaderChange`); Settings only asks it to run.
 - A session-scoped artifacts pane (`components/SessionArtifactsPane.tsx`,
   `lib/session-artifacts.ts`) sits to the right of `ChatWindow`, toggled beside Debug, with
   per-session file tabs and a remembered open state. Chat links and written-file chips open
-  there; the global right panel keeps the Code/Git/terminal/subagent tabs. The whole-session
-  artifact list is paged from the context endpoint, outside the chat's own message window.
+  there, and a sub-agent's transcript opens there too (`file-tab-state.ts`'s `openAgentTab`),
+  so the pane is the session's whole right side. The whole-session artifact list is paged
+  from the context endpoint, outside the chat's own message window. The pane floats over the
+  chat (`is-overlay`, decided by the room left after the sidebar and the dock) instead of
+  squeezing it.
+- Upstream's shared right panel (`#file-panel`, `rightPanelOpen`, per-workspace parked file
+  tabs, panel terminals and sub-agent tabs) is replaced by a **right dock**
+  (`components/RightDock.tsx`, `DockNodeView.tsx`, `lib/dock-state.ts`): a project-scoped
+  split tree of independent Code/Diff/Terminal leaves. Every leaf keeps its own tabs,
+  selection and shells — nothing is shared with the main view, and a dock terminal is a
+  different PTY from the main view's. The layout and each leaf's state are parked per
+  project (`pi-star:dock:v1`); the dock's width and open state are the user's own
+  preferences (`pi-star:dock-width`, `pi-star:dock-open`). It is offered at ≥1024px only,
+  capped at four leaves (two of them terminals). The split-tree helpers it shares with the
+  terminal workspace live in `lib/split-tree.ts`.

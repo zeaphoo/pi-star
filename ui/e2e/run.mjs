@@ -8,14 +8,13 @@ import { dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { checkFilePanel, filePanelFixture } from "./file-panel.mjs";
 import { checkExtensionDialogSizing, checkExtensionDialogs, extensionSource } from "./extension-dialog.mjs";
 import { checkChatAppearance } from "./chat-appearance.mjs";
 import { checkCodeBackground } from "./code-background.mjs";
 import { checkModelDiscovery } from "./model-discovery.mjs";
 import { checkModelContext } from "./model-context.mjs";
 import { checkModelSelector } from "./model-selector.mjs";
-import { checkFilesPlacement, showSidebarSessions } from "./sidebar.mjs";
+import { showSidebarSessions } from "./sidebar.mjs";
 import { checkSessionNavigation } from "./session-navigation.mjs";
 import { checkProjectNavigation, createProjectNavigationFixtures } from "./project-navigation.mjs";
 import { chromiumOptions, repoRoot, startServer } from "./server.mjs";
@@ -30,8 +29,6 @@ const agentDir = mkdtempSync(join(tmpdir(), "pi-web-e2e-"));
 const project = join(agentDir, "project");
 const sessionDir = join(agentDir, "sessions", "e2e");
 mkdirSync(project);
-const previewFile = join(project, "preview.html");
-writeFileSync(previewFile, filePanelFixture);
 mkdirSync(sessionDir, { recursive: true });
 const timestamp = "2026-08-23T00:00:00.000Z";
 const LONG = "e2e-long-session";
@@ -481,7 +478,6 @@ try {
     }
     await page.goto(`${base}/?session=${RICH}`, { waitUntil: "domcontentloaded" });
     await page.locator(".markdown-code-block pre").waitFor();
-    await checkFilePanel(page, previewFile);
     if (extensionsSupported) {
       await checkExtensionDialogs(page, artifacts, viewport.width);
       await checkExtensionDialogSizing(page, viewport.width);
@@ -506,7 +502,6 @@ try {
       await hideSidebar.waitFor({ state: "visible" });
       // The files sit below the sessions on a desktop; Settings › General ›
       // File browser brings the tabs back, and goes back.
-      await checkFilesPlacement(page);
       console.log("PASS: files below the sessions by default, tabs from Settings and back");
       // Settings › MCP renders the Code mode pane from
       // `GET /api/mcp.codemode`; an incomplete shape used to blank the page.

@@ -45,7 +45,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function sanitize(value: unknown, projectKey: string): GitWorkspaceState | null {
+/** Read one stored workspace; exported for the right dock's per-leaf copies. */
+export function sanitizeGitWorkspace(value: unknown, projectKey: string): GitWorkspaceState | null {
   if (!isRecord(value)) return null;
   const tab: GitTab = value.tab === "history" ? "history" : "changes";
   const scope = value.selectedFileScope;
@@ -70,7 +71,7 @@ export function loadGitWorkspaces(): Record<string, GitWorkspaceState> {
     if (!isRecord(parsed)) return {};
     const out: Record<string, GitWorkspaceState> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      const state = sanitize(value, key);
+      const state = sanitizeGitWorkspace(value, key);
       if (state) out[key] = state;
     }
     return out;

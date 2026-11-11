@@ -6,7 +6,15 @@
  * the Rust terminal manager.
  */
 
-export type TerminalSplitDirection = "row" | "column";
+import {
+  removeTreeNode,
+  resizeTreeSplit,
+  splitTreeLeaf,
+  type SplitDirection,
+  type TreeOps,
+} from "./split-tree";
+
+export type TerminalSplitDirection = SplitDirection;
 
 export interface TerminalPaneState {
   kind: "pane";
@@ -120,6 +128,16 @@ export function collectTerminalIds(node: TerminalTreeNode): string[] {
   return node.children.flatMap(collectTerminalIds);
 }
 
+export const TERMINAL_TREE_OPS: TreeOps<TerminalTreeNode> = {
+  isLeaf: (node) => node.kind === "pane",
+  id: (node) => node.id,
+  children: (node) => node.kind === "split" ? node.children : [],
+  sizes: (node) => node.kind === "split" ? node.sizes : [],
+  direction: (node) => node.kind === "split" ? node.direction : "row",
+  makeSplit: (children, direction, sizes) => ({ kind: "split", id: randomId(), direction, children, sizes }),
+  withChildren: (node, children, sizes) => node.kind === "split" ? { ...node, children, sizes } : node,
+};
+
 /** Replace one leaf with a split holding the old and a new pane. */
 export function splitTerminalPane(
   tab: TerminalWorkspaceTab,
@@ -130,47 +148,10 @@ export function splitTerminalPane(
   const target = findTerminalPane(tab.root, paneId);
   if (!target) return tab;
   const added = newTerminalPane(target.cwd);
-  const split = (node: TerminalTreeNode): TerminalTreeNode => {
-    if (node.kind === "pane") {
-      if (node.id !== paneId) return node;
-      return {
-        kind: "split",
-        id: randomId(),
-        direction,
-        children: [node, added],
-        sizes: [0.5, 0.5],
-      };
-    }
-    return { ...node, children: node.children.map(split) };
-  };
-  return { ...tab, root: split(tab.root), activePaneId: added.id };
-}
-
-function removeTerminalNode(
-  node: TerminalTreeNode,
-  paneId: string,
-): { node: TerminalTreeNode | null; removed: boolean } {
-  if (node.kind === "pane") {
-    return node.id === paneId ? { node: null, removed: true } : { node, removed: false };
-  }
-  let removed = false;
-  const children: TerminalTreeNode[] = [];
-  const sizes: number[] = [];
-  node.children.forEach((child, index) => {
-    const result = removeTerminalNode(child, paneId);
-    removed ||= result.removed;
-    if (result.node) {
-      children.push(result.node);
-      sizes.push(node.sizes[index] ?? 1 / node.children.length);
-    }
-  });
-  if (!removed) return { node, removed: false };
-  if (children.length === 0) return { node: null, removed: true };
-  if (children.length === 1) return { node: children[0], removed: true };
-  const total = sizes.reduce((sum, size) => sum + size, 0) || 1;
   return {
-    node: { ...node, children, sizes: sizes.map((size) => size / total) },
-    removed: true,
+    ...tab,
+    root: splitTreeLeaf(tab.root, paneId, direction, added, TERMINAL_TREE_OPS),
+    activePaneId: added.id,
   };
 }
 
@@ -179,7 +160,7 @@ export function closeTerminalPane(
   tab: TerminalWorkspaceTab,
   paneId: string,
 ): TerminalWorkspaceTab | null {
-  const result = removeTerminalNode(tab.root, paneId);
+  const result = removeTreeNode(tab.root, paneId, TERMINAL_TREE_OPS);
   if (!result.node) return null;
   const activePaneId = tab.activePaneId === paneId
     ? firstTerminalPane(result.node).id
@@ -216,12 +197,7 @@ export function resizeTerminalSplit(
   splitId: string,
   sizes: number[],
 ): TerminalTreeNode {
-  if (node.kind === "pane") return node;
-  if (node.id === splitId) {
-    const total = sizes.reduce((sum, size) => sum + size, 0) || 1;
-    return { ...node, sizes: sizes.map((size) => size / total) };
-  }
-  return { ...node, children: node.children.map((child) => resizeTerminalSplit(child, splitId, sizes)) };
+  return resizeTreeSplit(node, splitId, sizes, TERMINAL_TREE_OPS);
 }
 
 function storage(): Storage | null {
@@ -294,7 +270,8 @@ function sanitizeTab(value: unknown): TerminalWorkspaceTab | null {
   };
 }
 
-function sanitizeWorkspace(value: unknown, projectKey: string): TerminalWorkspaceState | null {
+/** Read one stored workspace; exported for the right dock's per-leaf copies. */
+export function sanitizeTerminalWorkspace(value: unknown, projectKey: string): TerminalWorkspaceState | null {
   if (!isRecord(value)) return null;
   const tabs = (Array.isArray(value.tabs) ? value.tabs : [])
     .map(sanitizeTab)
@@ -314,7 +291,7 @@ export function loadTerminalWorkspaces(): Record<string, TerminalWorkspaceState>
     if (!isRecord(parsed)) return {};
     const out: Record<string, TerminalWorkspaceState> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      const workspace = sanitizeWorkspace(value, key);
+      const workspace = sanitizeTerminalWorkspace(value, key);
       if (workspace) out[key] = workspace;
     }
     return out;

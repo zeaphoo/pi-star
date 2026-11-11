@@ -104,7 +104,8 @@ function sanitizeTab(value: unknown): Tab | null {
   return tab;
 }
 
-function sanitizeWorkspace(value: unknown): CodeWorkspaceState | null {
+/** Read one stored workspace; exported for the right dock's per-leaf copies. */
+export function sanitizeCodeWorkspace(value: unknown): CodeWorkspaceState | null {
   if (!isRecord(value)) return null;
   const projectKey = typeof value.projectKey === "string" ? value.projectKey : "";
   const root = typeof value.root === "string" ? value.root : "";
@@ -131,7 +132,7 @@ export function loadCodeWorkspaces(): Record<string, CodeWorkspaceState> {
     if (!isRecord(parsed)) return {};
     const out: Record<string, CodeWorkspaceState> = {};
     for (const [key, value] of Object.entries(parsed)) {
-      const state = sanitizeWorkspace(value);
+      const state = sanitizeCodeWorkspace(value);
       if (state) out[key] = state;
     }
     return out;

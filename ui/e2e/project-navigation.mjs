@@ -4,8 +4,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { showSidebarFiles, showSidebarSessions } from "./sidebar.mjs";
-import { filePanelFixture } from "./file-panel.mjs";
+import { showSidebarSessions } from "./sidebar.mjs";
 
 /** Seed before the server starts: a real linked worktree and an empty project. */
 export function createProjectNavigationFixtures({ agentDir, sessionDir, timestamp }) {
@@ -23,8 +22,6 @@ export function createProjectNavigationFixtures({ agentDir, sessionDir, timestam
   git("init", "-q");
   git("commit", "--allow-empty", "-qm", "fixture");
   git("worktree", "add", "-b", "test/project-tab", worktree);
-  const note = join(worktree, "project-note.html");
-  writeFileSync(note, filePanelFixture);
   const id = "e2e-project-navigation";
   const entries = [
     { type: "session", version: 3, id, timestamp, cwd: worktree },
@@ -32,7 +29,7 @@ export function createProjectNavigationFixtures({ agentDir, sessionDir, timestam
     { type: "message", id: "project-answer", parentId: "project-user", timestamp, message: { role: "assistant", content: "E2E linked-worktree answer" } },
   ];
   writeFileSync(join(sessionDir, `2026-08-23T00-00-00-000Z_${id}.jsonl`), entries.map((entry) => JSON.stringify(entry)).join("\n") + "\n");
-  return { id, root, worktree, empty, note };
+  return { id, root, worktree, empty };
 }
 
 export async function checkProjectNavigation({ browser, base, artifacts, fixture, otherSessionId, api, post }) {
@@ -89,9 +86,10 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
         const menu = page.getByRole("menu");
         await menu.waitFor();
         const names = (await menu.getByRole("menuitem").allInnerTexts()).map((text) => text.split("\n")[0].trim());
+        // The retired sidebar file browser took its "Open in Files" item with
+        // it; the tab action is still there and still not the first item.
         const at = names.indexOf("Open in new tab");
         assert.ok(at > 0, "the action is not the first item");
-        assert.equal(names[at - 1], "Open in Files");
         return menu;
       };
       const openTab = async (key, keyboard = false) => {
@@ -128,17 +126,6 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
         await showSessions();
         const sourceUrl = page.url();
         const sourceCwd = await page.locator(".sidebar-new-button").getAttribute("title");
-        let fileFrame;
-        let fileInstance;
-        if (!mobile) {
-          await showSidebarFiles(page);
-          await page.getByTitle(fixture.note.replace(/\\/g, "/"), { exact: true }).click();
-          const iframe = page.locator("#file-panel iframe");
-          await iframe.waitFor();
-          fileFrame = await (await iframe.elementHandle()).contentFrame();
-          await fileFrame.locator("#notes").fill("Keep this file preview");
-          fileInstance = await fileFrame.evaluate(() => window.previewInstance);
-        }
         for (const [key, cwd, label] of [
           [current.projectKey, current.cwd, "current worktree"],
           [other.projectKey, other.projectRoot, "other project"],
@@ -156,11 +143,6 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
           assert.equal(await input.inputValue(), "Keep this source-tab draft");
           assert.equal(await page.locator(".sidebar-new-button").getAttribute("title"), sourceCwd);
           assert.equal(await group(key).locator(".session-tree-group-toggle").getAttribute("aria-expanded"), expanded);
-          if (!mobile) {
-            assert.equal(await page.locator("#file-panel").isVisible(), true);
-            assert.equal(await fileFrame.evaluate(() => window.previewInstance), fileInstance, "the file preview was not remounted");
-            assert.equal(await fileFrame.locator("#notes").inputValue(), "Keep this file preview");
-          }
           console.log(`PASS: ${mobile ? "mobile" : "desktop"} project Open in new tab: ${label}, reload, source context preserved`);
         }
         if (mobile) {

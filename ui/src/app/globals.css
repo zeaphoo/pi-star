@@ -2765,6 +2765,17 @@ span.token.table {
   font-weight: 600;
 }
 
+/* A tight toolbar (an open dock leaves the chat narrow) collapses the action
+   labels before the groups can reach the centre switch. The measure is the chat
+   column's own width (AppShell's tabSlot), not the viewport's. */
+[data-toolbar-tight="true"] .main-toolbar-action > span {
+  display: none;
+}
+[data-toolbar-tight="true"] .main-toolbar-action {
+  padding-left: 8px !important;
+  padding-right: 8px !important;
+}
+
 /* Narrow desktops keep the centre switch centred: the action labels collapse
    to their icons before the toolbar can reach the middle. */
 @media (max-width: 1200px) {
@@ -2890,19 +2901,18 @@ span.token.table {
   background-color: var(--bg-panel);
 }
 
-.right-panel-overlay-backdrop {
-  display: none;
-}
-
 /* Session artifacts pane (components/SessionArtifactsPane.tsx): the chat's own
    right pane, inside the center column, independent of the global file panel.
    Wide desktops split the chat; narrower windows overlay it from the right. */
 .artifacts-panel {
   display: flex;
   flex-direction: column;
+  flex: none;
+  width: var(--artifacts-width, 420px);
+  min-width: 300px;
   min-height: 0;
-  min-width: 0;
   background: var(--bg);
+  border-left: 1px solid var(--border);
 }
 .artifacts-header {
   display: flex;
@@ -3136,48 +3146,28 @@ span.token.table {
   font-variant-numeric: tabular-nums;
   pointer-events: none;
 }
+/* The chat column's own width decides this (AppShell's artifactsOverlay): the
+   pane floats over a narrow chat instead of squeezing it. */
+.artifacts-panel.is-overlay {
+  position: fixed;
+  top: 0;
+  right: env(safe-area-inset-right);
+  bottom: 0;
+  z-index: 260;
+  width: min(560px, calc(100vw - 32px));
+  min-width: 300px;
+  border-left: 1px solid var(--border);
+  box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
+}
 .artifacts-overlay-backdrop {
-  display: none;
-}
-
-@media (min-width: 960px) {
-  .artifacts-panel {
-    flex: none;
-    width: var(--artifacts-width, 420px);
-    min-width: 300px;
-    border-left: 1px solid var(--border);
-  }
-  .artifacts-overlay-backdrop {
-    display: none;
-  }
-}
-
-@media (max-width: 959px) {
-  .artifacts-resize-handle {
-    display: none;
-  }
-  .artifacts-overlay-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 255;
-    display: block;
-    background: rgba(0, 0, 0, 0.24);
-  }
-  .artifacts-panel {
-    position: fixed;
-    top: 0;
-    right: env(safe-area-inset-right);
-    bottom: 0;
-    z-index: 260;
-    width: min(560px, calc(100vw - 32px));
-    min-width: 300px;
-    border-left: 1px solid var(--border);
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
-  }
+  position: fixed;
+  inset: 0;
+  z-index: 255;
+  background: rgba(0, 0, 0, 0.24);
 }
 
 @media (max-width: 640px) {
-  .artifacts-panel {
+  .artifacts-panel.is-overlay {
     width: 100vw;
     min-width: 0;
   }
@@ -3213,117 +3203,209 @@ span.token.table {
   }
 }
 
-/* Wide desktop file panel: participate in the split layout. */
-@media (min-width: 960px) {
-  .right-panel-container {
-    overflow: hidden;
-    transition: width 0.2s ease, min-width 0.2s ease;
-    flex-shrink: 0;
-  }
-  .right-panel-container.right-panel-open {
-    width: var(--right-panel-width, clamp(360px, 42vw, 640px));
-    min-width: 300px;
-  }
-  .right-panel-container.right-panel-closed {
-    width: 0;
-    min-width: 0;
-    border-left: none !important;
-  }
-  /* keep inner content at fixed width so it doesn't reflow during animation */
-  .right-panel-container > * {
-    width: var(--right-panel-width, clamp(360px, 42vw, 640px));
-    min-width: 300px;
-  }
-  .right-panel-container.right-panel-resizing,
-  .right-panel-container.right-panel-resizing > * {
-    transition: none !important;
-  }
+/* Right dock (components/RightDock.tsx): a project's own Code/Diff/Terminal
+   views beside the chat, arranged in a split tree. It is a real layout column,
+   never an overlay: below DOCK_MIN_VIEWPORT the toggle is not offered and the
+   main view keeps its own tabs. */
+.dock-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: var(--dock-width, 620px);
+  min-width: 360px;
+  overflow: hidden;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
 }
-
-/* Compact desktop file panel: overlay the chat instead of collapsing it. */
-@media (min-width: 641px) and (max-width: 959px) {
-  .right-panel-resize-handle {
-    display: none;
-  }
-  .right-panel-overlay-backdrop {
-    position: fixed;
-    inset: 0;
-    z-index: 240;
-    display: block;
-    background: rgba(0, 0, 0, 0.24);
-    opacity: 0;
-    pointer-events: none;
-    transition: opacity 0.2s ease;
-  }
-  .right-panel-overlay-backdrop.is-open {
-    opacity: 1;
-    pointer-events: auto;
-  }
-  .right-panel-container {
-    position: fixed;
-    top: 0;
-    right: env(safe-area-inset-right);
-    bottom: 0;
-    z-index: 250;
-    width: min(560px, calc(100vw - 48px));
-    min-width: 300px;
-    overflow: hidden;
-    box-shadow: -12px 0 32px rgba(0, 0, 0, 0.18);
-    transition: transform 0.2s ease;
-  }
-  .right-panel-container.right-panel-open {
-    transform: translateX(0);
-  }
-  .right-panel-container.right-panel-closed {
-    transform: translateX(100%);
-    pointer-events: none;
-  }
-  .right-panel-container > * {
-    width: 100%;
-    min-width: 0;
-  }
+/* Full-width mode: the dock takes the window, as a maximized tiling frame. */
+.dock-panel.is-expanded {
+  position: fixed;
+  inset: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
+  z-index: 300;
+  width: auto;
+  min-width: 0;
+  height: var(--app-viewport-height, 100dvh);
+  border-left: none;
+  box-shadow: none;
 }
-
-/* Full-width mode keeps the mounted viewer and saved split width intact. */
-@media (min-width: 641px) {
-  .right-panel-container.right-panel-open.right-panel-full-width {
-    position: fixed;
-    inset: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
-    z-index: 250;
-    width: auto;
-    min-width: 0;
-    height: var(--app-viewport-height, 100dvh);
-    border-left: none !important;
-    box-shadow: none;
-    transform: none;
-    transition: none;
-  }
-  .right-panel-container.right-panel-full-width > * {
-    width: 100%;
-    min-width: 0;
-  }
+.dock-header {
+  display: flex;
+  align-items: stretch;
+  flex: none;
+  height: calc(var(--top-bar-height) + env(safe-area-inset-top));
+  padding-top: env(safe-area-inset-top);
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
 }
-.file-panel-expand-button {
+.dock-header-icon {
+  display: flex;
+  align-items: center;
+  padding-left: 10px;
+  color: var(--text-dim);
+}
+.dock-header-title {
+  display: flex;
+  align-items: center;
+  padding-left: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dock-header-spacer {
+  flex: 1;
+  min-width: 0;
+}
+.dock-header-divider {
+  width: 1px;
+  margin: 6px 0;
+  background: var(--border);
+}
+.dock-header-button {
   display: flex;
   align-items: center;
   justify-content: center;
-  flex-shrink: 0;
+  flex: none;
   width: var(--top-bar-height);
-  height: var(--top-bar-height);
   padding: 0;
-  background: var(--bg-selected);
-  border: none;
+  border: 0;
   border-left: 1px solid var(--border);
-  color: var(--text);
+  background: transparent;
+  color: var(--text-muted);
   cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
-.file-panel-expand-button:hover,
-.file-panel-expand-button[aria-pressed="true"] {
+.dock-header-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.dock-header-button:disabled {
+  color: var(--text-dim);
+  cursor: default;
+  opacity: 0.4;
+}
+.dock-header-button[aria-pressed="true"] {
+  background: var(--bg-selected);
   color: var(--accent);
 }
-.file-panel-expand-button:focus-visible {
+.dock-header-button:focus-visible,
+.dock-leaf-action:focus-visible,
+.dock-empty-choice:focus-visible {
   outline: 2px solid var(--accent);
-  outline-offset: -3px;
+  outline-offset: -2px;
+}
+.dock-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.dock-sash {
+  background: var(--border);
+  transition: background 0.12s;
+}
+.dock-sash:hover,
+.dock-sash:active {
+  background: var(--accent);
+}
+.dock-leaf-header {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  height: 26px;
+  padding-left: 8px;
+  background: var(--bg-panel);
+  border-bottom: 1px solid var(--border);
+}
+.dock-leaf.is-focused {
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+.dock-leaf-icon {
+  display: flex;
+  flex: none;
+  align-items: center;
+  color: var(--text-dim);
+}
+.dock-leaf-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  padding-left: 4px;
+  color: var(--text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dock-leaf-action {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.dock-leaf-action:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.dock-leaf-close:hover {
+  color: #dc2626;
+}
+.dock-empty {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 24px;
+  color: var(--text-muted);
+  text-align: center;
+}
+.dock-empty-title {
+  color: var(--text);
+  font-size: 13px;
+}
+.dock-empty-hint {
+  max-width: 260px;
+  font-size: 11px;
+  line-height: 1.5;
+}
+.dock-empty-choices {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+}
+.dock-empty-choice {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  width: 96px;
+  padding: 14px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+  cursor: pointer;
+  transition: border-color 0.12s, color 0.12s;
+}
+.dock-empty-choice:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+.dock-empty-choice-icon {
+  display: flex;
+  color: var(--text-dim);
+}
+.dock-resize-handle {
+  flex: none;
 }
 
 /* Mobile sidebar: slide in/out as overlay */
@@ -3350,31 +3432,9 @@ span.token.table {
     box-shadow: none;
   }
 
-  .right-panel-container {
-    position: fixed;
-    inset: 0 env(safe-area-inset-right) 0 env(safe-area-inset-left);
-    height: var(--app-viewport-height, 100dvh);
-    z-index: 250;
-    overflow: hidden;
-    transition: transform 0.2s ease;
-  }
-  .right-panel-container.right-panel-open {
-    width: auto;
-    min-width: 0;
-  }
-  .right-panel-container.right-panel-closed {
-    width: 0 !important;
-    min-width: 0 !important;
-    border-left: none !important;
-    display: none !important;
-  }
-  .right-panel-container > * {
-    width: 100%;
-    min-width: 0;
-  }
-  .file-panel-expand-button,
-  .panel-resize-handle,
-  .right-panel-overlay-backdrop {
+  .dock-panel,
+  .dock-resize-handle,
+  .panel-resize-handle {
     display: none;
   }
   .directory-picker-back,

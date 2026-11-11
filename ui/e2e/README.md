@@ -8,6 +8,7 @@ cd ui && npm ci && npm run build
 cd .. && cargo build
 cd ui && npm run test:e2e
 npm run test:terminal
+npm run test:dock
 ```
 
 The runner starts and stops its own `target/{debug,release}/pi-star` on an
@@ -31,9 +32,14 @@ Coverage:
 - Interface/chat and monospace font lists and weights apply live, survive
   refresh, sync between tabs and reset independently without changing width or
   font size. Headings and Markdown emphasis retain their weights.
-- On a desktop the sidebar shows the files below the sessions; Settings ›
-  General › File browser brings back the Sessions | Files tabs and returns,
-  without remounting the file tree (its file search keeps its query).
+- A project terminal keeps its shell across sessions and reloads, restarts on
+  demand, and swaps its own theme (`terminal.mjs`).
+- The right dock (`dock.mjs`): independent Code/Terminal leaves beside the
+  chat, a split leaf, a dock terminal on its own PTY (never the main view's),
+  the terminal-leaf budget, a reload that reattaches instead of creating, and
+  per-project layouts. Below 1024px the toggle is not offered at all.
+- Settings › Session context shows the selected session's system prompt and
+  tool definitions (the two toolbar panels it replaced are gone).
 - Unknown sessions and paths outside the fixture project are rejected.
 - Sidebar sessions open in browser tabs (`session-navigation.mjs`, desktop
   Chromium, one context so tabs share storage): a plain click and Enter

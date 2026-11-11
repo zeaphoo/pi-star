@@ -9,6 +9,8 @@ interface Props {
   loading: boolean;
   tools: ToolEntry[] | null;
   translate: Translate;
+  /** Sit in a scrolling column (Settings) instead of the toolbar's dropdown. */
+  embedded?: boolean;
 }
 
 interface ParameterField {
@@ -95,7 +97,7 @@ function EmptyState({ children }: { children: string }) {
   return <div className="tool-definitions-empty">{children}</div>;
 }
 
-export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
+export function ToolDefinitionsPanel({ loading, tools, translate, embedded = false }: Props) {
   // What the model is sent: under codemode's "only" mode the active built-in tools are reached
   // from scripts, and codemode's description lists them.
   const declaredTools = useMemo(
@@ -118,7 +120,7 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
   const fields = selectedTool ? getToolParameterFields(selectedTool.parameters) : [];
 
   return (
-    <div className="tool-definitions-panel">
+    <div className={`tool-definitions-panel${embedded ? " is-embedded" : ""}`}>
       <nav className="tool-definitions-sidebar" aria-label={translate("tools.title")}>
         <div className="tool-definitions-list">
           {declaredTools && declaredTools.length > 0 ? declaredTools.map((tool) => {
@@ -220,6 +222,11 @@ export function ToolDefinitionsPanel({ loading, tools, translate }: Props) {
           overflow: hidden;
           background: var(--bg-panel);
           border-bottom: 1px solid var(--border);
+        }
+        .tool-definitions-panel.is-embedded {
+          height: min(420px, 55dvh);
+          border: 1px solid var(--border);
+          border-radius: 8px;
         }
         .tool-definitions-sidebar,
         .tool-definition-detail {

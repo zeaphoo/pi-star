@@ -13,6 +13,8 @@ interface Props {
   fallbackLabel: string;
   running: boolean;
   onOpenFile: (filePath: string, page?: number) => void;
+  /** Opens a nested sub-agent's transcript in the same pane. */
+  onOpenSubagent?: (sessionId: string, label: string) => void;
 }
 
 const POLL_MS = 2000;
@@ -43,7 +45,7 @@ function toTranscript(page: Partial<SubagentTranscript>): SubagentTranscript {
  * subagent run. Entry-level granularity: pi appends each finished entry
  * synchronously, so a 2 s poll shows the run at message/tool-call resolution.
  */
-export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile }: Props) {
+export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, onOpenSubagent }: Props) {
   const { t, locale } = useI18n();
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [label, setLabel] = useState(fallbackLabel);
@@ -270,6 +272,7 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile }
                   toolResults={toolResults}
                   cwd={info?.cwd}
                   onOpenFile={onOpenFile}
+                  onOpenSubagent={onOpenSubagent}
                   sessionId={sessionId}
                   entryId={entryIds[index]}
                 />

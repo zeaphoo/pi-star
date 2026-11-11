@@ -12,7 +12,8 @@
     "smoke": "node scripts/smoke.mjs",
     "test": "node --experimental-strip-types --test \"src/**/*.test.mjs\" \"public/**/*.test.mjs\"",
     "test:e2e": "node e2e/run.mjs",
-    "test:terminal": "node e2e/terminal.mjs"
+    "test:terminal": "node e2e/terminal.mjs",
+    "test:dock": "node e2e/dock.mjs"
   },
   "dependencies": {
     "@xterm/addon-fit": "0.11.0",

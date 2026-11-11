@@ -213,7 +213,6 @@ test("New in another project adopts it up front and parks the composer's draft",
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const fileTab = { id: "file:/p1/notes.md", filePath: "/p1/notes.md" };
   const context = vm.createContext({
     ...draftStore,
     crypto: globalThis.crypto,
@@ -237,9 +236,6 @@ test("New in another project adopts it up front and parks the composer's draft",
     requestAnimationFrame: () => {},
     isMobile: false,
     activeCwd: "/p1",
-    activeFileTabId: fileTab.id,
-    fileTabs: [fileTab],
-    rightPanelOpen: true,
     newSessionCwd: "/p1",
     newSessionDraftId: "first",
     selectedSession: null,
@@ -253,31 +249,21 @@ test("New in another project adopts it up front and parks the composer's draft",
       context[state] = typeof value === "function" ? value(context[state]) : value;
     };
   }
-  context.changeFileWorkspace = () => {
-    context.fileTabs = [];
-    context.activeFileTabId = null;
-    context.rightPanelOpen = false;
-  };
   vm.runInContext(stripTypeScriptTypes(`${callbacks}
     globalThis.navigate = { handleCwdChange, handleSelectSession, handleNewSession };
   `), context);
   const draft = { value: "half-written in p1", images: [] };
   draftStore.setDraft("new:first:/p1", draft);
 
-  // Ctrl+Alt+N (no key) in the same cwd keeps the project and its file tabs.
+  // Ctrl+Alt+N (no key) in the same cwd keeps the project.
   context.navigate.handleNewSession("kb-1", "/p1");
   assert.equal(context.activeProjectKeyRef.current, "/p1");
-  assert.deepEqual(context.fileTabs, [fileTab]);
-  assert.equal(context.rightPanelOpen, true);
   draftStore.setDraft(context.activeNewSessionDraftKeyRef.current, draft);
 
   // A group's "+" in another project: adopted before the sidebar reports the cwd.
   const sessionKey = context.sessionKey;
   context.navigate.handleNewSession("p2-new", "/p2", "/p2-key");
   assert.equal(context.activeProjectKeyRef.current, "/p2-key");
-  assert.equal(context.fileTabs.length, 0);
-  assert.equal(context.activeFileTabId, null);
-  assert.equal(context.rightPanelOpen, false);
   assert.equal(context.newSessionCwd, "/p2");
   assert.equal(context.sessionKey, sessionKey + 1);
   assert.deepEqual(draftStore.getDraft("parked-new:/p1"), draft, "the p1 composer's draft is parked, not dropped");
@@ -298,7 +284,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
     callbackBody("handleSelectSession", "handleNewSession"),
     callbackBody("handleNewSession", "hydrateSelectedSession"),
   ].join("\n");
-  const fileTab = { id: "file:/p1/notes.md", filePath: "/p1/notes.md" };
   const choices = { model: { provider: "custom", modelId: "fast" }, thinkingLevel: "high" };
   const context = vm.createContext({
     ...draftStore,
@@ -325,9 +310,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
     carriedNewSessionChoices: null,
     isMobile: false,
     activeCwd: "/p1",
-    activeFileTabId: fileTab.id,
-    fileTabs: [fileTab],
-    rightPanelOpen: true,
     newSessionCwd: "/p1",
     newSessionDraftId: "first",
     selectedSession: null,
@@ -341,11 +323,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
       context[state] = typeof value === "function" ? value(context[state]) : value;
     };
   }
-  context.changeFileWorkspace = () => {
-    context.fileTabs = [];
-    context.activeFileTabId = null;
-    context.rightPanelOpen = false;
-  };
   vm.runInContext(stripTypeScriptTypes(`${callbacks}
     globalThis.navigate = { handleCwdChange, handleNewSession };
   `), context);
@@ -364,7 +341,6 @@ test("the composer's bar moves the fresh composer's draft and model picks instea
   assert.equal(context.carriedNewSessionChoices, choices);
   assert.equal(context.activeNewSessionDraftKeyRef.current, "new:p2-new:/p2");
   assert.equal(context.activeProjectKeyRef.current, "/p2-key");
-  assert.equal(context.fileTabs.length, 0);
   assert.equal(context.newSessionCwd, "/p2");
   assert.equal(context.sessionKey, sessionKey + 1);
   // The sidebar's report of that cwd is neither a switch nor a second remount.

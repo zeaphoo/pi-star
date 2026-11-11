@@ -24,24 +24,39 @@ interface Props {
   active: boolean;
   isMobile: boolean;
   refreshKey?: number;
+  /**
+   * Namespaces the tree's remembered width and open state. The main view and
+   * every dock leaf are separate browsers, so they must not share one key.
+   */
+  instanceId?: string;
   onOpenFile: (filePath: string, fileName: string, page?: number) => void;
   onChange: (state: CodeWorkspaceState) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
 }
 
-const TREE_OPEN_KEY = "pi-star:code-tree-open";
 const TREE_DEFAULT_WIDTH = 260;
 const TREE_MIN_WIDTH = 200;
 const TREE_MAX_WIDTH = 420;
 
-function readTreeOpen(): boolean {
-  if (typeof window === "undefined") return true;
+function treeOpenKey(instanceId: string | undefined): string {
+  return instanceId ? `pi-star:code-tree-open:${instanceId}` : "pi-star:code-tree-open";
+}
+
+function treeWidthKey(instanceId: string | undefined): string {
+  return instanceId ? `pi-star:code-tree-width:${instanceId}` : "pi-star:code-tree-width";
+}
+
+function readTreeOpen(instanceId: string | undefined): boolean {
+  // A dock leaf (instanceId) is narrow and meant for looking at a file: it
+  // starts with the tree closed and remembers whatever the user chooses.
+  const fallback = instanceId === undefined;
+  if (typeof window === "undefined") return fallback;
   try {
-    const stored = window.localStorage.getItem(TREE_OPEN_KEY);
-    return stored === null ? true : stored === "1";
+    const stored = window.localStorage.getItem(treeOpenKey(instanceId));
+    return stored === null ? fallback : stored === "1";
   } catch {
-    return true;
+    return fallback;
   }
 }
 
@@ -147,13 +162,14 @@ export function CodeWorkspace({
   active,
   isMobile,
   refreshKey = 0,
+  instanceId,
   onOpenFile,
   onChange,
   onAtMention,
   onMentionLines,
 }: Props) {
   const { t } = useI18n();
-  const [treeOpen, setTreeOpen] = useState(readTreeOpen);
+  const [treeOpen, setTreeOpen] = useState(() => readTreeOpen(instanceId));
   const [mobileTreeOpen, setMobileTreeOpen] = useState(false);
   const treeVisible = isMobile ? mobileTreeOpen : treeOpen;
   const setTreeVisible = useCallback((next: boolean) => {
@@ -176,17 +192,17 @@ export function CodeWorkspace({
     growthDirection: "right",
     maxWidth: TREE_MAX_WIDTH,
     minWidth: TREE_MIN_WIDTH,
-    storageKey: "pi-star:code-tree-width",
+    storageKey: treeWidthKey(instanceId),
     widthRef: treeWidthRef,
   });
 
   useEffect(() => {
     try {
-      window.localStorage.setItem(TREE_OPEN_KEY, treeOpen ? "1" : "0");
+      window.localStorage.setItem(treeOpenKey(instanceId), treeOpen ? "1" : "0");
     } catch {
       // Storage is best-effort.
     }
-  }, [treeOpen]);
+  }, [instanceId, treeOpen]);
 
   const activeTab = useMemo(
     () => state?.tabs.find((tab) => tab.id === state.activeTabId) ?? null,

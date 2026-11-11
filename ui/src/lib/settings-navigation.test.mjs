@@ -39,6 +39,15 @@ test("restores the last settings section and falls back without a project", () =
   assert.equal(getLastSettingsSection("/project", storage), "agents");
 });
 
+test("Session context is a section of its own: no project needed to reach it", () => {
+  const storage = createStorage();
+  assert.ok(SETTINGS_SECTION_VALUES.includes("context"));
+  assert.equal(settingsSectionRequiresProject("context"), false);
+  setLastSettingsSection("context", storage);
+  assert.equal(getLastSettingsSection(null, storage), "context");
+  assert.equal(getLastSettingsSection("/project", storage), "context");
+});
+
 test("keeps project settings selections isolated by cwd", () => {
   const storage = createStorage();
 

@@ -28,6 +28,22 @@ function getServerSnapshot(): boolean {
   return false;
 }
 
+function subscribeToResize(cb: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  window.addEventListener("resize", cb);
+  return () => window.removeEventListener("resize", cb);
+}
+
+const getViewportWidth = () => (typeof window === "undefined" ? 0 : window.innerWidth);
+
+/**
+ * The viewport's width in CSS pixels. Zero until hydration, so anything that
+ * only appears on wide screens stays hidden in the server's markup.
+ */
+export function useViewportWidth(): number {
+  return useSyncExternalStore(subscribeToResize, getViewportWidth, () => 0);
+}
+
 /**
  * Returns true when the viewport is at or below the mobile breakpoint.
  * SSR-safe: renders as desktop (false) on the server and first client paint,

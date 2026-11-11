@@ -1,33 +1,33 @@
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { Tab } from "./TabBar";
 
-export interface FileWorkspaceState {
-  tabs: Tab[];
-  activeTabId: string | null;
-  open: boolean;
+const AGENT_TAB_PREFIX = "agent:";
+
+/** Tab id of a sub-agent's read-only transcript. */
+export function agentTabId(sessionId: string): string {
+  return `${AGENT_TAB_PREFIX}${sessionId}`;
 }
 
-// A parked workspace keeps the generation its tabs were live in: the viewer
-// that unmounts after the switch reports under it, so its state lands in these
-// tabs even when the workspace switched to has the same file open.
-export interface ParkedFileWorkspace extends FileWorkspaceState {
-  generation: number;
+/** The child session a tab shows, or null when it shows a file. */
+export function agentTabSessionId(tabId: string): string | null {
+  return tabId.startsWith(AGENT_TAB_PREFIX) ? tabId.slice(AGENT_TAB_PREFIX.length) : null;
 }
 
-export function switchFileWorkspace(
-  states: Map<string, ParkedFileWorkspace>,
-  currentKey: string | null,
-  nextKey: string,
-  current: FileWorkspaceState,
-  generation: number,
-): FileWorkspaceState {
-  if (currentKey === nextKey) return current;
-  if (currentKey) states.set(currentKey, { ...current, generation });
-  const parked = states.get(nextKey);
-  if (!parked) return { tabs: [], activeTabId: null, open: false };
-  // Live tabs are never parked: the map holds only the workspaces left.
-  states.delete(nextKey);
-  return { tabs: parked.tabs, activeTabId: parked.activeTabId, open: parked.open };
+/**
+ * A sub-agent transcript tab. Its `sourceSessionId` is the child's own session:
+ * a worktree-isolated child resolves files against its own cwd, not the parent's.
+ */
+export function openAgentTab(tabs: Tab[], sessionId: string, label: string): Tab[] {
+  const id = agentTabId(sessionId);
+  const existing = tabs.find((tab) => tab.id === id);
+  if (existing) return existing.label === label ? tabs : tabs.map((tab) => tab.id === id ? { ...tab, label } : tab);
+  return [...tabs, {
+    id,
+    label,
+    filePath: label,
+    kind: "agent",
+    sourceSessionId: sessionId,
+  }];
 }
 
 interface OpenFileTabInput {
@@ -92,20 +92,6 @@ export function openFileTab(tabs: Tab[], input: OpenFileTabInput): Tab[] {
     if (bumpRevision) next.viewerRevision = (tab.viewerRevision ?? 0) + 1;
     return next;
   });
-}
-
-export function saveParkedFileViewerState(
-  states: Map<string, ParkedFileWorkspace>,
-  generation: number,
-  tabId: string,
-  viewerRevision: number,
-  viewerState: FileViewerState,
-): void {
-  for (const [key, workspace] of states) {
-    if (workspace.generation !== generation) continue;
-    states.set(key, { ...workspace, tabs: saveFileViewerState(workspace.tabs, tabId, viewerRevision, viewerState) });
-    return;
-  }
 }
 
 export function saveFileViewerState(
