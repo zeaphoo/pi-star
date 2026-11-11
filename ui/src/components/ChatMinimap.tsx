@@ -652,8 +652,9 @@ export const ChatMinimap = memo(function ChatMinimap({
         position: "relative",
         cursor: "pointer",
         userSelect: "none",
-        borderLeft: "1px solid var(--border)",
-        background: "var(--bg-panel)",
+        // Part of the chat's right edge, not a column of its own: the chat's
+        // background shows through and the pane's border is the only divider.
+        background: "transparent",
         overflow: "visible",
       }}
     >
