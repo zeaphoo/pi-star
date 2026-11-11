@@ -209,21 +209,34 @@ export function CodeWorkspace({
     [state],
   );
 
-  const handleStateChange = useCallback((viewerState: FileViewerState) => {
-    if (!state || !activeTab) return;
-    const tabs = saveFileViewerState(
-      state.tabs,
-      activeTab.id,
-      activeTab.viewerRevision ?? 0,
-      viewerState,
-    );
-    onChange({ ...state, tabs });
-  }, [activeTab, onChange, state]);
+  // An empty browser is unusable while the tree is hidden: there is nothing to
+  // look at and no file to choose. Dock leaves start with the tree closed, so
+  // open it whenever the last tab closes. Once a file is open, the user's own
+  // tree preference is left alone.
+  useEffect(() => {
+    if (!state || state.tabs.length > 0) return;
+    setTreeOpen(true);
+  }, [state]);
+
+  // A FileViewer saves its state in an unmount cleanup. That cleanup runs with
+  // the viewer's last render, which can be older than the tab list: closing a
+  // tab would then write the closed tab back. Read the latest state and name
+  // the tab explicitly, so a cleanup for a closed tab changes nothing.
+  const stateRef = useRef(state);
+  stateRef.current = state;
+
+  const handleStateChange = useCallback((tabId: string, viewerRevision: number, viewerState: FileViewerState) => {
+    const current = stateRef.current;
+    if (!current || !current.tabs.some((tab) => tab.id === tabId)) return;
+    const tabs = saveFileViewerState(current.tabs, tabId, viewerRevision, viewerState);
+    onChange({ ...current, tabs });
+  }, [onChange]);
 
   const handleCloseTab = useCallback((tabId: string) => {
-    if (!state) return;
-    onChange(closeCodeTab(state, tabId));
-  }, [onChange, state]);
+    const current = stateRef.current;
+    if (!current) return;
+    onChange(closeCodeTab(current, tabId));
+  }, [onChange]);
 
   const handleReorderTab = useCallback((source: string, target: string, after: boolean) => {
     if (!state) return;
@@ -440,7 +453,11 @@ export function CodeWorkspace({
               initialPage={activeTab.page}
               initialState={activeTab.viewerState}
               watchEnabled={active}
-              onStateChange={handleStateChange}
+              onStateChange={(viewerState) => handleStateChange(
+                activeTab.id,
+                activeTab.viewerRevision ?? 0,
+                viewerState,
+              )}
               onMentionLines={onMentionLines}
               onAtMention={onAtMention}
               onOpenFile={(filePath, page) => openFile(filePath, getFileName(filePath), page)}

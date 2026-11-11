@@ -30,11 +30,13 @@ import {
 } from "./split-tree";
 
 export type DockView = "code" | "diff" | "terminal";
+export const DOCK_VIEWS: readonly DockView[] = ["code", "diff", "terminal"];
 
 export interface DockLeafNode {
   kind: "leaf";
   id: string;
-  view: DockView;
+  /** null: an empty pane waiting for the user to choose a view. */
+  view: DockView | null;
 }
 
 export interface DockSplitNode {
@@ -60,6 +62,9 @@ export interface DockState {
   diff: Record<string, GitWorkspaceState>;
   terminal: Record<string, TerminalWorkspaceState>;
 }
+
+/** A dock update either replaces the state or applies to the latest one. */
+export type DockStateUpdater = DockState | ((current: DockState) => DockState);
 
 /** What a new leaf's view needs to know about the project it belongs to. */
 export interface DockContext {
@@ -117,9 +122,17 @@ export function countDockView(layout: DockLayout, view: DockView): number {
   return dockLeaves(layout).filter((leaf) => leaf.view === view).length;
 }
 
-export function canAddDockView(state: DockState, view: DockView): boolean {
-  if (dockLeafCount(state.layout) >= DOCK_MAX_LEAVES) return false;
+export function canAddDockLeaf(state: DockState): boolean {
+  return dockLeafCount(state.layout) < DOCK_MAX_LEAVES;
+}
+
+/** Whether an empty leaf may be filled with this view (the terminal budget still applies). */
+export function canSetDockLeafView(state: DockState, view: DockView): boolean {
   return view !== "terminal" || countDockView(state.layout, "terminal") < DOCK_MAX_TERMINAL_LEAVES;
+}
+
+export function canAddDockView(state: DockState, view: DockView): boolean {
+  return canAddDockLeaf(state) && canSetDockLeafView(state, view);
 }
 
 export function focusedDockLeaf(state: DockState): DockLeafNode | null {
@@ -137,27 +150,85 @@ export function addDockView(
   return insertDockLeaf(state, view, direction, context, null);
 }
 
-/** Split one leaf and show the same kind of view in the new one. */
+/** Split one leaf into a new empty pane; the user chooses its view afterwards. */
 export function splitDockLeaf(
   state: DockState,
   leafId: string,
   direction: SplitDirection,
   context: DockContext,
 ): DockState {
-  if (!state.layout.root) return state;
+  // An empty dock gets the first empty pane, ready for a view choice.
+  if (!state.layout.root) return insertDockLeaf(state, null, direction, context, null);
   const leaf = findTreeNode(state.layout.root, leafId, DOCK_TREE_OPS);
   if (!leaf || leaf.kind !== "leaf") return state;
-  return insertDockLeaf(state, leaf.view, direction, context, leafId);
+  return insertDockLeaf(state, null, direction, context, leafId);
+}
+
+/** Fill an empty leaf with one view. A leaf that already has a view never switches. */
+export function setDockLeafView(
+  state: DockState,
+  leafId: string,
+  view: DockView,
+  context: DockContext,
+): DockState {
+  if (!state.layout.root) return state;
+  const leaf = findTreeNode(state.layout.root, leafId, DOCK_TREE_OPS);
+  if (!leaf || leaf.kind !== "leaf" || leaf.view !== null) return state;
+  if (!canSetDockLeafView(state, view)) return state;
+  const nextLeaf: DockLeafNode = { ...leaf, view };
+  const withState = withLeafState(state, nextLeaf, context);
+  return {
+    ...withState,
+    layout: {
+      root: mapDockLeafView(state.layout.root, leafId, view),
+      focusedLeafId: leafId,
+    },
+  };
+}
+
+/** Clear one leaf's view and state, leaving an empty pane in the same slot. */
+export function clearDockLeafContent(
+  state: DockState,
+  leafId: string,
+): { state: DockState; killedTerminalIds: string[] } {
+  if (!state.layout.root) return { state, killedTerminalIds: [] };
+  const leaf = findTreeNode(state.layout.root, leafId, DOCK_TREE_OPS);
+  if (!leaf || leaf.kind !== "leaf" || leaf.view === null) return { state, killedTerminalIds: [] };
+  const removedTerminal = state.terminal[leafId];
+  const killedTerminalIds = removedTerminal
+    ? removedTerminal.tabs.flatMap((tab) => collectTerminalIds(tab.root))
+    : [];
+  const code = { ...state.code };
+  delete code[leafId];
+  const diff = { ...state.diff };
+  delete diff[leafId];
+  const terminal = { ...state.terminal };
+  delete terminal[leafId];
+  return {
+    state: {
+      layout: { root: mapDockLeafView(state.layout.root, leafId, null), focusedLeafId: leafId },
+      code,
+      diff,
+      terminal,
+    },
+    killedTerminalIds,
+  };
+}
+
+function mapDockLeafView(node: DockNode, leafId: string, view: DockView | null): DockNode {
+  if (node.kind === "leaf") return node.id === leafId ? { ...node, view } : node;
+  return { ...node, children: node.children.map((child) => mapDockLeafView(child, leafId, view)) };
 }
 
 function insertDockLeaf(
   state: DockState,
-  view: DockView,
+  view: DockView | null,
   direction: SplitDirection,
   context: DockContext,
   targetLeafId: string | null,
 ): DockState {
-  if (!canAddDockView(state, view)) return state;
+  if (!canAddDockLeaf(state)) return state;
+  if (view !== null && !canSetDockLeafView(state, view)) return state;
   const leaf: DockLeafNode = { kind: "leaf", id: randomId(), view };
   const withState = withLeafState(state, leaf, context);
   const root = withState.layout.root;
@@ -182,7 +253,10 @@ function withLeafState(state: DockState, leaf: DockLeafNode, context: DockContex
   if (leaf.view === "diff") {
     return { ...state, diff: { ...state.diff, [leaf.id]: emptyGitWorkspace(context.projectKey) } };
   }
-  return { ...state, terminal: { ...state.terminal, [leaf.id]: emptyTerminalWorkspace(context.projectKey) } };
+  if (leaf.view === "terminal") {
+    return { ...state, terminal: { ...state.terminal, [leaf.id]: emptyTerminalWorkspace(context.projectKey) } };
+  }
+  return state;
 }
 
 /**
@@ -290,13 +364,14 @@ function sanitizeDockNode(value: unknown, budget: SanitizeBudget): DockNode | nu
   const id = typeof value.id === "string" ? value.id : "";
   if (!id || budget.ids.has(id)) return null;
   if (value.kind === "leaf") {
-    if (!isDockView(value.view)) return null;
+    const view = value.view === null ? null : isDockView(value.view) ? value.view : undefined;
+    if (view === undefined) return null;
     if (budget.leaves >= DOCK_MAX_LEAVES) return null;
-    if (value.view === "terminal" && budget.terminals >= DOCK_MAX_TERMINAL_LEAVES) return null;
+    if (view === "terminal" && budget.terminals >= DOCK_MAX_TERMINAL_LEAVES) return null;
     budget.ids.add(id);
     budget.leaves += 1;
-    if (value.view === "terminal") budget.terminals += 1;
-    return { kind: "leaf", id, view: value.view };
+    if (view === "terminal") budget.terminals += 1;
+    return { kind: "leaf", id, view };
   }
   if (value.kind !== "split") return null;
   budget.ids.add(id);
@@ -328,6 +403,7 @@ export function sanitizeDockState(value: unknown, projectKey: string): DockState
   const diff: Record<string, GitWorkspaceState> = {};
   const terminal: Record<string, TerminalWorkspaceState> = {};
   for (const leaf of leaves) {
+    if (leaf.view === null) continue;
     if (leaf.view === "code") {
       const stored = isRecord(value.code) ? sanitizeCodeWorkspace(value.code[leaf.id]) : null;
       if (stored) code[leaf.id] = stored;

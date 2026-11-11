@@ -3287,9 +3287,57 @@ span.token.table {
   background: var(--bg-selected);
   color: var(--accent);
 }
+.dock-header-button.dock-header-split {
+  width: auto;
+  gap: 5px;
+  padding: 0 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+.dock-split-control {
+  position: relative;
+  display: flex;
+  align-self: stretch;
+}
+.dock-header-button.dock-split-toggle {
+  width: 24px;
+  padding: 0;
+}
+.dock-split-menu {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  z-index: 40;
+  min-width: 164px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-panel);
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.22);
+}
+.dock-split-menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 7px 9px;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.dock-split-menu-item:hover {
+  background: var(--bg-hover);
+}
 .dock-header-button:focus-visible,
 .dock-leaf-action:focus-visible,
-.dock-empty-choice:focus-visible {
+.dock-empty-choice:focus-visible,
+.dock-split-menu-item:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -3399,6 +3447,27 @@ span.token.table {
 .dock-empty-choice:hover {
   border-color: var(--accent);
   color: var(--text);
+}
+.dock-empty-choice:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.dock-empty-choice:disabled:hover {
+  border-color: var(--border);
+  color: var(--text-muted);
+}
+/* The type picker can live in a narrow split pane, so its choices wrap. */
+.dock-pane-picker {
+  padding: 16px;
+  overflow: auto;
+}
+.dock-pane-picker .dock-empty-choices {
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.dock-pane-picker .dock-empty-choice {
+  width: 88px;
+  padding: 10px 8px;
 }
 .dock-empty-choice-icon {
   display: flex;

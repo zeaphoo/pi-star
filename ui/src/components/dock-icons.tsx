@@ -63,6 +63,14 @@ export function DockCloseIcon({ size = 12 }: { size?: number }) {
   return <Icon size={size}><path d="M18 6 6 18M6 6l12 12" /></Icon>;
 }
 
+export function DockPlusIcon({ size = 14 }: { size?: number }) {
+  return <Icon size={size}><line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" /></Icon>;
+}
+
+export function DockChevronDownIcon({ size = 12 }: { size?: number }) {
+  return <Icon size={size}><path d="m6 9 6 6 6-6" /></Icon>;
+}
+
 export function DockExpandIcon({ size = 16, expanded = false }: { size?: number; expanded?: boolean }) {
   return (
     <Icon size={size}>

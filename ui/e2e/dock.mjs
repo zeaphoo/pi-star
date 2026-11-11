@@ -97,7 +97,16 @@ try {
   const dock = page.locator("#right-dock");
   const leaves = dock.locator("[data-dock-leaf]");
   const toggle = page.locator('[data-dock-toggle="true"]');
-  const addView = (view) => dock.locator(`[data-dock-add="${view}"]`).first().click();
+  const splitPane = () => dock.locator('[data-dock-split="true"]').click();
+  const addView = async (view) => {
+    const choice = dock.locator(`[data-dock-add="${view}"]`).first();
+    if (await choice.count()) {
+      await choice.click();
+      return;
+    }
+    await splitPane();
+    await dock.locator(`[data-dock-add="${view}"]`).first().click();
+  };
   const dockReady = () => dock.locator(".terminal-panel .is-ready").first().waitFor();
   const savedDock = () => page.evaluate(() => JSON.parse(localStorage.getItem("pi-star:dock:v1") || "{}"));
   const dockTerminalIds = async () => {
@@ -124,6 +133,22 @@ try {
     await addView("code");
     assert.equal(await leaves.count(), 1);
     assert.equal(await leaves.first().getAttribute("data-dock-view"), "code");
+    assert.equal(await dock.locator(".code-workspace-tree").count(), 1, "an empty code pane opens the file tree");
+
+    // The arrow beside the split button chooses the direction explicitly.
+    await dock.getByRole("button", { name: "Split direction", exact: true }).click();
+    await dock.getByRole("menuitem", { name: "Split below", exact: true }).click();
+    assert.equal(await leaves.count(), 2);
+    const explicitEmpty = dock.locator('[data-dock-leaf]:not([data-dock-view])');
+    assert.equal(await explicitEmpty.count(), 1);
+    await explicitEmpty.getByRole("button", { name: "Close pane", exact: true }).click();
+    assert.equal(await leaves.count(), 1);
+
+    await dock.getByText("readme.md", { exact: true }).first().click();
+    await dock.locator('[role="tab"]').first().waitFor();
+    await dock.getByRole("button", { name: "Close readme.md", exact: true }).click();
+    await dock.locator('[role="tab"]').first().waitFor({ state: "detached" });
+    assert.equal(await dock.getByText("No file open", { exact: true }).count(), 1, "closing the last file tab leaves the pane empty");
 
     // A terminal beside it: a second, independent shell.
     await addView("terminal");
@@ -151,17 +176,32 @@ try {
     await page.getByRole("tab", { name: "Chat", exact: true }).click();
     await dock.waitFor();
 
-    // Splitting the terminal leaf adds a second terminal leaf, and the budget stops there.
+    // Splitting the terminal leaf creates an empty pane; choosing Terminal makes it a shell.
     const terminalLeaf = dock.locator('[data-dock-leaf][data-dock-view="terminal"]');
-    await terminalLeaf.getByRole("button", { name: "Split below", exact: true }).click();
+    await terminalLeaf.click();
+    await splitPane();
     assert.equal(await leaves.count(), 3);
+    await dock.locator('[data-dock-add="terminal"]').first().click();
     await page.waitForFunction(() => Object.keys(JSON.parse(localStorage.getItem("pi-star:dock:v1") || "{}")).length > 0);
     assert.equal((await dockTerminalIds()).length, 2, "two dock shells now");
+
+    // The terminal budget is two leaves: a fresh empty pane cannot pick Terminal.
+    await splitPane();
     const terminalAdd = dock.locator('[data-dock-add="terminal"]');
     assert.equal(await terminalAdd.isDisabled(), true, "the terminal budget is two leaves");
+    await dock.locator('[data-dock-leaf]:not([data-dock-view])').getByRole("button", { name: "Close pane", exact: true }).click();
+    assert.equal(await leaves.count(), 3);
 
-    // Removing one view leaves the rest alone.
-    await dock.locator('[data-dock-leaf][data-dock-view="code"]').getByRole("button", { name: "Close view", exact: true }).click();
+    // Closing a filled pane empties it; closing the empty pane removes it.
+    const codeLeaf = dock.locator('[data-dock-leaf][data-dock-view="code"]');
+    const codeLeafId = await codeLeaf.getAttribute("data-dock-leaf");
+    await codeLeaf.getByText("readme.md", { exact: true }).first().click();
+    await dock.locator('[role="tab"]').first().waitFor();
+    await codeLeaf.getByRole("button", { name: "Close view content", exact: true }).click();
+    assert.equal(await leaves.count(), 3, "the pane slot stays");
+    assert.equal(await dock.getByText("Choose a view", { exact: true }).count(), 1, "an open file does not bring the code pane back");
+    const emptiedCode = dock.locator(`[data-dock-leaf="${codeLeafId}"]`);
+    await emptiedCode.getByRole("button", { name: "Close pane", exact: true }).click();
     assert.equal(await leaves.count(), 2);
     await page.waitForFunction(() => document.querySelectorAll("#right-dock [data-dock-leaf]").length === 2);
 

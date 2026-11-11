@@ -7,7 +7,10 @@ const {
   DOCK_MAX_LEAVES,
   DOCK_MAX_TERMINAL_LEAVES,
   addDockView,
+  canAddDockLeaf,
   canAddDockView,
+  canSetDockLeafView,
+  clearDockLeafContent,
   closeDockLeaf,
   countDockView,
   dockLeaves,
@@ -18,6 +21,7 @@ const {
   resizeDockSplit,
   sanitizeDockState,
   setDockLeafCode,
+  setDockLeafView,
   splitDockLeaf,
 } = await jiti.import("./dock-state.ts");
 const { openCodeFileTab } = await jiti.import("./code-workspace.ts");
@@ -65,14 +69,59 @@ test("a split running the same way gains a sibling instead of nesting", () => {
   assert.deepEqual(next.layout.root.sizes.map((size) => Math.round(size * 100)), [50, 25, 25]);
 });
 
-test("splitting a leaf adds a view of the same kind, in the asked direction", () => {
+test("splitting a leaf adds an empty pane, in the asked direction", () => {
   const state = withViews("terminal");
   const leaf = dockLeaves(state.layout)[0];
   const next = splitDockLeaf(state, leaf.id, "column", context);
   assert.equal(dockLeafCount(next.layout), 2);
-  assert.equal(countDockView(next.layout, "terminal"), 2);
+  assert.equal(countDockView(next.layout, "terminal"), 1, "the new pane does not copy the terminal");
+  const empty = dockLeaves(next.layout).find((item) => item.view === null);
+  assert.ok(empty, "the new pane waits for a view choice");
   assert.equal(next.layout.root.direction, "column");
-  assert.notEqual(next.layout.focusedLeafId, leaf.id, "the new leaf takes focus");
+  assert.equal(next.layout.focusedLeafId, empty.id, "the new empty leaf takes focus");
+});
+
+test("an empty pane can be filled once, then never switches in place", () => {
+  const state = withViews("code");
+  const leaf = dockLeaves(state.layout)[0];
+  const split = splitDockLeaf(state, leaf.id, "row", context);
+  const empty = dockLeaves(split.layout).find((item) => item.view === null);
+  assert.ok(empty);
+  assert.equal(canAddDockLeaf(split), true);
+  assert.equal(canSetDockLeafView(split, "diff"), true);
+
+  const filled = setDockLeafView(split, empty.id, "diff", context);
+  assert.equal(dockLeaves(filled.layout).find((item) => item.id === empty.id).view, "diff");
+  assert.ok(filled.diff[empty.id], "the chosen view gets its own state");
+  assert.equal(setDockLeafView(filled, empty.id, "code", context), filled, "a filled pane never switches");
+});
+
+test("clearing a pane keeps the slot, drops its state, and reports terminal shells", () => {
+  const state = withViews("terminal");
+  const leaf = dockLeaves(state.layout)[0];
+  const paneId = "0123456789abcdef0123456789abcdef";
+  const withPane = {
+    ...state,
+    terminal: {
+      [leaf.id]: {
+        projectKey: "/repo",
+        tabs: [{
+          id: "tab",
+          cwd: "/repo",
+          root: { kind: "pane", id: "pane", terminalId: paneId, cwd: "/repo" },
+          activePaneId: "pane",
+        }],
+        activeTabId: "tab",
+      },
+    },
+  };
+  const { state: cleared, killedTerminalIds } = clearDockLeafContent(withPane, leaf.id);
+  assert.deepEqual(killedTerminalIds, [paneId]);
+  assert.equal(dockLeafCount(cleared.layout), 1, "the pane slot stays");
+  assert.equal(dockLeaves(cleared.layout)[0].view, null);
+  assert.equal(cleared.terminal[leaf.id], undefined);
+  assert.equal(cleared.layout.focusedLeafId, leaf.id);
+  assert.equal(clearDockLeafContent(cleared, leaf.id).state, cleared, "an empty pane is already clear");
 });
 
 test("the leaf and terminal budgets hold", () => {

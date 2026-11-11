@@ -41,8 +41,6 @@ type ContextView = "prompt" | "tools";
 export function SessionContextSettings({ sessionId, prompt, tools, loading, onLoad }: Props) {
   const { t } = useI18n();
   const [view, setView] = useState<ContextView>("prompt");
-  const activeTools = tools?.filter((tool) => tool.active).length ?? null;
-  const totalTools = tools?.length ?? null;
   // Opening the section reads once, as the old panels did when they opened.
   const requestedRef = useRef(false);
   useEffect(() => {
@@ -77,9 +75,6 @@ export function SessionContextSettings({ sessionId, prompt, tools, loading, onLo
               onClick={() => setView("tools")}
             >
               <ConfigSidebarText className="is-grow">{t("tools.title")}</ConfigSidebarText>
-              {activeTools !== null && totalTools !== null && (
-                <span className="config-sidebar-group-count">{activeTools}/{totalTools}</span>
-              )}
             </ConfigSidebarItem>
           </ConfigSidebarList>
         </ConfigSidebar>
@@ -94,7 +89,6 @@ export function SessionContextSettings({ sessionId, prompt, tools, loading, onLo
                   </ConfigDetailTitle>
                   <div className="settings-context-hint">
                     {t("context.description")}
-                    {activeTools !== null && ` · ${t("context.activeTools", { count: activeTools })}`}
                   </div>
                 </div>
               </ConfigDetailHeaderInfo>

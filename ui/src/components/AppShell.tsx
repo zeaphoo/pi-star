@@ -98,6 +98,7 @@ import {
   saveDockStates,
   type DockContext,
   type DockState,
+  type DockStateUpdater,
 } from "@/lib/dock-state";
 import type { BlockingExtensionUiRequest, SessionInfo, SessionTreeNode } from "@/lib/types";
 import type { McpErrorResponse, ProjectTrustStatus } from "@/lib/api-types";
@@ -1424,9 +1425,14 @@ export function AppShell() {
   );
   const dockVisible = canDock && dockOpen && dockContext !== null && dockState !== null;
   const dockFullWidth = dockVisible && dockExpanded;
-  const updateDockState = useCallback((next: DockState) => {
+  const updateDockState = useCallback((next: DockStateUpdater) => {
     if (!dockProjectKey) return;
-    setDockStates((prev) => ({ ...prev, [dockProjectKey]: next }));
+    setDockStates((prev) => {
+      const current = prev[dockProjectKey] ?? emptyDockState();
+      const value = typeof next === "function" ? next(current) : next;
+      if (value === current) return prev;
+      return { ...prev, [dockProjectKey]: value };
+    });
   }, [dockProjectKey]);
   // A restored layout can name a leaf whose state was dropped: give it one.
   useEffect(() => {

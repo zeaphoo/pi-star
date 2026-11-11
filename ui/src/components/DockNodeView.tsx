@@ -1,24 +1,28 @@
 "use client";
 
-import { useCallback, useMemo, useRef, type CSSProperties } from "react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { openStackedDialog } from "@/lib/stacked-dialog";
 import { CodeWorkspace } from "./CodeWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { TerminalWorkspace } from "./TerminalWorkspace";
-import { SplitColumnIcon, SplitRowIcon, DockCloseIcon, dockViewIcon } from "./dock-icons";
+import { DockCloseIcon, DockPlusIcon, dockViewIcon } from "./dock-icons";
 import { openCodeFileTab } from "@/lib/code-workspace";
 import { getFileName } from "@/lib/file-paths";
 import {
+  DOCK_VIEWS,
+  canSetDockLeafView,
   resizeDockSplit,
   setDockLeafCode,
   setDockLeafDiff,
   setDockLeafTerminal,
-  splitDockLeaf,
+  setDockLeafView,
   type DockContext,
   type DockLeafNode,
   type DockNode,
   type DockSplitNode,
   type DockState,
+  type DockStateUpdater,
 } from "@/lib/dock-state";
 import type { SplitDirection } from "@/lib/split-tree";
 
@@ -37,9 +41,10 @@ interface SharedProps {
   gitRoot: string | null;
   defaultCwd: string | null;
   projectName: string | null;
-  onChange: (next: DockState) => void;
+  onChange: (next: DockStateUpdater) => void;
   onFocusLeaf: (leafId: string) => void;
   onCloseLeaf: (leafId: string) => void;
+  onClearContent: (leafId: string) => void;
   onAtMention?: (relativePath: string, isDir: boolean) => void;
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
 }
@@ -125,11 +130,19 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
   const {
     dock, context, active, isMobile, refreshKey, focusedLeafId, leafCount,
     codeRoot, gitRoot, defaultCwd, projectName,
-    onChange, onFocusLeaf, onCloseLeaf, onAtMention, onMentionLines,
+    onChange, onFocusLeaf, onCloseLeaf, onClearContent, onAtMention, onMentionLines,
   } = shared;
   const focused = leafCount > 1 && focusedLeafId === leaf.id;
+  const [confirmingClose, setConfirmingClose] = useState(false);
+  const closeDialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!confirmingClose) return;
+    return openStackedDialog(document, closeDialogRef.current, () => setConfirmingClose(false));
+  }, [confirmingClose]);
 
   const title = useMemo(() => {
+    if (leaf.view === null) return t("dock.newPane");
     if (leaf.view === "code") {
       const state = dock.code[leaf.id];
       const tab = state?.tabs.find((item) => item.id === state.activeTabId);
@@ -144,9 +157,19 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
     return tab?.title ?? t("dock.terminal");
   }, [dock, leaf.id, leaf.view, t]);
 
-  const split = useCallback((direction: SplitDirection) => {
-    onChange(splitDockLeaf(dock, leaf.id, direction, context));
-  }, [context, dock, leaf.id, onChange]);
+  const closeLabel = leaf.view === null ? t("dock.closePane") : t("dock.closeContent");
+
+  const handleClose = () => {
+    if (leaf.view === null) {
+      onCloseLeaf(leaf.id);
+      return;
+    }
+    if (leaf.view === "terminal") {
+      setConfirmingClose(true);
+      return;
+    }
+    onClearContent(leaf.id);
+  };
 
   return (
     <div
@@ -165,38 +188,46 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
       }}
     >
       <div className="dock-leaf-header">
-        <span className="dock-leaf-icon" data-view={leaf.view}>{dockViewIcon(leaf.view)}</span>
+        <span className="dock-leaf-icon" data-view={leaf.view ?? "empty"}>
+          {leaf.view ? dockViewIcon(leaf.view) : <DockPlusIcon size={13} />}
+        </span>
         <span className="dock-leaf-title" title={title}>{title}</span>
         <button
           type="button"
-          className="dock-leaf-action"
-          onClick={() => split("row")}
-          title={t("dock.splitRight")}
-          aria-label={t("dock.splitRight")}
-        >
-          <SplitRowIcon />
-        </button>
-        <button
-          type="button"
-          className="dock-leaf-action"
-          onClick={() => split("column")}
-          title={t("dock.splitDown")}
-          aria-label={t("dock.splitDown")}
-        >
-          <SplitColumnIcon />
-        </button>
-        <button
-          type="button"
           className="dock-leaf-action dock-leaf-close"
-          onClick={() => onCloseLeaf(leaf.id)}
-          title={t("dock.closeView")}
-          aria-label={t("dock.closeView")}
+          onClick={handleClose}
+          title={closeLabel}
+          aria-label={closeLabel}
         >
           <DockCloseIcon />
         </button>
       </div>
       <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", overflow: "hidden" }}>
-        {leaf.view === "code" ? (
+        {leaf.view === null ? (
+          <div className="dock-empty dock-pane-picker" role="group" aria-label={t("dock.chooseView")}>
+            <div className="dock-empty-title">{t("dock.chooseView")}</div>
+            <div className="dock-empty-hint">{t("dock.emptyPaneHint")}</div>
+            <div className="dock-empty-choices">
+              {DOCK_VIEWS.map((view) => {
+                const disabled = !canSetDockLeafView(dock, view);
+                return (
+                  <button
+                    key={view}
+                    type="button"
+                    className="dock-empty-choice"
+                    data-dock-add={view}
+                    disabled={disabled}
+                    title={disabled ? t("dock.limitReached") : undefined}
+                    onClick={() => onChange((current) => setDockLeafView(current, leaf.id, view, context))}
+                  >
+                    <span className="dock-empty-choice-icon">{dockViewIcon(view, 22)}</span>
+                    <span>{t(view === "code" ? "dock.code" : view === "diff" ? "dock.diff" : "dock.terminal")}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        ) : leaf.view === "code" ? (
           <CodeWorkspace
             root={codeRoot}
             projectKey={context.projectKey}
@@ -207,11 +238,13 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
             refreshKey={refreshKey}
             instanceId={leaf.id}
             onOpenFile={(filePath, fileName, page) => {
-              const current = dock.code[leaf.id];
-              if (!current) return;
-              onChange(setDockLeafCode(dock, leaf.id, openCodeFileTab(current, filePath, fileName, page)));
+              onChange((current) => {
+                const currentCode = current.code[leaf.id];
+                if (!currentCode) return current;
+                return setDockLeafCode(current, leaf.id, openCodeFileTab(currentCode, filePath, fileName, page));
+              });
             }}
-            onChange={(next) => onChange(setDockLeafCode(dock, leaf.id, next))}
+            onChange={(next) => onChange((current) => setDockLeafCode(current, leaf.id, next))}
             onAtMention={onAtMention}
             onMentionLines={onMentionLines}
           />
@@ -221,7 +254,7 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
             state={dock.diff[leaf.id] ?? null}
             active={active}
             isMobile={isMobile}
-            onChange={(next) => onChange(setDockLeafDiff(dock, leaf.id, next))}
+            onChange={(next) => onChange((current) => setDockLeafDiff(current, leaf.id, next))}
           />
         ) : (
           <TerminalWorkspace
@@ -230,10 +263,51 @@ function DockLeaf({ leaf, ...shared }: SharedProps & { leaf: DockLeafNode }) {
             state={dock.terminal[leaf.id] ?? null}
             active={active}
             isMobile={isMobile}
-            onChange={(next) => onChange(setDockLeafTerminal(dock, leaf.id, next))}
+            onChange={(next) => onChange((current) => setDockLeafTerminal(current, leaf.id, next))}
           />
         )}
       </div>
+      {confirmingClose && (
+        <div
+          role="presentation"
+          className="terminal-close-backdrop"
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) setConfirmingClose(false);
+          }}
+        >
+          <div
+            ref={closeDialogRef}
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby={`dock-close-terminal-title-${leaf.id}`}
+            aria-describedby={`dock-close-terminal-body-${leaf.id}`}
+            tabIndex={-1}
+            className="terminal-close-dialog"
+          >
+            <div id={`dock-close-terminal-title-${leaf.id}`} className="terminal-close-title">
+              {t("dock.closeTerminalTitle")}
+            </div>
+            <div id={`dock-close-terminal-body-${leaf.id}`} className="terminal-close-body">
+              {t("dock.closeTerminalBody")}
+            </div>
+            <div className="terminal-close-actions">
+              <button type="button" className="terminal-close-button" onClick={() => setConfirmingClose(false)}>
+                {t("terminal.cancel")}
+              </button>
+              <button
+                type="button"
+                className="terminal-close-button is-primary"
+                onClick={() => {
+                  setConfirmingClose(false);
+                  onClearContent(leaf.id);
+                }}
+              >
+                {t("dock.closeTerminal")}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -269,7 +343,7 @@ function DockSplitView({ split, ...shared }: SharedProps & { split: DockSplitNod
               containerRef={containerRef}
               index={index}
               sizes={split.sizes}
-              onResize={(sizes) => shared.onChange(resizeDockSplit(shared.dock, split.id, sizes))}
+              onResize={(sizes) => shared.onChange((current) => resizeDockSplit(current, split.id, sizes))}
             />
           )}
         </div>
