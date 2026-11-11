@@ -8,7 +8,7 @@ import { useI18n } from "@/hooks/useI18n";
 import { setTerminalTheme, useTerminalTheme } from "@/hooks/useTerminalTheme";
 import { subscribeFontPreferences } from "@/hooks/useFontPreferences";
 import { readFontWeight } from "@/lib/font-preferences";
-import { createTerminalWriter, terminalRequest } from "@/lib/terminal-client";
+import { createTerminalWriter, TerminalRequestError, terminalRequest } from "@/lib/terminal-client";
 import { pageId, trackEventSource } from "@/lib/page-debug";
 import {
   applyTerminalModifiers,
@@ -29,6 +29,14 @@ interface Props {
   onRestart: () => void;
   onClosed: () => void;
   onCloseError: () => void;
+  /** The saved shell no longer exists; the parent recreates it in the same cwd. */
+  onExpired: () => void;
+  /** The shell changed directory (OSC 7 or the server's cwd watcher). */
+  onCwdChange?: (cwd: string) => void;
+  /** Fall back here when a restored cwd no longer exists. */
+  fallbackCwd?: string | null;
+  /** The replacement shell was created; later remounts should reattach. */
+  onStarted?: () => void;
   /** Mark this pane active when something inside it is pressed. */
   onActivate?: () => void;
   /** Present in split panes: close this pane instead of only the whole tab. */
@@ -43,6 +51,10 @@ export function TerminalPanel({
   onRestart,
   onClosed,
   onCloseError,
+  onExpired,
+  onCwdChange,
+  fallbackCwd,
+  onStarted,
   onActivate,
   onClose,
   showExtraKeys: extraKeysEnabled = true,
@@ -53,8 +65,10 @@ export function TerminalPanel({
   const terminalRef = useRef<Terminal | null>(null);
   const startRef = useRef<Promise<void>>(Promise.resolve());
   const writerRef = useRef<ReturnType<typeof createTerminalWriter> | null>(null);
-  const callbacksRef = useRef({ onClosed, onCloseError });
-  callbacksRef.current = { onClosed, onCloseError };
+  const cwdRef = useRef(cwd);
+  cwdRef.current = cwd;
+  const callbacksRef = useRef({ onClosed, onCloseError, onExpired, onCwdChange, onStarted });
+  callbacksRef.current = { onClosed, onCloseError, onExpired, onCwdChange, onStarted };
   const [status, setStatus] = useState<"connecting" | "ready" | "exited" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -136,6 +150,21 @@ export function TerminalPanel({
       return true;
     });
 
+    // OSC 7 is the portable half of cwd tracking: shells that already report
+    // their directory (and the Linux server watcher) both end up here.
+    const osc7 = terminal.parser.registerOscHandler(7, (data) => {
+      try {
+        const url = new URL(data);
+        if (url.protocol !== "file:") return false;
+        let path = decodeURIComponent(url.pathname);
+        if (/^\/[A-Za-z]:\//.test(path)) path = path.slice(1);
+        if (path) callbacksRef.current.onCwdChange?.(path);
+      } catch {
+        // A malformed OSC 7 must not disturb the shell output.
+      }
+      return true;
+    });
+
     const writer = createTerminalWriter(id, (reason) => {
       if (disposed) return;
       inputFailed = true;
@@ -167,15 +196,42 @@ export function TerminalPanel({
     };
     const unsubscribeFonts = subscribeFontPreferences(updateFont);
 
+    let verifying = false;
+    let verifyTimer: ReturnType<typeof setTimeout> | null = null;
+    const verifyTerminal = async () => {
+      if (disposed || exited || verifying) return;
+      verifying = true;
+      try {
+        await terminalRequest(`/api/terminal/${encodeURIComponent(id)}`);
+        if (!disposed && !exited) connect();
+      } catch (reason) {
+        if (disposed || exited) return;
+        if (reason instanceof TerminalRequestError && reason.status === 404) {
+          // The server forgot this PTY (a restart or a long-lived page). The
+          // parent replaces the id and creates a shell in the saved cwd.
+          callbacksRef.current.onExpired();
+        } else {
+          setError(reason instanceof Error ? reason.message : String(reason));
+          setStatus("error");
+        }
+      } finally {
+        verifying = false;
+      }
+    };
+
     const connect = () => {
       if (disposed || exited || !navigator.onLine) return;
       events?.close();
       // `holder`: the page, for the Debug panel's connected pages.
       const query = new URLSearchParams({ holder: pageId() });
       if (offset !== undefined) query.set("after", String(offset));
-      events = trackEventSource("terminal", new EventSource(`/api/terminal/${encodeURIComponent(id)}/events?${query}`), cwd);
+      events = trackEventSource("terminal", new EventSource(`/api/terminal/${encodeURIComponent(id)}/events?${query}`), cwdRef.current);
       events.onmessage = (message) => {
         const event = JSON.parse(message.data) as TerminalEvent;
+        if (event.type === "cwd") {
+          callbacksRef.current.onCwdChange?.(event.cwd);
+          return;
+        }
         if (event.type === "output") {
           if (event.reset) terminal.reset();
           else if (offset !== undefined && event.offset <= offset) return;
@@ -203,21 +259,46 @@ export function TerminalPanel({
         if (disposed || exited) return;
         connected = false;
         terminal.options.disableStdin = true;
-        setStatus(events?.readyState === EventSource.CLOSED ? "error" : "connecting");
+        setStatus("connecting");
+        if (events?.readyState !== EventSource.CLOSED) return;
+        if (verifyTimer) clearTimeout(verifyTimer);
+        verifyTimer = setTimeout(() => {
+          verifyTimer = null;
+          void verifyTerminal();
+        }, 500);
       };
     };
 
+    const create = (targetCwd: string) => terminalRequest("/api/terminal", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ id, cwd: targetCwd, cols: terminal.cols, rows: terminal.rows }),
+    });
+
     startRef.current = (async () => {
       fitAndResize();
-      if (restored || reconnectKey > 0) {
-        // Restoring a tab must never silently launch a replacement shell.
-        await terminalRequest(`/api/terminal/${encodeURIComponent(id)}`);
-      } else {
-        await terminalRequest("/api/terminal", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id, cwd, cols: terminal.cols, rows: terminal.rows }),
-        });
+      try {
+        if (restored || reconnectKey > 0) {
+          // Restoring a tab must never silently launch a replacement shell.
+          await terminalRequest(`/api/terminal/${encodeURIComponent(id)}`);
+        } else {
+          await create(cwdRef.current);
+          callbacksRef.current.onStarted?.();
+        }
+      } catch (reason) {
+        if (disposed) return;
+        if (!restored && reason instanceof TerminalRequestError
+          && (reason.status === 400 || reason.status === 403)
+          && fallbackCwd && fallbackCwd !== cwdRef.current) {
+          await create(fallbackCwd);
+          callbacksRef.current.onCwdChange?.(fallbackCwd);
+          callbacksRef.current.onStarted?.();
+        } else if (reason instanceof TerminalRequestError && reason.status === 404) {
+          callbacksRef.current.onExpired();
+          return;
+        } else {
+          throw reason;
+        }
       }
       connect();
     })().catch((reason: Error) => {
@@ -239,7 +320,9 @@ export function TerminalPanel({
     window.addEventListener("online", connect);
     return () => {
       disposed = true;
+      if (verifyTimer) clearTimeout(verifyTimer);
       events?.close();
+      osc7.dispose();
       void writer.stop();
       resizeObserver.disconnect();
       unsubscribeFonts();
@@ -253,7 +336,7 @@ export function TerminalPanel({
       terminalRef.current = null;
       refitRef.current = () => {};
     };
-  }, [id, cwd, restored, reconnectKey, consumeModifiers]);
+  }, [id, reconnectKey, consumeModifiers]);
 
   useEffect(() => {
     if (terminalRef.current) terminalRef.current.options.theme = TERMINAL_XTERM_THEMES[theme];

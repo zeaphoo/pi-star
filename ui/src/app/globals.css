@@ -749,6 +749,40 @@ html.dark .web-login-error {
   font-size: 11px;
 }
 
+.terminal-recovery-notice {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+  padding: 7px 10px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.5;
+}
+.terminal-recovery-notice span {
+  flex: 1;
+  min-width: 0;
+}
+.terminal-recovery-notice button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.terminal-recovery-notice button:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .terminal-xterm {
   grid-row: -2 / -1;
   min-width: 0;

@@ -176,6 +176,40 @@ export function setTerminalActivePane(
   return { ...tab, activePaneId: paneId };
 }
 
+/** Mark a pane as owning a live PTY, so a remount reattaches instead of creating. */
+export function setTerminalPaneRestored(
+  tab: TerminalWorkspaceTab,
+  paneId: string,
+  restored: boolean,
+): TerminalWorkspaceTab {
+  const pane = findTerminalPane(tab.root, paneId);
+  if (!pane || Boolean(pane.restored) === restored) return tab;
+  const next = (node: TerminalTreeNode): TerminalTreeNode => {
+    if (node.kind === "pane") return node.id === paneId ? { ...node, restored } : node;
+    return { ...node, children: node.children.map(next) };
+  };
+  return { ...tab, root: next(tab.root) };
+}
+
+/** Persist the directory a live shell has moved to. */
+export function setTerminalPaneCwd(
+  tab: TerminalWorkspaceTab,
+  paneId: string,
+  cwd: string,
+): TerminalWorkspaceTab {
+  const pane = findTerminalPane(tab.root, paneId);
+  if (!pane || !cwd || pane.cwd === cwd) return tab;
+  const next = (node: TerminalTreeNode): TerminalTreeNode => {
+    if (node.kind === "pane") return node.id === paneId ? { ...node, cwd } : node;
+    return { ...node, children: node.children.map(next) };
+  };
+  return {
+    ...tab,
+    cwd: tab.activePaneId === paneId ? cwd : tab.cwd,
+    root: next(tab.root),
+  };
+}
+
 /** Give a pane a fresh terminal id after its PTY was restarted. */
 export function replaceTerminalPaneId(
   tab: TerminalWorkspaceTab,

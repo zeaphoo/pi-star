@@ -839,6 +839,7 @@ export const enLocale: LocalePlugin = {
     "terminal.open": "Open workspace terminal",
     "terminal.close": "Terminate terminal",
     "terminal.restart": "Restart terminal",
+    "terminal.recovered": "The previous terminal session ended; reopened in {cwd}.",
     "terminal.reconnect": "Reconnect terminal",
     "terminal.lightTheme": "Switch terminal to light theme",
     "terminal.darkTheme": "Switch terminal to dark theme",

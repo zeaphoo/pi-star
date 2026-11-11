@@ -1399,7 +1399,9 @@ export function AppShell() {
     saveGitWorkspace(gitProjectRoot, next);
   }, [gitProjectRoot]);
 
-  const terminalDefaultCwd = activeCwd ?? gitProjectRoot;
+  // Terminals belong to the project, not to the cwd of whichever session is
+  // open. A pane keeps its own live cwd after this initial default.
+  const terminalDefaultCwd = gitProjectRoot;
   const terminalWorkspace = useMemo(() => {
     if (!gitProjectRoot) return emptyTerminalWorkspace("");
     return terminalWorkspaces[gitProjectRoot] ?? emptyTerminalWorkspace(gitProjectRoot);

@@ -15,8 +15,10 @@ const artifacts = mkdtempSync(join(tmpdir(), "pi-web-terminal-e2e-"));
 console.log(`Artifacts: ${artifacts}`);
 const agentDir = join(artifacts, "agent");
 const workspace = join(artifacts, "workspace-a");
+const workspaceSubdir = join(workspace, "sub");
 mkdirSync(join(agentDir, "sessions", "test"), { recursive: true });
 mkdirSync(workspace);
+mkdirSync(workspaceSubdir);
 const timestamp = "2026-09-05T00:00:00.000Z";
 for (const [id, cwd, name] of [
   ["terminal-a1", workspace, "Terminal session one"],
@@ -141,6 +143,74 @@ try {
       assert.equal(created.size, 2);
       const [restartedId] = [...created].filter((id) => id !== firstId);
 
+      // The server follows the shell into a subdirectory, and the layout asks
+      // for that same cwd when it is restored.
+      await run("cd sub");
+      const [cwdTerminalId] = await savedTerminalIds();
+      await page.waitForFunction(async ({ id, expected }) => {
+        const response = await fetch(`/api/terminal/${id}`);
+        return response.ok && (await response.json()).cwd === expected;
+      }, { id: cwdTerminalId, expected: workspaceSubdir });
+      await page.waitForFunction((expected) => {
+        const all = JSON.parse(localStorage.getItem("pi-star:terminal-workspaces:v1") || "{}");
+        const panes = [];
+        const walk = (node) => {
+          if (node.kind === "pane") panes.push(node);
+          else for (const child of node.children) walk(child);
+        };
+        for (const workspace of Object.values(all)) for (const tab of workspace.tabs) walk(tab.root);
+        return panes.some((pane) => pane.cwd === expected);
+      }, workspaceSubdir);
+      await page.reload();
+      await page.getByText("Terminal session two message", { exact: true }).waitFor();
+      await openTerminal();
+      await ready();
+      assert.ok((await page.locator(".terminal-panel:visible .terminal-panel-path").innerText()).includes("sub"), "a reload keeps the restorable cwd");
+
+      // If the server forgot the PTY, the pane is recreated in that cwd instead
+      // of showing "Terminal expired or closed".
+      const beforeRecovery = created.size;
+      await fetch(`${base}/api/terminal/${cwdTerminalId}`, { method: "DELETE" });
+      await page.reload();
+      await page.getByText("Terminal session two message", { exact: true }).waitFor();
+      await openTerminal();
+      await ready();
+      await page.getByText(/reopened in/).waitFor();
+      await page.waitForFunction((oldId) => {
+        const all = JSON.parse(localStorage.getItem("pi-star:terminal-workspaces:v1") || "{}");
+        const ids = [];
+        const walk = (node) => {
+          if (node.kind === "pane") ids.push(node.terminalId);
+          else for (const child of node.children) walk(child);
+        };
+        for (const workspace of Object.values(all)) for (const tab of workspace.tabs) walk(tab.root);
+        return ids.length === 1 && ids[0] !== oldId;
+      }, cwdTerminalId);
+      const [recoveredTerminalId] = await savedTerminalIds();
+      assert.notEqual(recoveredTerminalId, cwdTerminalId);
+      assert.equal(created.size, beforeRecovery + 1, "recovery starts exactly one replacement shell");
+      const recoveredInfo = await (await fetch(`${base}/api/terminal/${recoveredTerminalId}`)).json();
+      assert.equal(recoveredInfo.cwd, workspaceSubdir);
+      const finalTerminalId = recoveredTerminalId;
+
+      // Switching tabs unmounts the xterm; coming back must reattach to the
+      // same shell, not spawn a replacement.
+      await run("export TAB_TOKEN=kept; printf '\\nTAB:%s:%s\\n' \"$TAB_TOKEN\" \"$$\"");
+      await waitOutput("TAB:kept:[0-9]+");
+      const tabPid = (await text()).match(/TAB:kept:(\d+)/)[1];
+      await page.getByRole("button", { name: "New terminal tab", exact: true }).click();
+      await ready();
+      const tabs = page.locator(".terminal-tabstrip [role='tab']");
+      assert.equal(await tabs.count(), 2);
+      await tabs.first().click();
+      await ready();
+      await run("printf '\\nTAB2:%s:%s\\n' \"$TAB_TOKEN\" \"$$\"");
+      await waitOutput(`TAB2:kept:${tabPid}`);
+      await tabs.last().getByRole("button", { name: "Close terminal tab", exact: true }).click();
+      await page.getByRole("dialog", { name: "Close terminal tab?" }).waitFor();
+      await page.getByRole("dialog").getByRole("button", { name: "Close terminal tab", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".terminal-tabstrip [role='tab']").length === 1);
+
       // The terminal's own theme swaps xterm's palette in place.
       const terminalBackground = () => page.locator(".terminal-panel:visible .xterm-viewport").evaluate((el) => getComputedStyle(el).backgroundColor);
       await page.getByRole("button", { name: "Switch terminal to light theme", exact: true }).click();
@@ -154,7 +224,7 @@ try {
       await page.getByRole("dialog", { name: "Close terminal tab?" }).waitFor();
       await page.getByRole("dialog").getByRole("button", { name: "Close terminal tab", exact: true }).click();
       await page.locator(".terminal-panel").waitFor({ state: "detached" });
-      assert.equal((await fetch(`${base}/api/terminal/${restartedId}`)).status, 404);
+      assert.equal((await fetch(`${base}/api/terminal/${finalTerminalId}`)).status, 404);
       assert.deepEqual(await savedTerminalIds(), [], "no shell is remembered after its tab closed");
 
       assert.deepEqual(errors, []);

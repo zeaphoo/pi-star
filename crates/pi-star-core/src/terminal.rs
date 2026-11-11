@@ -20,6 +20,9 @@ pub enum TerminalEvent {
         #[serde(skip_serializing_if = "Option::is_none")]
         reset: Option<bool>,
     },
+    Cwd {
+        cwd: String,
+    },
     Exit {
         #[serde(rename = "exitCode")]
         exit_code: i32,
@@ -28,7 +31,8 @@ pub enum TerminalEvent {
 }
 
 struct TerminalRecord {
-    cwd: String,
+    current_cwd: Mutex<String>,
+    cwd_tracking: bool,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
     child: Mutex<Box<dyn portable_pty::Child + Send>>,
@@ -41,6 +45,8 @@ struct TerminalRecord {
 
 pub struct TerminalSubscription {
     pub output: TerminalEvent,
+    /// Present when the server can follow the live shell's directory.
+    pub cwd: Option<String>,
     pub exited: bool,
     pub exit_code: Option<i32>,
     pub receiver: broadcast::Receiver<TerminalEvent>,
@@ -65,6 +71,10 @@ impl TerminalManager {
 
     pub fn create(&self, cwd: &Path, cols: u16, rows: u16, id: Option<String>) -> Result<String> {
         let id = id.unwrap_or_else(|| uuid::Uuid::new_v4().simple().to_string());
+        // Creating an id that is already live is a reattach, not a second shell.
+        if self.terminals.lock().contains_key(&id) {
+            return Ok(id);
+        }
         let pair = native_pty_system()
             .openpty(PtySize {
                 rows: rows.max(2),
@@ -92,6 +102,7 @@ impl TerminalManager {
             .slave
             .spawn_command(command)
             .map_err(|error| anyhow!("spawn shell: {error}"))?;
+        let pid = child.process_id();
         drop(pair.slave);
         let mut reader = pair
             .master
@@ -102,8 +113,10 @@ impl TerminalManager {
             .take_writer()
             .map_err(|error| anyhow!("pty writer: {error}"))?;
         let (sender, _) = broadcast::channel(256);
+        let initial_cwd = cwd.to_string_lossy().into_owned();
         let record = Arc::new(TerminalRecord {
-            cwd: cwd.to_string_lossy().into_owned(),
+            current_cwd: Mutex::new(initial_cwd),
+            cwd_tracking: cfg!(target_os = "linux") && pid.is_some(),
             master: Mutex::new(pair.master),
             writer: Mutex::new(writer),
             child: Mutex::new(child),
@@ -176,6 +189,33 @@ impl TerminalManager {
                 let _ = record.sender.send(TerminalEvent::Exit { exit_code: code });
             });
         }
+        #[cfg(target_os = "linux")]
+        if let Some(pid) = pid {
+            let record = record.clone();
+            std::thread::spawn(move || {
+                loop {
+                    if *record.exited.lock() {
+                        break;
+                    }
+                    if let Ok(path) = std::fs::read_link(format!("/proc/{pid}/cwd")) {
+                        let cwd = path.to_string_lossy().into_owned();
+                        let changed = {
+                            let mut current = record.current_cwd.lock();
+                            if *current == cwd {
+                                false
+                            } else {
+                                *current = cwd.clone();
+                                true
+                            }
+                        };
+                        if changed {
+                            let _ = record.sender.send(TerminalEvent::Cwd { cwd });
+                        }
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                }
+            });
+        }
         self.terminals.lock().insert(id.clone(), record);
         Ok(id)
     }
@@ -184,7 +224,7 @@ impl TerminalManager {
         self.terminals
             .lock()
             .get(id)
-            .map(|record| record.cwd.clone())
+            .map(|record| record.current_cwd.lock().clone())
     }
 
     pub fn has(&self, id: &str) -> bool {
@@ -227,6 +267,11 @@ impl TerminalManager {
                 data: backlog,
                 offset,
                 reset: None,
+            },
+            cwd: if record.cwd_tracking {
+                Some(record.current_cwd.lock().clone())
+            } else {
+                None
             },
             exited,
             exit_code,

@@ -9,6 +9,8 @@ const {
   newTerminalWorkspaceTab,
   replaceTerminalPaneId,
   setTerminalActivePane,
+  setTerminalPaneCwd,
+  setTerminalPaneRestored,
   splitTerminalPane,
   resizeTerminalSplit,
 } = await jiti.import("./terminal-workspace.ts");
@@ -67,4 +69,33 @@ test("split sizes are normalized", () => {
 test("activating a missing pane is a no-op", () => {
   const tab = newTerminalWorkspaceTab("/repo");
   assert.equal(setTerminalActivePane(tab, "missing"), tab);
+});
+
+test("a started pane is marked so a remount reattaches", () => {
+  const tab = newTerminalWorkspaceTab("/repo");
+  assert.equal(tab.root.restored, undefined);
+  const started = setTerminalPaneRestored(tab, tab.root.id, true);
+  assert.equal(started.root.restored, true);
+  assert.equal(setTerminalPaneRestored(started, started.root.id, true), started);
+});
+
+test("a pane keeps the directory its shell moved to", () => {
+  const tab = splitRow(newTerminalWorkspaceTab("/repo"));
+  const first = tab.root.kind === "split" ? tab.root.children[0] : null;
+  assert.ok(first);
+  const inactive = first.id === tab.activePaneId
+    ? (tab.root.kind === "split" ? tab.root.children[1] : null)
+    : first;
+  assert.ok(inactive);
+
+  const moved = setTerminalPaneCwd(tab, inactive.id, "/repo/src");
+  const movedPane = moved.root.kind === "split"
+    ? moved.root.children.find((child) => child.id === inactive.id)
+    : null;
+  assert.equal(movedPane?.cwd, "/repo/src");
+  assert.equal(moved.cwd, tab.cwd, "an inactive pane does not rename the tab");
+
+  const active = setTerminalPaneCwd(moved, moved.activePaneId, "/repo/test");
+  assert.equal(active.cwd, "/repo/test");
+  assert.equal(setTerminalPaneCwd(active, active.activePaneId, "/repo/test"), active);
 });

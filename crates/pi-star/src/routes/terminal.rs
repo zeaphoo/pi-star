@@ -129,6 +129,10 @@ pub async fn events(
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().comment("")
         );
+        if let Some(cwd) = subscription.cwd.clone() {
+            let event = TerminalEvent::Cwd { cwd };
+            yield Ok(axum::response::sse::Event::default().data(serde_json::to_string(&event).unwrap_or_default()));
+        }
         yield Ok(axum::response::sse::Event::default().data(serde_json::to_string(&subscription.output).unwrap_or_default()));
         if subscription.exited {
             let event = TerminalEvent::Exit { exit_code: subscription.exit_code.unwrap_or(0) };

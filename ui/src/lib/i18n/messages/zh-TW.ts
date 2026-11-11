@@ -839,6 +839,7 @@ export const zhTWLocale: LocalePlugin = {
     "terminal.open": "開啟工作區終端機",
     "terminal.close": "終止終端機",
     "terminal.restart": "重新啟動終端機",
+    "terminal.recovered": "原終端機工作階段已結束，已在 {cwd} 重新開啟。",
     "terminal.reconnect": "重新連線終端機",
     "terminal.lightTheme": "終端機切換為淺色主題",
     "terminal.darkTheme": "終端機切換為深色主題",

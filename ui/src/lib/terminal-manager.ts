@@ -6,6 +6,7 @@ import type { DebugServerGlobal } from "./debug-types";
 
 export type TerminalEvent =
   | { type: "output"; data: string; offset: number; reset?: boolean }
+  | { type: "cwd"; cwd: string }
   | { type: "exit"; exitCode: number }
   | { type: "closed" };
 
