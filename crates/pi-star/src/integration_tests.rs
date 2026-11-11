@@ -32,6 +32,7 @@ fn write_fixture() -> Fixture {
     std::fs::write(ui_dir.join("assets/app.js"), "console.log('fixture')\n").unwrap();
     std::fs::write(cwd.join("hello.txt"), "hello from the fixture\n").unwrap();
     std::fs::write(cwd.join(".editorconfig"), "root = true\n").unwrap();
+    std::fs::write(cwd.join("app.ts"), "import { hello } from \"./hello\";\n").unwrap();
 
     let session_id = "test-session-0001";
     let encoded = pi_star_core::config::encode_cwd(&cwd);
@@ -298,6 +299,20 @@ async fn files_list_read_and_index() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["content"], "root = true\n");
     assert_eq!(body["binary"], false);
+
+    // `.ts` is TypeScript here, not an MPEG transport stream: `mime_guess`
+    // calls it video/*, and serving it raw made the viewer parse source as JSON.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/files/{encoded}/app.ts?type=read"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["language"], "typescript");
+    assert_eq!(body["content"], "import { hello } from \"./hello\";\n");
 
     let (status, body) = call(
         app.clone(),

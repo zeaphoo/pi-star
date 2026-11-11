@@ -143,7 +143,9 @@ fn is_hidden_name(name: &str) -> bool {
 pub fn file_meta(path: &Path) -> Result<FileMeta> {
     let metadata = fs::metadata(path)?;
     let language = language_for(path).to_string();
-    let mime = mime_for(path);
+    // Every text file reports text/plain, as pi-web does: a guessed type such
+    // as `video/vnd.dlna.mpeg-tts` for `.ts` says nothing useful about source.
+    let mime = media_mime_for(path).unwrap_or("text/plain").to_string();
     let preview_kind = match extension(path).as_deref() {
         Some("pdf") => Some("pdf".to_string()),
         Some("docx") => Some("docx".to_string()),
@@ -389,10 +391,47 @@ pub fn language_for_content(path: &Path, content: &str) -> &'static str {
     "text"
 }
 
-pub fn mime_for(path: &Path) -> String {
-    mime_guess::from_path(path)
-        .first_or_octet_stream()
-        .essence_str()
+/// The MIME type of a file the browser renders from raw bytes, or None for text.
+/// The table matches the viewer's own `lib/file-types.ts`, so the API and the UI
+/// agree on what is an image, a soundtrack or a document.
+///
+/// `mime_guess` cannot make this call: it maps `.ts` to `video/vnd.dlna.mpeg-tts`
+/// (MPEG transport streams), so a TypeScript file would be served raw and the
+/// viewer would try to parse its source as JSON.
+pub fn media_mime_for(path: &Path) -> Option<&'static str> {
+    match extension(path)?.as_str() {
+        "png" => Some("image/png"),
+        "jpg" | "jpeg" => Some("image/jpeg"),
+        "gif" => Some("image/gif"),
+        "webp" => Some("image/webp"),
+        "svg" => Some("image/svg+xml"),
+        "bmp" => Some("image/bmp"),
+        "ico" => Some("image/x-icon"),
+        "avif" => Some("image/avif"),
+        "mp3" => Some("audio/mpeg"),
+        "wav" => Some("audio/wav"),
+        "ogg" | "oga" | "opus" => Some("audio/ogg"),
+        "m4a" => Some("audio/mp4"),
+        "aac" => Some("audio/aac"),
+        "flac" => Some("audio/flac"),
+        "weba" => Some("audio/webm"),
+        "mp4" | "m4v" => Some("video/mp4"),
+        "webm" => Some("video/webm"),
+        "mov" => Some("video/quicktime"),
+        "ogv" => Some("video/ogg"),
+        "pdf" => Some("application/pdf"),
+        "docx" => Some(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ),
+        _ => None,
+    }
+}
+
+/// `Content-Type` for a download: the media type when the browser can render
+/// it, `application/octet-stream` otherwise, as pi-web answers.
+pub fn download_mime_for(path: &Path) -> String {
+    media_mime_for(path)
+        .unwrap_or("application/octet-stream")
         .to_string()
 }
 
@@ -691,6 +730,22 @@ mod tests {
         assert_eq!(language("styles/theme.scss"), "scss");
         assert_eq!(language("proto/service.proto"), "protobuf");
         assert_eq!(language("deploy/main.tfvars"), "hcl");
+    }
+
+    #[test]
+    fn only_media_paths_are_served_as_raw_bytes() {
+        // `mime_guess` calls `.ts` an MPEG transport stream; the viewer needs
+        // TypeScript's source as the JSON text chunk.
+        assert_eq!(media_mime_for(Path::new("src/app.ts")), None);
+        assert_eq!(media_mime_for(Path::new("src/app.tsx")), None);
+        assert_eq!(media_mime_for(Path::new("notes.md")), None);
+        assert_eq!(media_mime_for(Path::new("app.png")), Some("image/png"));
+        assert_eq!(media_mime_for(Path::new("logo.svg")), Some("image/svg+xml"));
+        assert_eq!(media_mime_for(Path::new("song.MP3")), Some("audio/mpeg"));
+        assert_eq!(media_mime_for(Path::new("clip.mp4")), Some("video/mp4"));
+        assert_eq!(media_mime_for(Path::new("doc.pdf")), Some("application/pdf"));
+        // A download of a text file is an octet stream, never a guessed type.
+        assert_eq!(download_mime_for(Path::new("app.ts")), "application/octet-stream");
     }
 
     #[test]

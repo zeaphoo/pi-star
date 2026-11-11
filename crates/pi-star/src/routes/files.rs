@@ -59,19 +59,14 @@ pub async fn get_file(
             }
         }
         "read" => {
-            let mime = files::mime_for(&file_path);
             // Only media the browser renders from a raw response is served as
             // bytes. Everything else goes through the JSON text chunk, which
-            // also reports genuinely binary files. Deciding from the MIME type
-            // alone made unknown text files such as `.editorconfig` (which
-            // `mime_guess` reports as application/octet-stream) return raw text
-            // that the viewer then tried to parse as JSON.
-            let raw = mime.starts_with("image/")
-                || mime.starts_with("audio/")
-                || mime.starts_with("video/")
-                || mime == "application/pdf";
-            if raw {
-                return file_response(&file_path, &mime, &headers, false).await;
+            // also reports genuinely binary files. The decision comes from the
+            // extension table, never from a guessed MIME type: `mime_guess`
+            // calls a `.ts` (TypeScript) file `video/vnd.dlna.mpeg-tts`, and the
+            // viewer then tried to parse its source as JSON.
+            if let Some(mime) = files::media_mime_for(&file_path) {
+                return file_response(&file_path, mime, &headers, false).await;
             }
             match files::read_text_chunk(&file_path, query.offset.unwrap_or(0)) {
                 Ok(chunk) => no_store(chunk),
@@ -79,7 +74,7 @@ pub async fn get_file(
             }
         }
         "download" => {
-            let mime = files::mime_for(&file_path);
+            let mime = files::download_mime_for(&file_path);
             file_response(&file_path, &mime, &headers, true).await
         }
         "meta" => match files::file_meta(&file_path) {
