@@ -731,15 +731,16 @@ test("the Debug button only toggles its panel, left of the session stats", () =>
   assert.match(button, /if \(!showChat\) return null;/);
   assert.notEqual(enLocale.messages["debug.title"], enLocale.messages["session.title"], "e2e finds the stats button by its own name");
 
-  // Desktop: after the chat's actions, right before the stats, taking the free space.
-  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
-  assert.match(button, /marginLeft: mobile \? 0 : "auto"/);
+  // Desktop: after the chat's actions and the session's artifacts button,
+  // right before the stats; the artifacts button takes the free space then.
+  assert.match(shellSource, /\{renderChatToolbarActions\(false\)\}\s*\{renderArtifactsButton\(false\)\}\s*\{renderDebugButton\(false\)\}\s*\{renderSessionStatsButton\(false\)\}/);
+  assert.match(button, /marginLeft: mobile \|\| \(showChat && mainView === "chat"\) \? 0 : "auto"/);
   const stats = between(shellSource, "const renderSessionStatsButton = (mobile: boolean) => {", "const renderDebugButton");
   assert.match(stats, /\n\s*marginLeft: 0,/);
   assert.match(shellSource, /marginLeft: !mobile && !showChat \? "auto" : 0,/);
   // Phones: before the stats on a wide one, in the "more" overlay on a narrow one.
-  assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
-  assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);
+  assert.match(shellSource, /\{!isNarrowMobile && renderChatToolbarActions\(true\)\}\s*\{!isNarrowMobile && renderArtifactsButton\(true\)\}\s*\{!isNarrowMobile && renderDebugButton\(true\)\}\s*\{renderSessionStatsButton\(true\)\}/);
+  assert.match(shellSource, /\{renderChatToolbarActions\(true\)\}\s*\{renderArtifactsButton\(true\)\}\s*\{renderDebugButton\(true\)\}\s*<\/div>/);
 });
 
 test("Escape with focus in the panel gives it back to the Debug button, after the panel left the page", () => {

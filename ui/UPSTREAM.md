@@ -45,3 +45,8 @@ These are intentional and must be re-applied after a re-sync:
   the header's New menu (a split button: new session in the current project, or the folder
   picker and the projects used last). The Code view's tree header carries the files' upload,
   ignored-files and search keys that the retired sidebar files panel had.
+- A session-scoped artifacts pane (`components/SessionArtifactsPane.tsx`,
+  `lib/session-artifacts.ts`) sits to the right of `ChatWindow`, toggled beside Debug, with
+  per-session file tabs and a remembered open state. Chat links and written-file chips open
+  there; the global right panel keeps the Code/Git/terminal/subagent tabs. The whole-session
+  artifact list is paged from the context endpoint, outside the chat's own message window.

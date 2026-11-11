@@ -45,6 +45,7 @@ import { SystemPromptPanel } from "./SystemPromptPanel";
 import { ToolDefinitionsPanel } from "./ToolDefinitionsPanel";
 import { AgentSessionPanel } from "./AgentSessionPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
+import { ArtifactsIcon, EMPTY_ARTIFACT_PANE, SessionArtifactsPane, type ArtifactPaneState } from "./SessionArtifactsPane";
 import { SubagentViewer } from "./SubagentViewer";
 import { TerminalPanel } from "./TerminalPanel";
 import { newTerminalTab, restoreTerminalTabs, TERMINAL_TABS_KEY, type TerminalTab } from "./terminal-tab-state";
@@ -106,6 +107,7 @@ import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { getAgentsBadge, getSessionFamily, isHiddenRelation } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
+import { loadSessionArtifacts, mergeSessionArtifacts, type SessionArtifact } from "@/lib/session-artifacts";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -117,6 +119,12 @@ type AutoNameStatus =
 // app/globals.css: 36px, 44px on a phone or touch screen.
 const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
+const ARTIFACTS_OPEN_KEY = "pi-star:artifacts-open";
+const ARTIFACT_PANES_KEY = "pi-star:artifacts-panes:v1";
+const MAX_STORED_ARTIFACT_PANES = 30;
+const ARTIFACTS_DEFAULT_WIDTH = 420;
+const ARTIFACTS_MIN_WIDTH = 300;
+const ARTIFACTS_MAX_WIDTH = 720;
 // pi's built-in tools that never change a file; any other tool may (#1144).
 const READ_ONLY_TOOL_NAMES = new Set(PRESET_READ_ONLY);
 const TOOL_END_REFRESH_MS = 1000;
@@ -125,6 +133,63 @@ const TOOL_END_REFRESH_MS = 1000;
 function lastAgentTabId(tabs: readonly { sessionId: string }[]): string | null {
   const last = tabs.at(-1);
   return last ? `agent:${last.sessionId}` : null;
+}
+
+/** File tabs parked per session, for the artifacts pane; viewer state is not persisted. */
+function loadStoredArtifactPanes(): Record<string, ArtifactPaneState> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(ARTIFACT_PANES_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const panes: Record<string, ArtifactPaneState> = {};
+    for (const [key, value] of Object.entries(parsed)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const entry = value as { tabs?: unknown; activeTabId?: unknown };
+      const tabs = Array.isArray(entry.tabs) ? entry.tabs.flatMap((tab): Tab[] => {
+        if (!tab || typeof tab !== "object" || Array.isArray(tab)) return [];
+        const filePath = typeof (tab as { filePath?: unknown }).filePath === "string" ? (tab as { filePath: string }).filePath : "";
+        const id = typeof (tab as { id?: unknown }).id === "string" ? (tab as { id: string }).id : "";
+        if (!filePath || !id) return [];
+        const page = typeof (tab as { page?: unknown }).page === "number" ? (tab as { page: number }).page : undefined;
+        const sourceSessionId = typeof (tab as { sourceSessionId?: unknown }).sourceSessionId === "string"
+          ? (tab as { sourceSessionId: string }).sourceSessionId
+          : null;
+        return [{
+          id,
+          filePath,
+          label: typeof (tab as { label?: unknown }).label === "string" ? (tab as { label: string }).label : getFileName(filePath),
+          page,
+          sourceSessionId,
+        }];
+      }) : [];
+      if (tabs.length === 0) continue;
+      const activeTabId = typeof entry.activeTabId === "string" && tabs.some((tab) => tab.id === entry.activeTabId)
+        ? entry.activeTabId
+        : null;
+      panes[key] = { tabs, activeTabId };
+    }
+    return panes;
+  } catch {
+    return {};
+  }
+}
+
+function saveStoredArtifactPanes(panes: Record<string, ArtifactPaneState>): void {
+  if (typeof window === "undefined") return;
+  try {
+    const stored = Object.entries(panes)
+      .filter(([key, pane]) => !key.startsWith("new:") && pane.tabs.length > 0)
+      .slice(-MAX_STORED_ARTIFACT_PANES)
+      .map(([key, pane]) => [key, {
+        activeTabId: pane.activeTabId,
+        tabs: pane.tabs.map(({ id, label, filePath, page, sourceSessionId }) => ({ id, label, filePath, page, sourceSessionId })),
+      }] as const);
+    window.localStorage.setItem(ARTIFACT_PANES_KEY, JSON.stringify(Object.fromEntries(stored)));
+  } catch {
+    // Storage is best-effort.
+  }
 }
 
 export function AppShell() {
@@ -279,6 +344,16 @@ export function AppShell() {
   const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
   const [rightPanelOpen, setRightPanelOpen] = useState(false);
   const [rightPanelExpanded, setRightPanelExpanded] = useState(false);
+  // The session's own artifacts pane: remembered open state, and file tabs
+  // parked per session (a switch never carries one session's files to another).
+  const [artifactsOpen, setArtifactsOpen] = useState(false);
+  const artifactsPrefsRestoredRef = useRef(false);
+  const artifactsButtonRef = useRef<HTMLButtonElement>(null);
+  const [artifactPanes, setArtifactPanes] = useState<Record<string, ArtifactPaneState>>({});
+  const [liveArtifacts, setLiveArtifacts] = useState<SessionArtifact[]>([]);
+  const [historyArtifacts, setHistoryArtifacts] = useState<SessionArtifact[]>([]);
+  const [artifactsScanning, setArtifactsScanning] = useState(false);
+  const artifactScanCacheRef = useRef(new Map<string, SessionArtifact[]>());
   const rightPanelFullWidth = rightPanelOpen && rightPanelExpanded && !isMobile;
   useEffect(() => {
     if (!rightPanelOpen || isMobile) setRightPanelExpanded(false);
@@ -288,6 +363,7 @@ export function AppShell() {
   const [mobileSidebarReady, setMobileSidebarReady] = useState(false);
   const sidebarWidthRef = useRef(SIDEBAR_DEFAULT_WIDTH);
   const rightPanelWidthRef = useRef(RIGHT_PANEL_FALLBACK_WIDTH);
+  const artifactsWidthRef = useRef(ARTIFACTS_DEFAULT_WIDTH);
   const getResponsiveRightPanelWidth = useCallback(
     () => typeof window === "undefined"
       ? RIGHT_PANEL_FALLBACK_WIDTH
@@ -337,8 +413,63 @@ export function AppShell() {
     storageKey: "pi-right-panel-width",
     widthRef: rightPanelWidthRef,
   });
+  const artifactsResizer = useResizablePanel({
+    ariaLabel: translate("artifacts.resize"),
+    cssVariable: "--artifacts-width",
+    defaultWidth: ARTIFACTS_DEFAULT_WIDTH,
+    getMaxWidth: () => {
+      const reserved = (sidebarOpen ? sidebarWidthRef.current : 0)
+        + (rightPanelOpen ? rightPanelWidthRef.current : 0)
+        + 360;
+      return Math.min(ARTIFACTS_MAX_WIDTH, Math.max(ARTIFACTS_MIN_WIDTH, window.innerWidth - reserved));
+    },
+    growthDirection: "left",
+    maxWidth: ARTIFACTS_MAX_WIDTH,
+    minWidth: ARTIFACTS_MIN_WIDTH,
+    storageKey: "pi-star:artifacts-width",
+    widthRef: artifactsWidthRef,
+  });
   const reclampSidebarWidth = sidebarResizer.reclampWidth;
   const reclampRightPanelWidth = rightPanelResizer.reclampWidth;
+
+  // The pane remembers whether it was open; the read runs after hydration so
+  // the server's markup and the first client render agree.
+  useEffect(() => {
+    try {
+      if (window.localStorage.getItem(ARTIFACTS_OPEN_KEY) === "1") setArtifactsOpen(true);
+    } catch {
+      // Storage is best-effort.
+    }
+    artifactsPrefsRestoredRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!artifactsPrefsRestoredRef.current) return;
+    try {
+      window.localStorage.setItem(ARTIFACTS_OPEN_KEY, artifactsOpen ? "1" : "0");
+    } catch {
+      // Storage is best-effort.
+    }
+  }, [artifactsOpen]);
+
+  // File tabs follow their session across reloads too (paths and the active
+  // one; a viewer's scroll state is not worth the storage).
+  const artifactPanesRestoredRef = useRef(false);
+  useEffect(() => {
+    const stored = loadStoredArtifactPanes();
+    if (Object.keys(stored).length > 0) setArtifactPanes(stored);
+    artifactPanesRestoredRef.current = true;
+  }, []);
+  useEffect(() => {
+    if (!artifactPanesRestoredRef.current) return;
+    // A viewer reports scroll state as it goes: write after it settles, not
+    // on every report.
+    const timer = setTimeout(() => saveStoredArtifactPanes(artifactPanes), 400);
+    return () => clearTimeout(timer);
+  }, [artifactPanes]);
+  const reclampArtifactsWidth = artifactsResizer.reclampWidth;
+  useEffect(() => {
+    if (artifactsOpen) reclampArtifactsWidth();
+  }, [artifactsOpen, rightPanelOpen, sidebarOpen, reclampArtifactsWidth]);
   // On mobile the sidebar is an overlay drawer; hide it by default so the chat
   // is visible on load. Runs once the breakpoint resolves after hydration.
   // Mobile drawer actions must not change the remembered desktop preference.
@@ -537,7 +668,12 @@ export function AppShell() {
       setActiveTopPanel(null);
       setMobileToolbarMoreOpen(false);
     }
-    setRightPanelOpen((open) => !open);
+    setRightPanelOpen((open) => {
+      const next = !open;
+      // On a phone both panels are overlays: only one at a time.
+      if (next && isMobile) setArtifactsOpen(false);
+      return next;
+    });
   }, [isMobile]);
 
   const handleRightPanelExpandToggle = useCallback(() => {
@@ -1468,6 +1604,134 @@ export function AppShell() {
   const newSessionDraftKey = selectedSession === null && effectiveNewSessionCwd
     ? `new:${newSessionDraftId}:${effectiveNewSessionCwd}`
     : null;
+
+  // ── Session artifacts pane ─────────────────────────────────────────────
+  const artifactPaneKey = selectedSession?.id ?? effectiveNewSessionCwd;
+  const artifactPane = (artifactPaneKey ? artifactPanes[artifactPaneKey] : undefined) ?? EMPTY_ARTIFACT_PANE;
+  const sessionArtifacts = useMemo(
+    () => mergeSessionArtifacts(historyArtifacts, liveArtifacts),
+    [historyArtifacts, liveArtifacts],
+  );
+  const artifactsCwd = selectedSession?.cwd ?? effectiveNewSessionCwd ?? null;
+
+  const updateArtifactPane = useCallback((change: (current: ArtifactPaneState) => ArtifactPaneState) => {
+    const key = artifactPaneKey;
+    if (!key) return;
+    setArtifactPanes((panes) => {
+      const current = panes[key] ?? EMPTY_ARTIFACT_PANE;
+      const next = change(current);
+      return next === current ? panes : { ...panes, [key]: next };
+    });
+  }, [artifactPaneKey]);
+
+  const handleOpenArtifactFile = useCallback((filePath: string, page?: number) => {
+    if (!artifactPaneKey) {
+      handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
+      return;
+    }
+    const tabId = `file:${filePath}`;
+    updateArtifactPane((current) => ({
+      tabs: openFileTab(current.tabs, {
+        fileName: getFileName(filePath),
+        filePath,
+        page,
+        sourceSessionId: selectedSession?.id ?? null,
+        tabId,
+      }),
+      activeTabId: tabId,
+    }));
+    setArtifactsOpen(true);
+    if (isMobile) {
+      setSidebarOpen(false);
+      setRightPanelOpen(false);
+    }
+  }, [artifactPaneKey, handleOpenFile, isMobile, selectedSession?.id, updateArtifactPane]);
+
+  const handleArtifactViewerStateChange = useCallback((tabId: string, revision: number, viewerState: FileViewerState) => {
+    updateArtifactPane((current) => {
+      const tabs = saveFileViewerState(current.tabs, tabId, revision, viewerState);
+      return tabs === current.tabs ? current : { ...current, tabs };
+    });
+  }, [updateArtifactPane]);
+
+  const handleOpenArtifactInCode = useCallback((filePath: string) => {
+    openCodeFile(filePath, getFileName(filePath));
+    setMainView("code");
+    saveMainView("code");
+  }, [openCodeFile]);
+
+  const handleOpenArtifactsCodeView = useCallback(() => {
+    setMainView("code");
+    saveMainView("code");
+  }, []);
+
+  const closeArtifacts = useCallback(() => {
+    const pane = artifactsResizer.panelRef.current;
+    const focusWasInside = Boolean(pane && pane.contains(document.activeElement));
+    setArtifactsOpen(false);
+    if (focusWasInside) artifactsButtonRef.current?.focus({ preventScroll: true });
+  }, [artifactsResizer.panelRef]);
+
+  const handleArtifactsToggle = useCallback(() => {
+    setArtifactsOpen((open) => {
+      const next = !open;
+      if (next && isMobile) {
+        setSidebarOpen(false);
+        setRightPanelOpen(false);
+      }
+      return next;
+    });
+  }, [isMobile]);
+
+  const handleArtifactsChange = useCallback((files: SessionArtifact[]) => setLiveArtifacts(files), []);
+
+  // The pane's content follows the session: drop the previous session's live
+  // list at once (its ChatWindow remounts), and show a cached scan if there is
+  // one before the fresh scan lands.
+  // Layout effect: it must clear before the new ChatWindow's passive effect
+  // reports its live list, or the report would be wiped in the same commit.
+  // Keyed on the ChatWindow's own lifetime: a new session that is promoted
+  // keeps its live list (same instance), while a switch remounts it.
+  useLayoutEffect(() => {
+    setLiveArtifacts([]);
+    const cacheKey = selectedSession ? `${selectedSession.id}:${branchActiveLeafId ?? ""}` : null;
+    setHistoryArtifacts(cacheKey ? (artifactScanCacheRef.current.get(cacheKey) ?? []) : []);
+    setArtifactsScanning(false);
+  }, [sessionKey]);
+
+  // A branch switch changes which writes are on the active leaf: the live
+  // transcript reports itself again, while the scanned list starts over.
+  useLayoutEffect(() => {
+    const cacheKey = selectedSession ? `${selectedSession.id}:${branchActiveLeafId ?? ""}` : null;
+    setHistoryArtifacts(cacheKey ? (artifactScanCacheRef.current.get(cacheKey) ?? []) : []);
+  }, [branchActiveLeafId, selectedSession?.id]);
+
+  // Opening the pane scans the session's whole transcript (paged, outside the
+  // chat's own message window); closing it aborts the scan.
+  useEffect(() => {
+    const session = selectedSession;
+    if (!artifactsOpen || mainView !== "chat" || !session || session.transient) return;
+    const cacheKey = `${session.id}:${branchActiveLeafId ?? ""}`;
+    const cached = artifactScanCacheRef.current.get(cacheKey);
+    if (cached) setHistoryArtifacts(cached);
+    const controller = new AbortController();
+    setArtifactsScanning(true);
+    void loadSessionArtifacts({
+      sessionId: session.id,
+      leafId: branchActiveLeafId,
+      cwd: session.cwd,
+      signal: controller.signal,
+    }).then((files) => {
+      if (controller.signal.aborted) return;
+      artifactScanCacheRef.current.set(cacheKey, files);
+      setHistoryArtifacts(files);
+    }).catch((error) => {
+      if (!controller.signal.aborted) console.error("Failed to scan session artifacts:", error);
+    }).finally(() => {
+      if (!controller.signal.aborted) setArtifactsScanning(false);
+    });
+    return () => controller.abort();
+  }, [artifactsOpen, mainView, selectedSession?.id, selectedSession?.cwd, branchActiveLeafId]);
   useLayoutEffect(() => {
     activeNewSessionDraftKeyRef.current = newSessionDraftKey;
   }, [newSessionDraftKey]);
@@ -2220,6 +2484,47 @@ export function AppShell() {
     );
   };
 
+  // The session's artifacts pane, left of Debug: its own panel and state, not
+  // the global file panel's. The count says what the session has written.
+  const renderArtifactsButton = (mobile: boolean) => {
+    if (!showChat || mainView !== "chat") return null;
+    const open = artifactsOpen;
+    const count = sessionArtifacts.length;
+    return (
+      <button
+        ref={artifactsButtonRef}
+        type="button"
+        onClick={handleArtifactsToggle}
+        title={translate(open ? "artifacts.hide" : "artifacts.show")}
+        aria-label={translate(open ? "artifacts.hide" : "artifacts.show")}
+        aria-controls="session-artifacts"
+        aria-expanded={open}
+        data-mobile-toolbar-action={mobile ? "artifacts" : undefined}
+        style={{
+          position: "relative",
+          marginLeft: mobile ? 0 : "auto",
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
+          background: open ? "var(--bg-selected)" : "none",
+          border: "none",
+          borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
+          ...(mobile ? { borderRight: "1px solid var(--border)" } : { borderLeft: "1px solid var(--border)" }),
+          color: open ? "var(--text)" : "var(--text-muted)",
+          cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
+        }}
+        onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+        onMouseLeave={(event) => { event.currentTarget.style.color = open ? "var(--text)" : "var(--text-muted)"; }}
+      >
+        <span style={{ display: "flex", color: open ? "var(--accent)" : "var(--text-dim)" }}>
+          <ArtifactsIcon size={mobile ? 16 : 13} open={open} />
+        </span>
+        {count > 0 && (
+          <span className="artifacts-button-count" aria-hidden="true">{count > 99 ? "99+" : count}</span>
+        )}
+      </button>
+    );
+  };
+
   // Icon only, right of the chat's actions; on a desktop it takes the bar's free space, so it
   // sits left of the session stats. It only opens or closes its panel: nothing is loaded here.
   const renderDebugButton = (mobile: boolean) => {
@@ -2234,7 +2539,7 @@ export function AppShell() {
         aria-label={translate("debug.title")}
         aria-pressed={open}
         style={{
-          marginLeft: mobile ? 0 : "auto",
+          marginLeft: mobile || (showChat && mainView === "chat") ? 0 : "auto",
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
           background: open ? "var(--bg-selected)" : "none",
@@ -2539,6 +2844,7 @@ export function AppShell() {
                 <MainViewTabs compact value={mainView} onChange={handleMainViewChange} />
               </div>
               {!isNarrowMobile && renderChatToolbarActions(true)}
+              {!isNarrowMobile && renderArtifactsButton(true)}
               {!isNarrowMobile && renderDebugButton(true)}
               {renderSessionStatsButton(true)}
               {renderMainFileToggle(true)}
@@ -2568,6 +2874,7 @@ export function AppShell() {
                   }}
                 >
                   {renderChatToolbarActions(true)}
+                  {renderArtifactsButton(true)}
                   {renderDebugButton(true)}
                 </div>
               )}
@@ -2577,6 +2884,7 @@ export function AppShell() {
             <>
               {renderProjectTrustWarning(false)}
               {renderChatToolbarActions(false)}
+              {renderArtifactsButton(false)}
               {renderDebugButton(false)}
               {renderSessionStatsButton(false)}
             </>
@@ -2849,8 +3157,13 @@ export function AppShell() {
         <div style={{ flex: 1, overflow: "hidden", position: "relative" }}>
           <div style={{ display: mainView === "chat" ? "flex" : "none", flexDirection: "column", height: "100%", minHeight: 0 }}>
           {showChat ? (
-            <ChatWindow
-              key={sessionKey}
+            <div style={{ display: "flex", flex: 1, minHeight: 0, minWidth: 0 }}>
+              {artifactsOpen && mainView === "chat" && (
+                <div className="artifacts-overlay-backdrop" aria-hidden="true" onClick={closeArtifacts} />
+              )}
+              <div style={{ flex: 1, minWidth: 0, minHeight: 0, display: "flex", flexDirection: "column" }}>
+                <ChatWindow
+                  key={sessionKey}
               session={selectedSession}
               searchTarget={searchTarget?.sessionId === selectedSession?.id ? searchTarget : null}
               onSearchTargetHandled={handleSearchTargetHandled}
@@ -2878,8 +3191,9 @@ export function AppShell() {
               onSessionStatsPanelOpen={openSessionStatsPanel}
               onOpenSettings={openSettingsSection}
               onContextUsageChange={handleContextUsageChange}
-              onOpenFile={handleOpenLinkedFile}
-              onFilesUploaded={handleExplorerRefresh}
+                  onOpenFile={handleOpenArtifactFile}
+                  onArtifactsChange={handleArtifactsChange}
+                  onFilesUploaded={handleExplorerRefresh}
               onOpenSubagent={handleOpenSubagentTab}
               onAskInNewChat={handleAskInNewChat}
               quoteSelectionEnabled={quoteSelectionEnabled}
@@ -2889,8 +3203,38 @@ export function AppShell() {
               onSoundToggle={onSoundToggle}
               playDoneSound={playDoneSound}
               unlockAudio={unlockAudio}
-              holdAudio={holdAudio}
-            />
+                  holdAudio={holdAudio}
+                />
+              </div>
+              {artifactsOpen && mainView === "chat" && (
+                <>
+                  <div
+                    {...artifactsResizer.separatorProps}
+                    aria-controls="session-artifacts"
+                    className={`panel-resize-handle artifacts-resize-handle${artifactsResizer.isResizing ? " is-resizing" : ""}`}
+                    data-resize-handle="artifacts"
+                    title={`${translate("artifacts.resize")}: ${translate("layout.resizeHint")}`}
+                  />
+                  <SessionArtifactsPane
+                    ref={artifactsResizer.panelRef}
+                    sessionId={selectedSession?.id ?? null}
+                    cwd={artifactsCwd}
+                    artifacts={sessionArtifacts}
+                    scanning={artifactsScanning}
+                    pane={artifactPane}
+                    onChange={(next) => updateArtifactPane(() => next)}
+                    onOpenFile={handleOpenArtifactFile}
+                    onOpenInCode={handleOpenArtifactInCode}
+                    onOpenCodeView={handleOpenArtifactsCodeView}
+                    onViewerStateChange={handleArtifactViewerStateChange}
+                    onClose={closeArtifacts}
+                    onAtMention={handleAtMention}
+                    onMentionLines={handleFileLineMention}
+                    style={{ "--artifacts-width": `${artifactsResizer.width}px` } as React.CSSProperties}
+                  />
+                </>
+              )}
+            </div>
           ) : initialCwdStatus === "validating" ? (
             <div
               role="status"

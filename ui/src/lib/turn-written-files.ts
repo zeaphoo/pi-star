@@ -15,6 +15,12 @@ export interface WrittenFile {
   filePath: string;
 }
 
+/** One successful write, before a turn's paths are deduped. */
+export interface WrittenFileEvent extends WrittenFile {
+  /** When the write's tool result arrived (ms), for ordering; absent in old sessions. */
+  timestamp?: number;
+}
+
 function isFileWritingToolName(toolName: string): boolean {
   return isWriteToolName(toolName) || isEditToolName(toolName);
 }
@@ -69,7 +75,19 @@ function readApplyPatchPaths(input: Record<string, unknown> | undefined, result:
   const details = result?.details;
   const deleted = collectApplyPatchDeletePaths(input, details);
   const applied = getApplyPatchAppliedFiles(details);
-  if (applied) return applied.filter((filePath) => !deleted.has(filePath));
+  if (applied) {
+    // appliedFiles may be absolute while the document's Delete File names a
+    // path relative to the working directory (or the other way around).
+    const isDeleted = (filePath: string) => {
+      const normalized = filePath.replace(/\\/g, "/");
+      for (const deletePath of deleted) {
+        const candidate = deletePath.replace(/\\/g, "/");
+        if (normalized === candidate || normalized.endsWith(`/${candidate}`) || candidate.endsWith(`/${normalized}`)) return true;
+      }
+      return false;
+    };
+    return applied.filter((filePath) => !isDeleted(filePath));
+  }
   if (applyPatchResultHasFailures(details)) return [];
 
   if (details && typeof details === "object" && !Array.isArray(details)) {
@@ -80,23 +98,19 @@ function readApplyPatchPaths(input: Record<string, unknown> | undefined, result:
 }
 
 /**
- * Collect the distinct files a single assistant turn actually wrote.
+ * Every successful write in one assistant turn, in call order.
  *
- * Every entry is derived from a `write`/`edit`/`apply_patch` tool call whose
- * result arrived and did not error — never from the reply text. A path the
- * assistant merely mentions in prose is not evidence that any file was
- * touched, so it is not a source here; the tool call is the record of what
- * happened.
- *
- * Paths are resolved against `cwd`, deduped, and kept in first-seen order.
+ * Derived from a `write`/`edit`/`apply_patch` tool call whose result arrived
+ * and did not error — never from the reply text. A path the assistant merely
+ * mentions in prose is not evidence that any file was touched. Paths are
+ * resolved against `cwd`; duplicates are left for the caller to fold.
  */
-export function extractTurnWrittenFiles(
+export function extractWrittenFileEvents(
   content: AssistantContentBlock[],
   toolResults: Map<string, ToolResultMessage> | undefined,
   cwd?: string,
-): WrittenFile[] {
-  const seen = new Set<string>();
-  const writtenFiles: WrittenFile[] = [];
+): WrittenFileEvent[] {
+  const events: WrittenFileEvent[] = [];
 
   for (const block of content) {
     if (block.type !== "toolCall") continue;
@@ -116,11 +130,29 @@ export function extractTurnWrittenFiles(
       // as #, ?, and :digits that have special meaning in links and source refs.
       const filePath = resolveLocalFilePath(rawPath, cwd);
       if (!filePath) continue;
-
-      if (seen.has(filePath)) continue;
-      seen.add(filePath);
-      writtenFiles.push({ filePath });
+      events.push({ filePath, timestamp: result.timestamp });
     }
+  }
+
+  return events;
+}
+
+/**
+ * Collect the distinct files a single assistant turn actually wrote, in
+ * first-seen order (see extractWrittenFileEvents for what counts).
+ */
+export function extractTurnWrittenFiles(
+  content: AssistantContentBlock[],
+  toolResults: Map<string, ToolResultMessage> | undefined,
+  cwd?: string,
+): WrittenFile[] {
+  const seen = new Set<string>();
+  const writtenFiles: WrittenFile[] = [];
+
+  for (const event of extractWrittenFileEvents(content, toolResults, cwd)) {
+    if (seen.has(event.filePath)) continue;
+    seen.add(event.filePath);
+    writtenFiles.push({ filePath: event.filePath });
   }
 
   return writtenFiles;

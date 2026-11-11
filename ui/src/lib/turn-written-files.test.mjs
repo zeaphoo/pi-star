@@ -197,3 +197,15 @@ test("apply_patch falls back to preview newPath and ignores planned deletes", ()
   });
   assert.deepEqual(paths(content, results(result), "/repo"), ["/repo/src/a.ts"]);
 });
+
+test("a delete named relative is dropped when appliedFiles names it absolutely", () => {
+  const patch = "*** Begin Patch\n*** Delete File: gone.ts\n*** End Patch";
+  const content = [toolCall("1", "apply_patch", { input: patch })];
+  const result = {
+    role: "toolResult",
+    toolCallId: "1",
+    content: [{ type: "text", text: "ok" }],
+    details: { result: { appliedFiles: ["/repo/gone.ts"] } },
+  };
+  assert.deepEqual(paths(content, results(result), "/repo"), []);
+});
