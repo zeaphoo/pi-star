@@ -41,6 +41,9 @@ These are intentional and must be re-applied after a re-sync:
   directory. `sidebar.newMenuTitle`, `sidebar.newSession`, `sidebar.openProject`,
   `sidebar.openProjectTitle`, `sidebar.openOrCreateProject` and `sidebar.recentProjects`
   are pi-star additions in all three locales.
+- Chinese locales call the diff view **变更/變更**, not upstream's **差异/差異**.
+  `FileViewer`'s Source/Preview/Diff switch uses the locale keys (`i18n.source`,
+  `i18n.preview`, `i18n.diff`) instead of hardcoded English labels.
 - The session tree's footer keeps only the archive link; "Open another project…" moved to
   the header's New menu (a split button: new session in the current project, or the folder
   picker and the projects used last). The Code view's tree header carries the files' upload,
