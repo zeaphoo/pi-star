@@ -38,6 +38,13 @@ export default defineConfig({
       "next/navigation": path.resolve(root, "src/shims/next-navigation.ts"),
       "next/image": path.resolve(root, "src/shims/next-image.tsx"),
       "@earendil-works/pi-ai/utils/json-parse": path.resolve(root, "src/shims/pi-json-parse.ts"),
+      // The package's "browser" build decodes entities with
+      // document.createElement at module scope, which throws in the highlight
+      // worker. Its worker condition is the DOM-free implementation.
+      "decode-named-character-reference": path.resolve(
+        root,
+        "node_modules/decode-named-character-reference/index.js",
+      ),
     },
   },
   build: {

@@ -211,12 +211,13 @@ pub fn read_text_chunk(path: &Path, offset: u64) -> Result<TextChunk> {
         }
     }
     let next_offset = offset + end as u64;
+    let content = String::from_utf8_lossy(&buffer[..end]).into_owned();
     Ok(TextChunk {
-        content: String::from_utf8_lossy(&buffer[..end]).into_owned(),
+        language: language_for_content(path, &content).to_string(),
+        content,
         next_offset,
         truncated: next_offset < metadata.len(),
         binary: false,
-        language: language_for(path).to_string(),
         size: metadata.len(),
         mtime: metadata
             .modified()
@@ -242,11 +243,32 @@ pub fn language_for(path: &Path) -> &'static str {
     if name == "dockerfile" || name.starts_with("dockerfile.") {
         return "dockerfile";
     }
+    if name == "containerfile" || name.starts_with("containerfile.") {
+        return "dockerfile";
+    }
     if name == ".env" || name.starts_with(".env.") {
         return "bash";
     }
     if name == "makefile" || name == "gnumakefile" {
         return "makefile";
+    }
+    // Files whose whole name matters. A dotfile has no extension, so the
+    // extension match below can never see .gitignore, .editorconfig or a lock
+    // file such as Cargo.lock.
+    match name.as_str() {
+        ".gitignore" | ".dockerignore" | ".npmignore" | ".eslintignore" | ".prettierignore"
+        | ".bashrc" | ".bash_profile" | ".zshrc" | ".profile" => return "bash",
+        ".vimrc" | ".gvimrc" => return "vim",
+        ".editorconfig" | ".npmrc" | ".yarnrc" | ".gitattributes" | ".gitmodules" => {
+            return "ini";
+        }
+        ".babelrc" | ".eslintrc" | ".prettierrc" | ".stylelintrc" => return "json",
+        "cargo.lock" => return "toml",
+        "cmakelists.txt" => return "cmake",
+        "gemfile" | "rakefile" | "vagrantfile" | "podfile" | "brewfile" | "fastfile"
+        | "guardfile" => return "ruby",
+        "justfile" | "taskfile" => return "makefile",
+        _ => {}
     }
     match extension(path).as_deref() {
         Some("ts" | "mts" | "cts") => "typescript",
@@ -269,7 +291,7 @@ pub fn language_for(path: &Path) -> &'static str {
         Some("dart") => "dart",
         Some("zig") => "zig",
         Some("c" | "h") => "c",
-        Some("cpp" | "hpp") => "cpp",
+        Some("cpp" | "cxx" | "cc" | "hpp" | "hxx") => "cpp",
         Some("cs") => "csharp",
         Some("mm") => "objectivec",
         Some("ex" | "exs") => "elixir",
@@ -279,14 +301,15 @@ pub fn language_for(path: &Path) -> &'static str {
         Some("nix") => "nix",
         Some("html" | "htm") => "html",
         Some("vue" | "svelte" | "astro") => "markup",
+        Some("hbs" | "handlebars" | "mustache") => "handlebars",
         Some("css") => "css",
         Some("scss") => "scss",
         Some("less") => "less",
-        Some("json" | "jsonl") => "json",
+        Some("json" | "jsonl" | "jsonc" | "json5") => "json",
         Some("yaml" | "yml") => "yaml",
         Some("toml") => "toml",
         Some("ini" | "cfg" | "properties") => "ini",
-        Some("xml") => "xml",
+        Some("xml" | "plist") => "xml",
         Some("md" | "mdx") => "markdown",
         Some("tex") => "latex",
         Some("sh" | "bash" | "zsh" | "fish" | "env" | "gitignore") => "bash",
@@ -295,12 +318,75 @@ pub fn language_for(path: &Path) -> &'static str {
         Some("sql") => "sql",
         Some("graphql" | "gql") => "graphql",
         Some("proto") => "protobuf",
-        Some("tf" | "hcl") => "hcl",
+        Some("tf" | "tfvars" | "hcl") => "hcl",
         Some("diff" | "patch") => "diff",
+        Some("http") => "http",
         Some("pdf") => "pdf",
         Some("docx") => "word",
         _ => "text",
     }
+}
+
+/// Language for a text chunk. The path decides most files; for an extensionless
+/// script or a config file with no useful extension, the first line/content is
+/// the only clue (a shebang, an XML/HTML prolog, or a JSON document).
+pub fn language_for_content(path: &Path, content: &str) -> &'static str {
+    let by_path = language_for(path);
+    if by_path != "text" {
+        return by_path;
+    }
+
+    let first_line = content.lines().next().unwrap_or("").trim_start();
+    if let Some(shebang) = first_line.strip_prefix("#!") {
+        let shebang = shebang.to_ascii_lowercase();
+        if shebang.contains("python") {
+            return "python";
+        }
+        if shebang.contains("node") || shebang.contains("deno") || shebang.contains("bun") {
+            return "javascript";
+        }
+        if shebang.contains("ruby") {
+            return "ruby";
+        }
+        if shebang.contains("perl") {
+            return "perl";
+        }
+        if shebang.contains("php") {
+            return "php";
+        }
+        if shebang.contains("pwsh") || shebang.contains("powershell") {
+            return "powershell";
+        }
+        if shebang.contains("lua") {
+            return "lua";
+        }
+        if shebang.contains("rscript") {
+            return "r";
+        }
+        if shebang.contains("bash")
+            || shebang.contains("zsh")
+            || shebang.contains("fish")
+            || shebang.contains("/sh")
+            || shebang.contains(" sh")
+        {
+            return "bash";
+        }
+    }
+
+    let trimmed = content.trim_start();
+    if trimmed.starts_with("<?xml") {
+        return "xml";
+    }
+    let lower = trimmed.get(..14).unwrap_or(trimmed).to_ascii_lowercase();
+    if lower.starts_with("<!doctype html") || lower.starts_with("<html") {
+        return "html";
+    }
+    if (trimmed.starts_with('{') || trimmed.starts_with('['))
+        && serde_json::from_str::<Value>(trimmed).is_ok()
+    {
+        return "json";
+    }
+    "text"
 }
 
 pub fn mime_for(path: &Path) -> String {
@@ -581,4 +667,40 @@ fn html_escape_text(value: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn language(path: &str) -> &'static str {
+        language_for(Path::new(path))
+    }
+
+    #[test]
+    fn maps_extensions_and_special_names() {
+        assert_eq!(language("src/main.rs"), "rust");
+        assert_eq!(language("src/app.tsx"), "tsx");
+        assert_eq!(language("Cargo.lock"), "toml");
+        assert_eq!(language(".gitignore"), "bash");
+        assert_eq!(language(".editorconfig"), "ini");
+        assert_eq!(language("Info.plist"), "xml");
+        assert_eq!(language("CMakeLists.txt"), "cmake");
+        assert_eq!(language("Gemfile"), "ruby");
+        assert_eq!(language("Dockerfile.dev"), "dockerfile");
+        assert_eq!(language("styles/theme.scss"), "scss");
+        assert_eq!(language("proto/service.proto"), "protobuf");
+        assert_eq!(language("deploy/main.tfvars"), "hcl");
+    }
+
+    #[test]
+    fn detects_language_from_content_when_the_path_has_none() {
+        assert_eq!(language_for_content(Path::new("script"), "#!/usr/bin/env python3\nprint(1)"), "python");
+        assert_eq!(language_for_content(Path::new("script"), "#!/bin/bash\necho hi"), "bash");
+        assert_eq!(language_for_content(Path::new("script"), "#!/usr/bin/env node\nconsole.log(1)"), "javascript");
+        assert_eq!(language_for_content(Path::new("config"), "<?xml version=\"1.0\"?>\n<root/>"), "xml");
+        assert_eq!(language_for_content(Path::new("page"), "<!doctype html>\n<html></html>"), "html");
+        assert_eq!(language_for_content(Path::new("data"), "{\"a\": 1}"), "json");
+        assert_eq!(language_for_content(Path::new("LICENSE"), "plain text"), "text");
+    }
 }

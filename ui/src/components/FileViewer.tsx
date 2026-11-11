@@ -1,14 +1,11 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent } from "react";
-import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
-import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
-import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
+import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
 import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import ReactMarkdown from "react-markdown";
 import { useTheme } from "@/hooks/useTheme";
-import { usePrismLanguages } from "@/hooks/usePrismLanguages";
+import { useHighlightedSegments } from "@/hooks/useHighlightedSegments";
 import {
   DOCX_PREVIEW_MAX_BYTES,
   HTML_PREVIEW_MAX_BYTES,
@@ -31,6 +28,8 @@ import { DelimitedTable } from "./DelimitedTable";
 import { isDelimitedTablePath } from "@/lib/delimited-table";
 import { FrontmatterCard } from "./FrontmatterCard";
 import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
+import { buildDiffHighlightPlan, diffLineHtml } from "@/lib/diff-highlight";
+import { languageForPath } from "@/lib/file-language";
 import type { GitFileDiffResponse } from "@/lib/git-types";
 import { useI18n } from "@/hooks/useI18n";
 import {
@@ -69,12 +68,10 @@ interface FileData {
   binary?: boolean;
 }
 
-const SOURCE_HIGHLIGHT_MAX_LINES = 1_000;
-const DISPLAY_MODE_LABELS: Record<DisplayMode, string> = {
-  source: "Source",
-  preview: "Preview",
-  diff: "Diff",
-};
+const SOURCE_HIGHLIGHT_MAX_LINES = 10_000;
+// The sticky gutter is repositioned by the browser on every scroll event. Keep
+// it for short views; a 10,000-row file scrolls with a plain gutter instead.
+const SOURCE_PINNED_MAX_LINES = 1_000;
 
 const FILE_CODE_STYLE: CSSProperties = {
   fontFamily: "var(--font-mono)",
@@ -84,17 +81,14 @@ const FILE_CODE_STYLE: CSSProperties = {
 };
 
 // Prism's light theme colors <pre> with backgroundColor, its dark theme with
-// the background shorthand. The source view sets backgroundColor itself and the
-// dark theme's shorthand is dropped, as CodeBlock does: a theme switch then never
-// makes React remove one beside the other (it warned, and the view lost its
-// background).
-const fileViewerDarkTheme = {
-  ...vscDarkPlus,
-  'pre[class*="language-"]': {
-    ...vscDarkPlus['pre[class*="language-"]'],
-  },
-};
-delete fileViewerDarkTheme['pre[class*="language-"]'].background;
+// the background shorthand. The source view draws its own background and the
+// dark theme's shorthand is dropped: a theme switch then cannot make React
+// remove one beside the other.
+function themeTextColor(isDark: boolean): string {
+  const theme = isDark ? vscDarkPlus : vs;
+  const style = theme['code[class*="language-"]'] as CSSProperties | undefined;
+  return typeof style?.color === "string" ? style.color : "var(--text)";
+}
 
 // `lineHeight` is FILE_CODE_STYLE's 13px * 1.6, so both columns share one line
 // box; a code-font change must move it with fontSize.
@@ -135,13 +129,55 @@ const FILE_PINNED_LINE_NUMBER_STYLE: CSSProperties = {
   zIndex: 1,
 };
 
-type SourceCodeRendererProps = Parameters<NonNullable<SyntaxHighlighterProps["renderer"]>>[0] & {
-  wrapLines: boolean;
-};
-
 interface SelectedLineRange {
   startLine: number;
   endLine: number;
+}
+
+const FILE_SOURCE_LINE_CONTENT_STYLE: CSSProperties = {
+  flex: "1 1 auto",
+  minWidth: 0,
+};
+
+/**
+ * One flex row per source line. `htmlLines` is the worker's escaped markup; a
+ * null value renders the raw line while the worker is still tokenising (or for
+ * a file large enough to keep the plain fallback).
+ */
+function sourceRows(
+  lines: string[],
+  htmlLines: string[] | null,
+  lineNumberStyle: CSSProperties,
+  wrapLines: boolean,
+): ReactNode[] {
+  return lines.map((line, lineIndex) => {
+    const contentStyle: CSSProperties = {
+      ...FILE_SOURCE_LINE_CONTENT_STYLE,
+      overflowWrap: wrapLines ? "anywhere" : "normal",
+      whiteSpace: wrapLines ? "pre-wrap" : "pre",
+    };
+    return (
+      <span
+        className="file-source-line"
+        data-line-number={lineIndex + 1}
+        key={`source-line-${lineIndex}`}
+        style={{ display: "flex", minWidth: "100%" }}
+      >
+        <span aria-hidden="true" style={lineNumberStyle}>
+          {lineIndex + 1}
+        </span>
+        {htmlLines !== null ? (
+          <span
+            className="file-source-line-content"
+            style={contentStyle}
+            dangerouslySetInnerHTML={{ __html: htmlLines[lineIndex] ?? "" }}
+          />
+        ) : (
+          <span className="file-source-line-content" style={contentStyle}>{line}</span>
+        )}
+      </span>
+    );
+  });
 }
 
 function MentionIcon() {
@@ -211,49 +247,6 @@ function getSelectedSourceLineRange(root: HTMLElement, selection: Selection | nu
   return { startLine, endLine };
 }
 
-function SourceCodeRenderer({ rows, stylesheet, useInlineStyles, wrapLines }: SourceCodeRendererProps) {
-  return rows.map((row, lineIndex) => {
-    const children = row.children ?? [];
-    const firstChildClasses = children[0]?.properties?.className;
-    const hasLineNumber = Array.isArray(firstChildClasses)
-      && firstChildClasses.includes("react-syntax-highlighter-line-number");
-    const lineNumberNode = hasLineNumber ? children[0] : null;
-    const contentNodes = hasLineNumber ? children.slice(1) : children;
-
-    return (
-      <span
-        className="file-source-line"
-        data-line-number={lineIndex + 1}
-        key={`source-line-${lineIndex}`}
-        style={{ display: "flex", minWidth: "100%" }}
-      >
-        {lineNumberNode && renderSyntaxNode({
-          node: lineNumberNode,
-          stylesheet,
-          useInlineStyles,
-          key: `source-line-number-${lineIndex}`,
-        })}
-        <span
-          className="file-source-line-content"
-          style={{
-            flex: "1 1 auto",
-            minWidth: 0,
-            overflowWrap: wrapLines ? "anywhere" : "normal",
-            whiteSpace: wrapLines ? "pre-wrap" : "pre",
-          }}
-        >
-          {contentNodes.map((node, tokenIndex) => renderSyntaxNode({
-            node,
-            stylesheet,
-            useInlineStyles,
-            key: `source-token-${lineIndex}-${tokenIndex}`,
-          }))}
-        </span>
-      </span>
-    );
-  });
-}
-
 function getFileApiUrl(
   filePath: string,
   type: "read" | "download" | "meta" | "preview" | "watch",
@@ -308,9 +301,17 @@ function diffLines(patch: string): Array<DiffLine | DiffGap> {
   return files.flatMap(unifiedDiffLines);
 }
 
-function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
+function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: boolean; language: string }) {
   const { t } = useI18n();
-  const diff = diffLines(patch);
+  const { isDark } = useTheme();
+  const diff = useMemo(() => diffLines(patch), [patch]);
+  const highlightPlan = useMemo(() => buildDiffHighlightPlan(diff), [diff]);
+  const highlighted = useHighlightedSegments(
+    highlightPlan.segments,
+    language,
+    isDark,
+    language !== "text",
+  );
 
   const isChange = (l: DiffLine | DiffGap) => l.type === "added" || l.type === "removed";
   const hasChanges = diff.some(isChange);
@@ -331,24 +332,27 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
       visible.add(j);
     }
   }
-  const lineNumberStyle = visible.size <= SOURCE_HIGHLIGHT_MAX_LINES
+  const lineNumberStyle = visible.size <= SOURCE_PINNED_MAX_LINES
     ? FILE_PINNED_LINE_NUMBER_STYLE
     : FILE_LINE_NUMBER_STYLE;
 
   // Collapsed lines and the lines the patch leaves out between hunks share one
   // marker; its count is unknown when a gap's is.
   const isShown = (j: number) => diff[j].type !== "gap" && visible.has(j);
-  const segments: Array<{ hidden: true; count: number | null } | { hidden: false; lines: DiffLine[] }> = [];
+  const blocks: Array<
+    { hidden: true; count: number | null }
+    | { hidden: false; lines: Array<{ line: DiffLine; index: number }> }
+  > = [];
   let i = 0;
   while (i < diff.length) {
     if (isShown(i)) {
-      const block: DiffLine[] = [];
+      const block: Array<{ line: DiffLine; index: number }> = [];
       while (i < diff.length && isShown(i)) {
         const line = diff[i];
-        if (line.type !== "gap") block.push(line);
+        if (line.type !== "gap") block.push({ line, index: i });
         i++;
       }
-      segments.push({ hidden: false, lines: block });
+      blocks.push({ hidden: false, lines: block });
     } else {
       let count: number | null = 0;
       while (i < diff.length && !isShown(i)) {
@@ -357,7 +361,7 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
         count = count === null || skipped === null ? null : count + skipped;
         i++;
       }
-      segments.push({ hidden: true, count });
+      blocks.push({ hidden: true, count });
     }
   }
 
@@ -370,9 +374,9 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
         ...FILE_CODE_STYLE,
       }}
     >
-      {segments.map((seg, si) => {
-        if (seg.hidden) {
-          const result = (
+      {blocks.map((block, si) => {
+        if (block.hidden) {
+          return (
             <div
               key={si}
               style={{
@@ -384,12 +388,11 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
                 borderBottom: "1px solid var(--border)",
               }}
             >
-              {seg.count === null ? "⋯" : `⋯ ${diffGapLabel(seg.count, t)}`}
+              {block.count === null ? "⋯" : `⋯ ${diffGapLabel(block.count, t)}`}
             </div>
           );
-          return result;
         }
-        const lines = seg.lines.map((line, li) => {
+        const lines = block.lines.map(({ line, index }, li) => {
           const bg =
             line.type === "added"
               ? "rgba(0,200,80,0.12)"
@@ -400,6 +403,7 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
             line.type === "added" ? "+" : line.type === "removed" ? "-" : " ";
           const prefixColor =
             line.type === "added" ? "#4ade80" : line.type === "removed" ? "#f87171" : "var(--text-dim)";
+          const html = diffLineHtml(line, index, highlightPlan, highlighted);
 
           return (
             <div
@@ -416,9 +420,7 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
                   : "3px solid transparent",
               }}
             >
-              <span
-                style={lineNumberStyle}
-              >
+              <span style={lineNumberStyle}>
                 {line.type === "removed" ? line.oldLineNo : line.newLineNo}
               </span>
               <span
@@ -433,19 +435,34 @@ function DiffView({ patch, wrapLines }: { patch: string; wrapLines: boolean }) {
               >
                 {prefix}
               </span>
-              <span
-                className="file-diff-line-content"
-                style={{
-                  flexShrink: wrapLines ? 1 : 0,
-                  minWidth: 0,
-                  padding: "0 8px 0 0",
-                  whiteSpace: wrapLines ? "pre-wrap" : "pre",
-                  overflowWrap: wrapLines ? "anywhere" : "normal",
-                  color: "var(--text)",
-                }}
-              >
-                {line.text || "\u00a0"}
-              </span>
+              {html !== null ? (
+                <span
+                  className="file-diff-line-content"
+                  style={{
+                    flexShrink: wrapLines ? 1 : 0,
+                    minWidth: 0,
+                    padding: "0 8px 0 0",
+                    whiteSpace: wrapLines ? "pre-wrap" : "pre",
+                    overflowWrap: wrapLines ? "anywhere" : "normal",
+                    color: "var(--text)",
+                  }}
+                  dangerouslySetInnerHTML={{ __html: html || "\u00a0" }}
+                />
+              ) : (
+                <span
+                  className="file-diff-line-content"
+                  style={{
+                    flexShrink: wrapLines ? 1 : 0,
+                    minWidth: 0,
+                    padding: "0 8px 0 0",
+                    whiteSpace: wrapLines ? "pre-wrap" : "pre",
+                    overflowWrap: wrapLines ? "anywhere" : "normal",
+                    color: "var(--text)",
+                  }}
+                >
+                  {line.text || "\u00a0"}
+                </span>
+              )}
             </div>
           );
         });
@@ -1491,8 +1508,7 @@ function TextFileViewer({
   const viewerContent = data?.content ?? "";
   const sourceLines = useMemo(() => viewerContent.split("\n"), [viewerContent]);
   const language = data?.language ?? "text";
-  // Plain text needs no Prism languages; any other file loads them once.
-  const prismReady = usePrismLanguages(Boolean(data) && language !== "text");
+  const diffLanguage = language !== "text" ? language : languageForPath(filePath);
   const isHtml = !isBinary && language === "html";
   const isMarkdown = !isBinary && language === "markdown";
   // A table shows a loaded prefix too, without its cut last record; an HTML
@@ -1508,75 +1524,60 @@ function TextFileViewer({
   );
   // A partly loaded HTML file previews whole, so Load more belongs to its source view.
   const showLoadMore = !!data?.truncated && !(isHtml && effectiveDisplayMode === "preview");
-  const useLightweightSource = sourceLines.length > SOURCE_HIGHLIGHT_MAX_LINES
+
+  const canHighlightSource = !isBinary
+    && language !== "text"
+    && language !== "pdf"
+    && language !== "word";
+  const useLightweightSource = (sourceLines.length > SOURCE_HIGHLIGHT_MAX_LINES || !canHighlightSource)
     && !(effectiveDisplayMode === "diff" && hasGitDiff)
     && !(effectiveDisplayMode === "preview" && hasPreview);
-  // react-syntax-highlighter rebuilds every token element on each render, which
-  // costs hundreds of milliseconds on large files. Cache the rendered trees so
-  // unrelated re-renders (panel open/close, selection changes) reuse them as-is.
+  const sourceSegments = useMemo(() => [viewerContent], [viewerContent]);
+  const highlightedSegments = useHighlightedSegments(
+    sourceSegments,
+    language,
+    isDark,
+    canHighlightSource
+      && sourceLines.length <= SOURCE_HIGHLIGHT_MAX_LINES
+      && effectiveDisplayMode === "source",
+  );
+  const highlightedSourceLines = highlightedSegments?.[0] ?? null;
+  const sourceLineNumberStyle = sourceLines.length <= SOURCE_PINNED_MAX_LINES
+    ? FILE_PINNED_LINE_NUMBER_STYLE
+    : FILE_LINE_NUMBER_STYLE;
+  const sourceViewStyle = useMemo<CSSProperties>(() => ({
+    margin: 0,
+    padding: 0,
+    border: 0,
+    backgroundColor: "var(--bg)",
+    color: themeTextColor(isDark),
+    ...FILE_CODE_STYLE,
+    width: wrapLines ? "100%" : "max-content",
+    minWidth: "100%",
+    minHeight: "100%",
+    overflow: "visible",
+  }), [isDark, wrapLines]);
+
+  // The worker returns escaped per-line markup. Cache the rendered rows so
+  // unrelated re-renders (panel open/close, selection changes) reuse them.
   const highlightedSource = useMemo(
     () => (
-      <SyntaxHighlighter
+      <div
         className={wrapLines ? "file-source-view is-wrapped" : "file-source-view"}
-        language={language === "text" || !prismReady ? "plaintext" : language}
-        style={isDark ? fileViewerDarkTheme : vs}
-        showLineNumbers
-        lineNumberStyle={{
-          ...FILE_PINNED_LINE_NUMBER_STYLE,
-        }}
-        customStyle={{
-          margin: 0,
-          padding: 0,
-          border: 0,
-          backgroundColor: "var(--bg)",
-          ...FILE_CODE_STYLE,
-          width: wrapLines ? "100%" : "max-content",
-          minWidth: "100%",
-          minHeight: "100%",
-          overflow: "visible",
-        }}
-        codeTagProps={{
-          style: {
-            fontFamily: "var(--font-mono)",
-            fontWeight: "var(--font-mono-weight)",
-            overflowWrap: wrapLines ? "anywhere" : "normal",
-          },
-        }}
-        renderer={(rendererProps) => (
-          <SourceCodeRenderer {...rendererProps} wrapLines={wrapLines} />
-        )}
-        wrapLongLines={wrapLines}
+        style={sourceViewStyle}
       >
-        {viewerContent}
-      </SyntaxHighlighter>
+        {sourceRows(sourceLines, highlightedSourceLines, sourceLineNumberStyle, wrapLines)}
+      </div>
     ),
-    [isDark, language, prismReady, viewerContent, wrapLines],
+    [highlightedSourceLines, sourceLines, sourceLineNumberStyle, sourceViewStyle, wrapLines],
   );
   const lightweightSourceLines = useMemo(
-    () => useLightweightSource ? sourceLines.map((line, lineIndex) => (
-      <span
-        className="file-source-line"
-        data-line-number={lineIndex + 1}
-        key={`source-line-${lineIndex}`}
-        style={{ display: "flex", minWidth: "100%" }}
-      >
-        <span aria-hidden="true" style={FILE_LINE_NUMBER_STYLE}>
-          {lineIndex + 1}
-        </span>
-        <span
-          className="file-source-line-content"
-          style={{
-            flex: "1 1 auto",
-            minWidth: 0,
-            overflowWrap: wrapLines ? "anywhere" : "normal",
-            whiteSpace: wrapLines ? "pre-wrap" : "pre",
-          }}
-        >
-          {line}
-        </span>
-      </span>
-    )) : null,
-    [sourceLines, useLightweightSource, wrapLines],
+    () => useLightweightSource ? (
+      <div className="file-source-view is-lightweight" style={sourceViewStyle}>
+        {sourceRows(sourceLines, null, FILE_LINE_NUMBER_STYLE, wrapLines)}
+      </div>
+    ) : null,
+    [sourceLines, sourceViewStyle, useLightweightSource, wrapLines],
   );
 
   useEffect(() => {
@@ -1739,7 +1740,11 @@ function TextFileViewer({
                       color: active ? "var(--text)" : "var(--text-muted)",
                     }}
                   >
-                    {DISPLAY_MODE_LABELS[mode]}
+                    {mode === "source"
+                      ? t("i18n.source")
+                      : mode === "preview"
+                        ? t("i18n.preview")
+                        : t("i18n.diff")}
                   </button>
                 );
               })}
@@ -1843,7 +1848,7 @@ function TextFileViewer({
         style={{ flex: 1, overflow: "auto", background: "var(--bg)", paddingBottom: showLoadMore ? 48 : undefined }}
       >
         {effectiveDisplayMode === "diff" && hasGitDiff ? (
-          <DiffView patch={gitDiff.patch!} wrapLines={wrapLines} />
+          <DiffView patch={gitDiff.patch!} wrapLines={wrapLines} language={diffLanguage} />
         ) : isHtml && effectiveDisplayMode === "preview" && data?.truncated && !htmlFull?.text ? (
           <div style={{ padding: 24, color: "var(--text-dim)", fontSize: 12 }}>
             {htmlFull?.error ?? t("i18n.loading")}
@@ -1945,18 +1950,7 @@ function TextFileViewer({
             </a>
           </div>
         ) : useLightweightSource ? (
-          <div
-            className="file-source-view is-lightweight"
-            style={{
-              width: wrapLines ? "100%" : "max-content",
-              minWidth: "100%",
-              minHeight: "100%",
-              background: "var(--bg)",
-              ...FILE_CODE_STYLE,
-            }}
-          >
-            {lightweightSourceLines}
-          </div>
+          lightweightSourceLines
         ) : (
           highlightedSource
         )}
