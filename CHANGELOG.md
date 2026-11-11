@@ -6,7 +6,37 @@
 [语义化版本](https://semver.org/lang/zh-CN/)。发布时由 `scripts/release-notes.sh` 抽取对应
 版本段落作为 GitHub Release 正文；发布流水线会校验该段落存在。
 
-## [Unreleased]
+## [0.1.0-rc.2] - 2026-11-11
+
+第二个预发布版本：代码、Diff 和终端改为项目级工作区，右侧工作台和终端恢复流程成型。
+
+### Added
+
+- **项目级工作区**：Code、Diff（原 Git）和 Terminal 按项目保存各自的标签页、布局与终端；
+  切换项目恢复对应工作区，切换标签或项目时接回仍然存活的 PTY。
+- **右侧工作台**：用项目 dock 取代原文件面板，Code/Diff/Terminal 可以拆分并选择方向与
+  内容；会话上下文设置移入 Settings。
+- **终端多标签与递归分屏**：支持项目级 terminal tabs、pane 拆分和比例调整；新 tab 从当前
+  pane 的 cwd 打开。
+- **终端恢复**：应用或服务重启后按最后保存的 cwd 创建新 shell；目录失效时回退项目根目录，
+  并提示恢复位置。Linux 通过 `/proc/<pid>/cwd` 跟踪实时目录，同时支持 shell 的 OSC 7 上报。
+- **侧边栏与会话视图**：新增 New 菜单和会话 artifacts 面板；Code/Diff/Terminal 成为项目视图。
+- **pi-web 0.15 客户端能力与 Models API**：同步上游客户端功能与模型列表接口。
+
+### Changed
+
+- **终端默认目录**：从当前会话的 cwd 改为项目根目录，避免终端跟随会话落到其他项目；已有
+  pane 继续使用并恢复自己的 cwd。
+- **工作台拆分流程**：顶部收敛为一个“拆分窗格”按钮，旁边箭头显式选择方向；新窗格先选
+  视图，选定后不再切换。
+- **Code 空窗格**：没有打开文件时自动展开文件树。
+- **Git 视图改名 Diff**；项目操作收进侧边栏 New 菜单；移除侧边栏文件浏览器和 Web Push。
+- **会话上下文设置**：系统提示词与工具定义移入 Settings › 会话上下文，并去掉无意义的工具
+  注册数量。
+- **Agent 扩展改为 JavaScript**：`agent-extension/index.ts`、`subagent.ts` 由 `tsc` 生成等价的
+  `index.js`、`subagent.js`（ES2022，无类型注解、注释保留），并加 `package.json` 声明 ESM；
+  Rust 的扩展探测、打包校验脚本与文档同步改为 `index.js`，仍兼容 `.ts` 回退。
+- **桌面应用**：bundle identifier 更新为 `net.quadhub.pi-star`。
 
 ### Fixed
 
@@ -27,11 +57,13 @@
 - **对话右侧 minimap 触底**：小地图不再只覆盖消息区，而是作为整列浮层延伸到页面底部
   （输入框右侧原本就预留了 36px），锁图标和轨道都到页面底端；扩展状态栏同步留出右侧空间。
 
-### Changed
+- **终端不再卡在 `Terminal expired or closed`**：404 自动按保存的 cwd 重建，不再把死 id
+  当错误展示；切换标签或项目也不会重复启动 shell。
 
-- **Agent 扩展改为 JavaScript**：`agent-extension/index.ts`、`subagent.ts` 由 `tsc` 生成等价的
-  `index.js`、`subagent.js`（ES2022，无类型注解、注释保留），并加 `package.json` 声明 ESM；
-  Rust 的扩展探测、打包校验脚本与文档同步改为 `index.js`，仍兼容 `.ts` 回退。
+- **Code 文件标签关闭后被重新打开**：FileViewer 的卸载保存只写回仍然存在的标签页，清空
+  Code 窗格后也不会被迟到的保存恢复。
+
+- **终端切换目录**：实时跟踪 shell cwd，重启后回到最后目录；保存目录不存在时回退项目根目录。
 
 ## [0.1.0-rc.1] - 2026-10-31
 
@@ -87,5 +119,6 @@
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
 
-[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.1...HEAD
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.2...HEAD
+[0.1.0-rc.2]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.1
