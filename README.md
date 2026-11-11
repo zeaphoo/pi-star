@@ -23,12 +23,13 @@ UI 直接来自 [pi-web](https://github.com/agegr/pi-web)（MIT），服务端�
   与 Anthropic Messages 流式 provider；内置 read/write/edit/bash/find/grep/ls 工具。
 - Subagent：子会话创建、父会话等待、并发上限、profile 扫描/保存/开关和状态显示。
 - 模型目录、models.json、默认/启用模型、模型缓存、provider usage、API Key 保存/删除、
-  Anthropic OAuth、GitHub Copilot device-code、tools/cache-miss 设置、项目信任、
+  Anthropic OAuth、GitHub Copilot device-code、其余 provider 的 OAuth 经随包 pi/pi-ai 流程、
+  tools/cache-miss 设置、项目信任、
   MCP 文件读写/Test/OAuth、skills 列表/内容/开关/搜索/安装/更新、plugins 安装/更新/启停、
   DOCX 预览、transcript notices、debug 快照、密码登录和应用更新接口。
 
 OpenSpec 任务已全部完成（61/61）。运行时边界（Node 扩展执行、Agent 回合中的 MCP 工具注册、
-完整 skill resource loader、更多 provider 的 OAuth）记录在 [`docs/status.md`](docs/status.md)。
+完整 skill resource loader）记录在 [`docs/status.md`](docs/status.md)。
 
 ## 架构
 

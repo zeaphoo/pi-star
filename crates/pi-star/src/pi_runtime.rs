@@ -174,6 +174,67 @@ pub fn extension_path() -> Option<PathBuf> {
     resolve().and_then(|runtime| runtime.extension)
 }
 
+/// Node used by small helpers that import pi's own modules (the OAuth bridge).
+/// Explicit override first, then the bundled runtime, then `PATH`.
+pub fn node_command() -> Option<PathBuf> {
+    if let Some(node) = std::env::var_os("PI_STAR_PI_NODE") {
+        return Some(PathBuf::from(node));
+    }
+    if let Some(runtime) = resolve() {
+        return Some(runtime.node);
+    }
+    which(node_name())
+}
+
+/// The `@earendil-works/pi-coding-agent` package directory. The OAuth bridge
+/// runs with this as its working directory so `@earendil-works/pi-ai` resolves
+/// to the same install the standard pi backend uses.
+pub fn package_dir() -> Option<PathBuf> {
+    if let Some(dir) = std::env::var_os("PI_PACKAGE_DIR") {
+        let dir = PathBuf::from(dir);
+        if dir.join("package.json").is_file() {
+            return Some(dir);
+        }
+    }
+    if let Some(js) = std::env::var_os("PI_STAR_PI_JS")
+        && let Some(dir) = package_dir_from_cli(Path::new(&js))
+    {
+        return Some(dir);
+    }
+    if let Some(runtime) = resolve() {
+        return Some(runtime.package_dir);
+    }
+    let cli = which("pi")?;
+    let resolved = std::fs::canonicalize(cli).ok()?;
+    package_dir_from_cli(&resolved)
+}
+
+fn package_dir_from_cli(cli: &Path) -> Option<PathBuf> {
+    let mut current = cli.parent();
+    while let Some(dir) = current {
+        if dir.join("package.json").is_file() {
+            return Some(dir.to_path_buf());
+        }
+        current = dir.parent();
+    }
+    None
+}
+
+fn which(name: &str) -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    let candidates = [
+        name.to_string(),
+        format!("{name}.cmd"),
+        format!("{name}.exe"),
+    ];
+    std::env::split_paths(&path).find_map(|dir| {
+        candidates
+            .iter()
+            .map(|candidate| dir.join(candidate))
+            .find(|candidate| candidate.is_file())
+    })
+}
+
 fn set_if_absent(name: &str, value: &Path) {
     if std::env::var_os(name).is_none() {
         // SAFETY: called once from `main` before any worker thread is started.

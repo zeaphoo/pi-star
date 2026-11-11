@@ -26,7 +26,7 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | 扩展 UI | ✅ | pending 请求、SSE 重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
 | Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped，项目设置覆盖全局 |
 | Provider | ✅ | OpenAI-compatible / Anthropic Messages；模型缓存、provider usage |
-| OAuth / device-code | ◐ | Anthropic 授权码 + PKCE、GitHub Copilot device-code、API Key 保存/删除/登出；其他 provider 的 OAuth 尚未内置 |
+| OAuth / device-code | ✅ | Anthropic 授权码 + PKCE、GitHub Copilot device-code；其余内置 provider 通过随包的 pi/pi-ai OAuth 流程（Node bridge）登录；API Key 保存/删除/登出 |
 | 模型与 models.json | ✅ | 目录、默认/启用、CRUD、discover/test、图片大小上限校验、models.dev 自动补全、models-store 远程刷新 |
 | MCP | ✅ | 文件读写、状态/遮罩、Test、OAuth、mcp-auth.json；Agent 回合自动连接 stdio/HTTP 服务器并注册 `mcp__*` 工具 |
 | Skills | ✅ | 与 pi 的 resource loader 对齐：settings `skills` 路径、包内 `skills/`、`~/.pi/agent/skills`、`~/.agents/skills`、项目 `.pi/skills` 与祖先 `.agents/skills`；返回 `sourceInfo`/diagnostics/`projectResourcesLoaded`；列表/内容/开关、skills.sh 搜索、安装更新、lock 文件、已启用 skill 注入系统提示 |
@@ -52,9 +52,9 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 - **Node/TypeScript 扩展执行**：扩展包可以安装和管理，`extension_ui_request` 的传输、
   响应和超时也已实现；但 Rust Agent 不执行 pi 的 TypeScript 扩展，扩展注册工具、命令、
   widgets 和扩展 UI 的宿主仍未接入。
-- **Provider OAuth 覆盖**：OAuth 仍只内置 Anthropic 和 GitHub Copilot；OpenAI
-  Codex/ChatGPT、OpenRouter、Kimi、xAI、Radius 等 provider 需要各自的 OAuth 流程，
-  目前仍以 API Key 或 pi 写入的凭据为主。
+- **Provider OAuth 运行时**：Anthropic 和 GitHub Copilot 的流程由 Rust 原生实现；其余
+  provider 复用随包 pi 的 `@earendil-works/pi-ai` OAuth 实现（Node bridge）。没有随包
+  Node/pi 的独立运行时仍可使用 Anthropic/Copilot OAuth 和全部 API Key provider。
 - **会话导出**：优先调用已安装的 `pi --export` 生成与 pi 相同的 HTML；`pi` 不可用时
   回退到 Rust 生成的简化 HTML。
 

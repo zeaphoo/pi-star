@@ -2195,8 +2195,23 @@ async fn mcp_config_is_listed_and_auth_keys_round_trip() {
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert!(body["providers"].as_array().is_some());
-    assert!(body["oauthProviders"].as_array().is_some());
+    let api_key = body["apiKeyProviders"].as_array().unwrap();
+    assert_eq!(api_key.len(), 41);
+    assert!(
+        api_key
+            .iter()
+            .any(|provider| { provider["id"] == "openai" && provider["configured"] == true })
+    );
+    assert!(api_key.iter().any(|provider| provider["id"] == "google"));
+    assert!(api_key.iter().any(|provider| provider["id"] == "groq"));
+    assert!(api_key.iter().any(|provider| provider["id"] == "typesafe"));
+    let oauth = body["oauthProviders"].as_array().unwrap();
+    assert_eq!(oauth.len(), 9);
+    assert!(oauth.iter().any(|provider| {
+        provider["id"] == "openai-codex" && provider["name"] == "ChatGPT Plus/Pro (legacy)"
+    }));
+    assert!(oauth.iter().any(|provider| provider["id"] == "anthropic"));
+    assert_eq!(body["providerNames"]["radius"], "Radius");
 
     let (status, _) = call(
         app,

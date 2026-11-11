@@ -650,82 +650,130 @@ pub async fn test_model(
 pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
     let defs = model_defs(&state.config).unwrap_or_default();
     let auth = read_json(&state.config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
+    let models_config = read_json(&state.config.models_path()).unwrap_or(Value::Null);
+    let models_entries = models_config.get("providers").and_then(Value::as_object);
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for model in defs.values() {
         *counts.entry(model.provider.clone()).or_default() += 1;
     }
-    let anthropic_logged_in = auth
-        .get("anthropic")
-        .and_then(|entry| entry.get("type"))
-        .and_then(Value::as_str)
-        == Some("oauth");
     let custom_names = models::custom_provider_names(&state.config);
-    let provider_names = counts
-        .keys()
-        .map(|id| {
-            let name = custom_names
+
+    // Every runtime provider gets a display name, including ones with no chat
+    // model (TypeSafe is classifier-only) and models.json providers.
+    let mut provider_names: BTreeMap<String, String> = models::BUILTIN_PROVIDERS
+        .iter()
+        .map(|provider| (provider.id.to_string(), provider.name.to_string()))
+        .collect();
+    for id in counts.keys() {
+        provider_names.entry(id.clone()).or_insert_with(|| {
+            custom_names
                 .get(id)
                 .cloned()
-                .unwrap_or_else(|| models::provider_display_name(id));
-            (id.clone(), name)
-        })
-        .collect::<BTreeMap<_, _>>();
-    let mut providers = counts
-        .into_iter()
-        .map(|(id, count)| {
-            let name = provider_names
-                .get(&id)
-                .cloned()
-                .unwrap_or_else(|| models::provider_display_name(&id));
-            json!({
-                "id": id,
+                .unwrap_or_else(|| models::provider_display_name(id))
+        });
+    }
+    for (id, name) in &custom_names {
+        provider_names.insert(id.clone(), name.clone());
+    }
+
+    // pi lists API-key providers by the auth methods they declare, not by a
+    // hardcoded id list. Custom models.json providers stay in the Models
+    // panel's own section: a provider whose credential comes from models.json
+    // is excluded here, exactly as pi-web's provider-listing does.
+    let mut api_key_providers: Vec<Value> = Vec::new();
+    for provider in models::BUILTIN_PROVIDERS {
+        if !provider.api_key_login {
+            continue;
+        }
+        let auth_entry = auth.get(provider.id);
+        let credential_type = auth_entry
+            .and_then(|entry| entry.get("type"))
+            .and_then(Value::as_str);
+        let models_json_key = models_entries
+            .and_then(|entries| entries.get(provider.id))
+            .and_then(|entry| entry.get("apiKey"))
+            .is_some();
+        if auth_entry.is_none() && models_json_key {
+            continue;
+        }
+        let environment = auth_entry.is_none() && models::provider_env_configured(provider.id);
+        let configured = auth_entry.is_some() || environment;
+        let model_count = counts
+            .get(provider.id)
+            .copied()
+            .unwrap_or(0)
+            .max(provider.model_count);
+        let mut value = json!({
+            "id": provider.id,
+            "displayName": provider.name,
+            "configured": configured && credential_type != Some("oauth"),
+            "modelCount": model_count,
+            "supportsOAuth": provider.oauth_name.is_some(),
+        });
+        if auth_entry.is_some() {
+            value["source"] = json!("stored");
+        } else if environment {
+            value["source"] = json!("environment");
+        }
+        api_key_providers.push(value);
+    }
+
+    // Catalog providers pi-star knows from models-store.json but pi does not
+    // ship as built-ins (an extension or a newer catalog can add one).
+    let builtin_ids: HashSet<&str> = models::BUILTIN_PROVIDERS
+        .iter()
+        .map(|provider| provider.id)
+        .collect();
+    for (id, count) in &counts {
+        if builtin_ids.contains(id.as_str())
+            || models_entries.is_some_and(|entries| entries.contains_key(id))
+        {
+            continue;
+        }
+        let auth_entry = auth.get(id);
+        let credential_type = auth_entry
+            .and_then(|entry| entry.get("type"))
+            .and_then(Value::as_str);
+        let environment = auth_entry.is_none() && models::provider_env_configured(id);
+        let configured = auth_entry.is_some() || environment;
+        let mut value = json!({
+            "id": id,
+            "displayName": provider_names.get(id).cloned().unwrap_or_else(|| id.clone()),
+            "configured": configured && credential_type != Some("oauth"),
+            "modelCount": count,
+            "supportsOAuth": false,
+        });
+        if auth_entry.is_some() {
+            value["source"] = json!("stored");
+        } else if environment {
+            value["source"] = json!("environment");
+        }
+        api_key_providers.push(value);
+    }
+
+    let oauth_providers = models::BUILTIN_PROVIDERS
+        .iter()
+        .filter_map(|provider| {
+            let name = provider.oauth_name?;
+            let logged_in = auth
+                .get(provider.id)
+                .and_then(|entry| entry.get("type"))
+                .and_then(Value::as_str)
+                == Some("oauth");
+            Some(json!({
+                "id": provider.id,
                 "name": name,
-                "hasApiKeyLogin": true,
-                "hasOAuth": id == "anthropic",
-                "status": {"configured": auth.get(&id).is_some()},
-                "modelCount": count,
-                "supportsOAuth": id == "anthropic",
-                "configured": auth.get(&id).is_some(),
-                "displayName": name,
-            })
+                "usesCallbackServer": false,
+                "loggedIn": logged_in,
+                "supportsApiKey": provider.api_key_login,
+            }))
         })
         .collect::<Vec<_>>();
-    if !providers
-        .iter()
-        .any(|provider| provider.get("id").and_then(Value::as_str) == Some("anthropic"))
-    {
-        providers.push(json!({
-            "id": "anthropic",
-            "name": "Anthropic",
-            "hasApiKeyLogin": true,
-            "hasOAuth": true,
-            "status": {"configured": auth.get("anthropic").is_some()},
-            "modelCount": 0,
-            "supportsOAuth": true,
-            "configured": auth.get("anthropic").is_some(),
-            "displayName": "Anthropic",
-        }));
-    }
-    let oauth_providers = vec![
-        json!({
-            "id": "anthropic",
-            "name": "Anthropic (Claude Pro/Max)",
-            "usesCallbackServer": true,
-            "loggedIn": anthropic_logged_in,
-            "supportsApiKey": true,
-        }),
-        json!({
-            "id": "github-copilot",
-            "name": "GitHub Copilot",
-            "usesCallbackServer": false,
-            "loggedIn": auth.get("github-copilot").and_then(|entry| entry.get("type")).and_then(Value::as_str) == Some("oauth"),
-            "supportsApiKey": false,
-        }),
-    ];
+
     no_store(json!({
-        "providers": providers,
+        "providers": oauth_providers.clone(),
         "oauthProviders": oauth_providers,
-        "apiKeyProviders": providers,
+        "apiKeyProviders": api_key_providers,
         "providerNames": provider_names,
     }))
 }

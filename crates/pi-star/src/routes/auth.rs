@@ -23,10 +23,7 @@ pub async fn login(State(state): State<Arc<AppState>>, Path(provider): Path<Stri
         return copilot_login(state).await;
     }
     if provider != "anthropic" {
-        return crate::routes::json_error(
-            axum::http::StatusCode::NOT_IMPLEMENTED,
-            format!("OAuth login for {provider} is not implemented yet"),
-        );
+        return super::oauth_bridge::login(state, provider).await;
     }
     let verifier = format!(
         "{}{}",
@@ -263,12 +260,6 @@ pub async fn login_post(
     Path(provider): Path<String>,
     Json(body): Json<LoginPostBody>,
 ) -> Response {
-    if provider != "anthropic" {
-        return crate::routes::json_error(
-            axum::http::StatusCode::NOT_IMPLEMENTED,
-            format!("OAuth login for {provider} is not implemented yet"),
-        );
-    }
     let (Some(token), Some(code)) = (body.token, body.code) else {
         return bad_request("token and code required");
     };

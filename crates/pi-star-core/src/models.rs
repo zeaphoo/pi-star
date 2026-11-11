@@ -206,8 +206,8 @@ fn thinking_pins(
 
 /// Whether a model's provider has a credential pi-star can send: one pi wrote
 /// to auth.json (api key or OAuth), a key models.json carries, or the
-/// provider's `<ID>_API_KEY` environment variable. Unauthenticated catalog
-/// providers stay out of the selector, as they do in pi.
+/// provider's environment API key. Unauthenticated catalog providers stay out
+/// of the selector, as they do in pi.
 fn provider_available(def: &ModelDef, auth: &Value) -> bool {
     if def
         .api_key
@@ -219,11 +219,79 @@ fn provider_available(def: &ModelDef, auth: &Value) -> bool {
     if auth.get(&def.provider).is_some() {
         return true;
     }
-    let env = format!(
-        "{}_API_KEY",
-        def.provider.to_uppercase().replace(['-', '.'], "_")
-    );
-    std::env::var_os(env).is_some()
+    provider_env_configured(&def.provider)
+}
+
+/// Environment variable names pi's runtime accepts for a provider API key.
+/// Mirrors `getApiKeyEnvVars()` in `@earendil-works/pi-ai`; a provider absent
+/// here has no environment-based credential.
+pub fn provider_env_api_key_vars(id: &str) -> &'static [&'static str] {
+    match id {
+        "github-copilot" => &["COPILOT_GITHUB_TOKEN"],
+        "anthropic" => &[
+            "ANTHROPIC_AUTH_TOKEN",
+            "ANTHROPIC_OAUTH_TOKEN",
+            "ANTHROPIC_API_KEY",
+        ],
+        "ant-ling" => &["ANT_LING_API_KEY"],
+        "qwen-token-plan" | "qwen-token-plan-individual" => &["QWEN_TOKEN_PLAN_API_KEY"],
+        "qwen-token-plan-cn" => &["QWEN_TOKEN_PLAN_CN_API_KEY"],
+        "openai" => &["OPENAI_API_KEY"],
+        "azure" => &["AZURE_OPENAI_API_KEY"],
+        "nvidia" => &["NVIDIA_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "google" => &["GEMINI_API_KEY"],
+        "google-vertex" => &["GOOGLE_CLOUD_API_KEY"],
+        "groq" => &["GROQ_API_KEY"],
+        "cerebras" => &["CEREBRAS_API_KEY"],
+        "xai" => &["XAI_API_KEY"],
+        "typesafe" => &["TYPESAFE_API_KEY"],
+        "radius" => &["RADIUS_API_KEY"],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "vercel-ai-gateway" => &["AI_GATEWAY_API_KEY"],
+        "zai" => &["ZAI_API_KEY"],
+        "zai-coding-cn" => &["ZAI_CODING_CN_API_KEY"],
+        "mistral" => &["MISTRAL_API_KEY"],
+        "minimax" => &["MINIMAX_API_KEY"],
+        "minimax-cn" => &["MINIMAX_CN_API_KEY"],
+        "moonshotai" | "moonshotai-cn" => &["MOONSHOT_API_KEY"],
+        "huggingface" => &["HF_TOKEN"],
+        "fireworks" => &["FIREWORKS_API_KEY"],
+        "together" => &["TOGETHER_API_KEY"],
+        "baseten" => &["BASETEN_API_KEY"],
+        "opencode" | "opencode-go" => &["OPENCODE_API_KEY"],
+        "kimi-coding" => &["KIMI_API_KEY"],
+        "meta" => &["META_API_KEY"],
+        "cloudflare-workers-ai" | "cloudflare-ai-gateway" => &["CLOUDFLARE_API_KEY"],
+        "xiaomi" => &["XIAOMI_API_KEY"],
+        "xiaomi-token-plan-cn" => &["XIAOMI_TOKEN_PLAN_CN_API_KEY"],
+        "xiaomi-token-plan-ams" => &["XIAOMI_TOKEN_PLAN_AMS_API_KEY"],
+        "xiaomi-token-plan-sgp" => &["XIAOMI_TOKEN_PLAN_SGP_API_KEY"],
+        _ => &[],
+    }
+}
+
+/// Whether the provider has an ambient credential in this process's
+/// environment. Bedrock's IAM selectors count as a credential, as they do in
+/// pi; Vertex ADC files are left to pi itself.
+pub fn provider_env_configured(id: &str) -> bool {
+    if provider_env_api_key_vars(id)
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
+    {
+        return true;
+    }
+    id == "amazon-bedrock"
+        && [
+            "AWS_PROFILE",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_BEARER_TOKEN_BEDROCK",
+            "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+            "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+            "AWS_WEB_IDENTITY_TOKEN_FILE",
+        ]
+        .iter()
+        .any(|name| std::env::var_os(name).is_some())
 }
 
 /// `name` of each models.json provider: what the panel and selector show instead
@@ -251,54 +319,327 @@ pub fn custom_provider_names(config: &Config) -> BTreeMap<String, String> {
         .unwrap_or_default()
 }
 
+/// One of pi's built-in providers, in the order its runtime lists them.
+/// Mirrors `@earendil-works/pi-ai` 1.5.0's `builtinProviders()` (the version
+/// pi-web v0.15.0 pins). `api_key_login` and `oauth_name` come from the
+/// provider's declared `auth`, never from a hardcoded id list; `model_count`
+/// is its static chat-model count.
+#[derive(Debug, Clone, Copy)]
+pub struct BuiltinProvider {
+    pub id: &'static str,
+    pub name: &'static str,
+    pub api_key_login: bool,
+    pub oauth_name: Option<&'static str>,
+    pub model_count: usize,
+}
+
+pub const BUILTIN_PROVIDERS: &[BuiltinProvider] = &[
+    BuiltinProvider {
+        id: "amazon-bedrock",
+        name: "Amazon Bedrock",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 197,
+    },
+    BuiltinProvider {
+        id: "ant-ling",
+        name: "Ant Ling",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 3,
+    },
+    BuiltinProvider {
+        id: "anthropic",
+        name: "Anthropic",
+        api_key_login: true,
+        oauth_name: Some("Anthropic (Claude Pro/Max)"),
+        model_count: 17,
+    },
+    BuiltinProvider {
+        id: "azure",
+        name: "Azure",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 45,
+    },
+    BuiltinProvider {
+        id: "baseten",
+        name: "Baseten",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 14,
+    },
+    BuiltinProvider {
+        id: "cerebras",
+        name: "Cerebras",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 2,
+    },
+    BuiltinProvider {
+        id: "cloudflare-ai-gateway",
+        name: "Cloudflare AI Gateway",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 59,
+    },
+    BuiltinProvider {
+        id: "cloudflare-workers-ai",
+        name: "Cloudflare Workers AI",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 19,
+    },
+    BuiltinProvider {
+        id: "deepseek",
+        name: "DeepSeek",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 2,
+    },
+    BuiltinProvider {
+        id: "fireworks",
+        name: "Fireworks",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 29,
+    },
+    BuiltinProvider {
+        id: "github-copilot",
+        name: "GitHub Copilot",
+        api_key_login: true,
+        oauth_name: Some("GitHub Copilot"),
+        model_count: 27,
+    },
+    BuiltinProvider {
+        id: "google",
+        name: "Google",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 23,
+    },
+    BuiltinProvider {
+        id: "google-vertex",
+        name: "Google Vertex AI",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 13,
+    },
+    BuiltinProvider {
+        id: "groq",
+        name: "Groq",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 7,
+    },
+    BuiltinProvider {
+        id: "huggingface",
+        name: "Hugging Face",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 78,
+    },
+    BuiltinProvider {
+        id: "kimi-coding",
+        name: "Kimi For Coding",
+        api_key_login: true,
+        oauth_name: Some("Kimi Code (subscription)"),
+        model_count: 6,
+    },
+    BuiltinProvider {
+        id: "meta",
+        name: "Meta",
+        api_key_login: true,
+        oauth_name: Some("Meta (Muse subscription)"),
+        model_count: 6,
+    },
+    BuiltinProvider {
+        id: "minimax",
+        name: "MiniMax",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 4,
+    },
+    BuiltinProvider {
+        id: "minimax-cn",
+        name: "MiniMax CN",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 4,
+    },
+    BuiltinProvider {
+        id: "mistral",
+        name: "Mistral",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 34,
+    },
+    BuiltinProvider {
+        id: "moonshotai",
+        name: "Moonshot AI",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 6,
+    },
+    BuiltinProvider {
+        id: "moonshotai-cn",
+        name: "Moonshot AI CN",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 6,
+    },
+    BuiltinProvider {
+        id: "nvidia",
+        name: "NVIDIA",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 21,
+    },
+    BuiltinProvider {
+        id: "openai",
+        name: "OpenAI",
+        api_key_login: true,
+        oauth_name: Some("OpenAI (ChatGPT subscription)"),
+        model_count: 44,
+    },
+    BuiltinProvider {
+        id: "openai-codex",
+        name: "OpenAI Codex (legacy)",
+        api_key_login: false,
+        oauth_name: Some("ChatGPT Plus/Pro (legacy)"),
+        model_count: 8,
+    },
+    BuiltinProvider {
+        id: "opencode",
+        name: "OpenCode Zen",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 79,
+    },
+    BuiltinProvider {
+        id: "opencode-go",
+        name: "OpenCode Go",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 30,
+    },
+    BuiltinProvider {
+        id: "openrouter",
+        name: "OpenRouter",
+        api_key_login: true,
+        oauth_name: Some("OpenRouter OAuth"),
+        model_count: 388,
+    },
+    BuiltinProvider {
+        id: "qwen-token-plan",
+        name: "Qwen Token Plan",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 21,
+    },
+    BuiltinProvider {
+        id: "qwen-token-plan-cn",
+        name: "Qwen Token Plan CN",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 21,
+    },
+    BuiltinProvider {
+        id: "qwen-token-plan-individual",
+        name: "Qwen Token Plan Individual",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 9,
+    },
+    BuiltinProvider {
+        id: "radius",
+        name: "Radius",
+        api_key_login: true,
+        oauth_name: Some("Radius"),
+        model_count: 28,
+    },
+    BuiltinProvider {
+        id: "together",
+        name: "Together",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 15,
+    },
+    BuiltinProvider {
+        id: "typesafe",
+        name: "TypeSafe",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 0,
+    },
+    BuiltinProvider {
+        id: "vercel-ai-gateway",
+        name: "Vercel AI Gateway",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 303,
+    },
+    BuiltinProvider {
+        id: "xai",
+        name: "xAI",
+        api_key_login: true,
+        oauth_name: Some("xAI (Grok/X subscription)"),
+        model_count: 4,
+    },
+    BuiltinProvider {
+        id: "xiaomi",
+        name: "Xiaomi",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 3,
+    },
+    BuiltinProvider {
+        id: "xiaomi-token-plan-ams",
+        name: "Xiaomi Token Plan AMS",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 2,
+    },
+    BuiltinProvider {
+        id: "xiaomi-token-plan-cn",
+        name: "Xiaomi Token Plan CN",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 2,
+    },
+    BuiltinProvider {
+        id: "xiaomi-token-plan-sgp",
+        name: "Xiaomi Token Plan SGP",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 2,
+    },
+    BuiltinProvider {
+        id: "zai",
+        name: "Z.AI",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 7,
+    },
+    BuiltinProvider {
+        id: "zai-coding-cn",
+        name: "Z.AI Coding CN",
+        api_key_login: true,
+        oauth_name: None,
+        model_count: 4,
+    },
+];
+
+pub fn builtin_provider(id: &str) -> Option<&'static BuiltinProvider> {
+    BUILTIN_PROVIDERS.iter().find(|provider| provider.id == id)
+}
+
 /// pi's provider display names, as its runtime reports them; a provider
 /// models.json added without a `name` falls back to its id.
 pub fn provider_display_name(id: &str) -> String {
-    match id {
-        "amazon-bedrock" => "Amazon Bedrock",
-        "anthropic" => "Anthropic",
-        "ant-ling" => "Ant Ling",
-        "azure" => "Azure",
-        "baseten" => "Baseten",
-        "cerebras" => "Cerebras",
-        "cloudflare-ai-gateway" => "Cloudflare AI Gateway",
-        "cloudflare-workers-ai" => "Cloudflare Workers AI",
-        "deepseek" => "DeepSeek",
-        "fireworks" => "Fireworks",
-        "github-copilot" => "GitHub Copilot",
-        "google" => "Google",
-        "google-vertex" => "Google Vertex AI",
-        "groq" => "Groq",
-        "huggingface" => "Hugging Face",
-        "kimi-coding" => "Kimi For Coding",
-        "meta" => "Meta",
-        "minimax" => "MiniMax",
-        "minimax-cn" => "MiniMax CN",
-        "mistral" => "Mistral",
-        "moonshotai" => "Moonshot AI",
-        "moonshotai-cn" => "Moonshot AI CN",
-        "nvidia" => "NVIDIA",
-        "openai" => "OpenAI",
-        "openai-codex" => "OpenAI Codex (legacy)",
-        "opencode" => "OpenCode Zen",
-        "opencode-go" => "OpenCode Go",
-        "openrouter" => "OpenRouter",
-        "qwen-token-plan" => "Qwen Token Plan",
-        "qwen-token-plan-cn" => "Qwen Token Plan CN",
-        "qwen-token-plan-individual" => "Qwen Token Plan Individual",
-        "together" => "Together",
-        "typesafe" => "TypeSafe",
-        "vercel-ai-gateway" => "Vercel AI Gateway",
-        "xai" => "xAI",
-        "xiaomi" => "Xiaomi",
-        "xiaomi-token-plan-ams" => "Xiaomi Token Plan AMS",
-        "xiaomi-token-plan-cn" => "Xiaomi Token Plan CN",
-        "xiaomi-token-plan-sgp" => "Xiaomi Token Plan SGP",
-        "zai" => "Z.AI",
-        "zai-coding-cn" => "Z.AI Coding CN",
-        _ => id,
-    }
-    .to_string()
+    builtin_provider(id)
+        .map(|provider| provider.name.to_string())
+        .unwrap_or_else(|| id.to_string())
 }
 
 pub fn model_defs(config: &Config) -> Result<HashMap<String, ModelDef>> {

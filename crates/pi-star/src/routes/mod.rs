@@ -4,6 +4,7 @@ pub mod files;
 pub mod git;
 pub mod mcp_oauth;
 pub mod misc;
+pub mod oauth_bridge;
 pub mod plugins_ops;
 pub mod sessions;
 pub mod settings;
