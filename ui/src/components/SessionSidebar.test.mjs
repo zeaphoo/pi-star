@@ -9,14 +9,11 @@ const jiti = createJiti(import.meta.url, { jsx: { runtime: "automatic" }, tsconf
 const React = await jiti.import("react");
 const { renderToStaticMarkup } = await jiti.import("react-dom/server");
 const { I18nProvider } = await jiti.import("@/hooks/useI18n");
-const { SessionSidebar, nearestEnabledKey, handOffDisabledKeyFocus, sameIdsOr } = await jiti.import("./SessionSidebar.tsx");
+const { SessionSidebar, sameIdsOr } = await jiti.import("./SessionSidebar.tsx");
 const { buildSessionTree, getRowOffsets, getVisibleRowIndices } = await jiti.import("@/lib/session-tree.ts");
 const { SIDEBAR_DEFAULT_WIDTH, SIDEBAR_MIN_WIDTH } = await jiti.import("@/lib/panel-layout.ts");
 
 const source = await readFile(new URL("./SessionSidebar.tsx", import.meta.url), "utf8");
-const globalStyles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
-const sidebarStyles = await readFile(new URL("../app/sidebar.css", import.meta.url), "utf8");
-const explorerSource = await readFile(new URL("./FileExplorer.tsx", import.meta.url), "utf8");
 
 const h = React.createElement;
 const noop = () => {};
@@ -120,60 +117,6 @@ test("only Shift skips the session deletion confirmation", () => {
   );
 });
 
-test("a key disabled under the focus hands it to the nearest key still enabled, the next one first", () => {
-  const keys = ["terminal", "files", "changes", "search"].map((name) => ({ name, tagName: "BUTTON", disabled: false }));
-  keys.forEach((key, index) => {
-    key.previousElementSibling = keys[index - 1] ?? null;
-    key.nextElementSibling = keys[index + 1] ?? null;
-  });
-  keys[2].disabled = true;
-  assert.equal(nearestEnabledKey(keys[2]).name, "search");
-  keys[3].disabled = true;
-  assert.equal(nearestEnabledKey(keys[2]).name, "files", "the file search disabled too: the one before");
-  keys[1].disabled = true;
-  keys[0].disabled = true;
-  assert.equal(nearestEnabledKey(keys[2]), null, "none left: the caller falls back to the toolbar row's search");
-  // Only buttons count.
-  keys[3].disabled = false;
-  keys[3].tagName = "DIV";
-  assert.equal(nearestEnabledKey(keys[2]), null);
-});
-
-test("a key just disabled hands its focus on while the focus is still on it, or fell to the page, and never takes the user's", () => {
-  const focused = [];
-  const key = (name) => ({ name, tagName: "BUTTON", disabled: false, focus: (options) => focused.push([name, options]) });
-  const keys = ["ignored", "changes", "search"].map(key);
-  keys.forEach((item, index) => {
-    item.previousElementSibling = keys[index - 1] ?? null;
-    item.nextElementSibling = keys[index + 1] ?? null;
-  });
-  const [, changes] = keys;
-  const fallback = key("toolbar search");
-  const body = { name: "body" };
-  changes.disabled = true;
-
-  // Current Chromium: the disabled key keeps the focus until the next
-  // rendering update, after the layout effect. That counts as lost.
-  assert.equal(handOffDisabledKeyFocus({ activeElement: changes, body }, changes, fallback), true);
-  assert.deepEqual(focused.splice(0), [["search", { preventScroll: true }]]);
-  // A browser that blurred it at once: the focus fell to the page (or nowhere).
-  assert.equal(handOffDisabledKeyFocus({ activeElement: body, body }, changes, fallback), true);
-  assert.equal(handOffDisabledKeyFocus({ activeElement: null, body }, changes, fallback), true);
-  assert.deepEqual(focused.splice(0).map(([name]) => name), ["search", "search"]);
-  // Focus the user put elsewhere stays.
-  const elsewhere = { name: "a session row" };
-  assert.equal(handOffDisabledKeyFocus({ activeElement: elsewhere, body }, changes, fallback), false);
-  assert.deepEqual(focused, []);
-  // No key left enabled: the fallback, still on the key or from the page.
-  keys.forEach((item) => { item.disabled = true; });
-  assert.equal(handOffDisabledKeyFocus({ activeElement: changes, body }, changes, fallback), true);
-  assert.equal(handOffDisabledKeyFocus({ activeElement: body, body }, changes, fallback), true);
-  assert.deepEqual(focused.splice(0).map(([name]) => name), ["toolbar search", "toolbar search"]);
-  // Nothing to hand it to: nothing moves.
-  assert.equal(handOffDisabledKeyFocus({ activeElement: changes, body }, changes, null), false);
-  assert.deepEqual(focused, []);
-});
-
 test("the running poll keeps the same Set while the running ids stay the same", () => {
   const previous = new Set(["a", "b"]);
   assert.equal(sameIdsOr(previous, ["b", "a"]), previous);
@@ -232,4 +175,24 @@ test("the favicon counts sessions that finished while the tab was hidden (#1484)
     source,
     /\}, \[awaitingInputSessionIds, unreadSessionIds, hiddenFinishedSessionIds\]\);/,
   );
+});
+
+test("New is a split control: a never-dead session button and the projects' menu beside it", () => {
+  const html = render();
+  assert.match(html, /class="sidebar-new-split"/);
+  const newButton = html.match(/<button[^>]*class="sidebar-new-button"[^>]*>/)?.[0];
+  assert.ok(newButton, "the New button is rendered");
+  // No project yet: the button opens the project picker instead of waiting disabled.
+  assert.doesNotMatch(newButton, /\sdisabled(?:=""|=)/);
+  assert.match(newButton, /title="[^"]+"/);
+  const caret = html.match(/<button[^>]*class="sidebar-new-caret"[^>]*>/)?.[0];
+  assert.ok(caret, "the caret is rendered");
+  assert.match(caret, /aria-haspopup="menu"/);
+  assert.match(caret, /aria-expanded="false"/);
+  // The menu's project items: a session in the current project, the folder
+  // picker (which creates folders too), then the projects used last.
+  assert.match(source, /id: "open-project"/);
+  assert.match(source, /t\("sidebar\.openOrCreateProject"\)/);
+  assert.match(source, /id: "recent-projects"/);
+  assert.match(source, /t\("sidebar\.recentProjects"\)/);
 });

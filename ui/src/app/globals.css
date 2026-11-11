@@ -463,7 +463,6 @@ html.dark {
 }
 @supports (animation-timeline: scroll()) {
   .session-tree-scroll,
-  .sidebar-files-scroll,
   .markdown-table-wrap {
     animation-name: scroll-fade-start, scroll-fade-end;
     animation-duration: auto;
@@ -475,8 +474,7 @@ html.dark {
   /* Vertical lists. The classic scrollbar's strip stays unmasked, so the thumb
      never fades near the ends (--session-tree-scrollbar is its measured
      width; 0 for an overlay scrollbar). */
-  .session-tree-scroll,
-  .sidebar-files-scroll {
+  .session-tree-scroll {
     --scroll-fade-size: 20px;
     --scroll-fade-gutter: var(--session-tree-scrollbar, 0px);
     animation-timeline: scroll(self block);
@@ -2404,9 +2402,8 @@ pre, code {
   color: var(--text-dim);
 }
 
-/* The files tab: full width, one under the other, at the top of its head
-   (.sidebar-files-head, app/sidebar.css); the path or branch takes the room
-   before the notes. */
+/* Stacked: full width, one under the other; the path or branch takes the
+   room before the notes. */
 .project-picker.is-stacked {
   flex: none;
   flex-direction: column;

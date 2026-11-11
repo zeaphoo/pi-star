@@ -35,3 +35,13 @@ These are intentional and must be re-applied after a re-sync:
 - `ChatWindow` places `ChatMinimap` over the whole chat column (absolute, top to bottom)
   with a 36px spacer in the message row, and passes `rightInset` to `ExtensionStatusBar`,
   so the rail reaches the page bottom; upstream ends it where the composer starts.
+- The sidebar header's New is a split control: the button starts a session in the current
+  project (or opens the folder picker when there is none, instead of sitting disabled), and
+  the caret opens a menu with the folder picker, the projects used last and the default
+  directory. `sidebar.newMenuTitle`, `sidebar.newSession`, `sidebar.openProject`,
+  `sidebar.openProjectTitle`, `sidebar.openOrCreateProject` and `sidebar.recentProjects`
+  are pi-star additions in all three locales.
+- The session tree's footer keeps only the archive link; "Open another project…" moved to
+  the header's New menu (a split button: new session in the current project, or the folder
+  picker and the projects used last). The Code view's tree header carries the files' upload,
+  ignored-files and search keys that the retired sidebar files panel had.

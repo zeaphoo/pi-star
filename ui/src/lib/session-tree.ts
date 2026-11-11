@@ -25,7 +25,7 @@ import { workspaceKeyOf } from "./workspace-memory";
 export type SidebarLayout = "desktop" | "mobile";
 export type SidebarRowKind =
   | "pinned-header" | "session" | "pinned-more" | "group" | "group-more" | "group-empty"
-  | "spacer" | "footer-open" | "footer-archived" | "archive-group";
+  | "spacer" | "footer-archived" | "archive-group";
 
 /**
  * Per-kind row heights: one rhythm. Session rows, the section headers (a
@@ -36,8 +36,8 @@ export type SidebarRowKind =
  * group from the next and the groups from the footer.
  */
 export const SIDEBAR_ROW_HEIGHTS: Record<SidebarLayout, Record<SidebarRowKind, number>> = {
-  desktop: { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 },
-  mobile: { "pinned-header": 44, session: 44, "pinned-more": 36, group: 44, "group-more": 36, "group-empty": 44, spacer: 8, "footer-open": 44, "footer-archived": 44, "archive-group": 44 },
+  desktop: { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-archived": 28, "archive-group": 28 },
+  mobile: { "pinned-header": 44, session: 44, "pinned-more": 36, group: 44, "group-more": 36, "group-empty": 44, spacer: 8, "footer-archived": 44, "archive-group": 44 },
 };
 export const GROUP_VISIBLE_LIMIT = 6;
 export const PINNED_VISIBLE_LIMIT = 8;
@@ -63,7 +63,6 @@ export type SidebarRow =
   | { kind: "group-more"; key: string; projectKey: string; hidden: number; canShowLess: boolean; nextShown: number }
   | { kind: "group-empty"; key: string; project: SidebarProject }
   | { kind: "spacer"; key: "top-spacer" | "pinned-spacer" | "footer-spacer" | `group-spacer:${string}` }
-  | { kind: "footer-open"; key: "footer-open" }
   | { kind: "footer-archived"; key: "footer-archived"; count: number }
   | { kind: "archive-group"; key: string; project: SidebarProject; count: number; expanded: boolean };
 
@@ -541,11 +540,12 @@ export function buildSessionTree(input: SessionTreeInput): SessionTreeModel {
     }
   }
 
-  // One spacer parts the groups from the footer, as one parts the pinned
-  // section from them.
-  if (orderedProjects.length > 0) rows.push({ kind: "spacer", key: "footer-spacer" });
-  rows.push({ kind: "footer-open", key: "footer-open" });
-  if (archivedCount > 0) rows.push({ kind: "footer-archived", key: "footer-archived", count: archivedCount });
+  // One spacer parts the groups from the archive footer, as one parts the
+  // pinned section from them; with nothing archived there is no footer.
+  if (archivedCount > 0) {
+    if (orderedProjects.length > 0) rows.push({ kind: "spacer", key: "footer-spacer" });
+    rows.push({ kind: "footer-archived", key: "footer-archived", count: archivedCount });
+  }
 
   return { rows, projects: orderedProjects, archivedCount, unorderedKeysByBand, projectKeysToRecord };
 }

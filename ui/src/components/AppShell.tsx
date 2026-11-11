@@ -58,7 +58,7 @@ import { useAudio } from "@/hooks/useAudio";
 import { copyText } from "@/lib/clipboard";
 import { sendAgentCommand } from "@/lib/agent-client";
 import { getFileName } from "@/lib/file-paths";
-import { buildAtMentionText, buildFileAtMentionsText, buildFileLineMentionText } from "@/lib/file-fuzzy";
+import { buildAtMentionText, buildFileLineMentionText } from "@/lib/file-fuzzy";
 import {
   claimExtensionAttentionNotification,
   shouldShowBrowserNotification,
@@ -696,11 +696,6 @@ export function AppShell() {
     if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
   }, [isMobile]);
 
-  const handleAtMentions = useCallback((relativePaths: string[]) => {
-    const mentions = buildFileAtMentionsText(relativePaths);
-    if (mentions) chatInputRef.current?.insertText(mentions);
-    if (isMobile) { setRightPanelOpen(false); setSidebarOpen(false); }
-  }, [isMobile]);
 
   const handleFileLineMention = useCallback((relativePath: string, startLine: number, endLine: number) => {
     chatInputRef.current?.insertText(buildFileLineMentionText(relativePath, startLine, endLine));
@@ -1399,15 +1394,6 @@ export function AppShell() {
     handleOpenFile(filePath, getFileName(filePath), { sourceSessionId: selectedSession?.id ?? null, page });
   }, [handleOpenFile, selectedSession?.id]);
 
-  const handleOpenTerminal = useCallback((cwd: string) => {
-    const existing = terminalTabs.find((tab) => tab.cwd === cwd);
-    const tab = existing ?? newTerminalTab(cwd);
-    if (!existing) setTerminalTabs((tabs) => [...tabs, tab]);
-    setActiveFileTabId(tab.id);
-    setRightPanelOpen(true);
-    if (isMobile) setSidebarOpen(false);
-  }, [terminalTabs, isMobile]);
-
   // Subagent work opens in a right-panel tab instead of hijacking the main chat.
   const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
     setAgentTabs((prev) => prev.some((tab) => tab.sessionId === sessionId) ? prev : [...prev, { sessionId, label }]);
@@ -1641,12 +1627,6 @@ export function AppShell() {
         onSessionDeleted={handleSessionDeleted}
         selectedCwd={selectedSession?.cwd ?? newSessionCwd ?? null}
         onCwdChange={handleCwdChange}
-        onOpenFile={handleOpenFile}
-        onOpenTerminal={handleOpenTerminal}
-        explorerRefreshKey={explorerRefreshKey}
-        onExplorerRefresh={handleExplorerRefresh}
-        onAtMention={handleAtMention}
-        onAtMentions={handleAtMentions}
         onBackgroundTaskDone={handleBackgroundTaskDone}
         hiddenFinishedSessionIds={hiddenFinishedSessionIds}
         onRunningSessionIdsChange={handleRunningSessionIdsChange}

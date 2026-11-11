@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
-import { FileExplorer } from "./FileExplorer";
+import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
 import { TabBar } from "./TabBar";
 import { useI18n } from "@/hooks/useI18n";
@@ -10,6 +10,8 @@ import { useResizablePanel } from "@/hooks/useResizablePanel";
 import { getFileName } from "@/lib/file-paths";
 import { movePanelTab } from "@/lib/panel-tab-order";
 import { saveFileViewerState } from "./file-tab-state";
+import { loadShowIgnoredFiles, saveShowIgnoredFiles } from "@/lib/sidebar-prefs";
+import { EyeIcon, SearchIcon, UploadIcon } from "./SidebarIcons";
 import type { CodeWorkspaceState } from "@/lib/code-workspace";
 import { closeCodeTab } from "@/lib/code-workspace";
 import type { FileViewerState } from "@/lib/file-viewer-state";
@@ -48,11 +50,13 @@ function IconButton({
   onClick,
   children,
   pressed,
+  disabled = false,
 }: {
   label: string;
   onClick: () => void;
   children: ReactNode;
   pressed?: boolean;
+  disabled?: boolean;
 }) {
   return (
     <button
@@ -60,6 +64,7 @@ function IconButton({
       title={label}
       aria-label={label}
       aria-pressed={pressed}
+      disabled={disabled}
       onClick={onClick}
       style={{
         display: "flex",
@@ -72,10 +77,11 @@ function IconButton({
         borderRadius: 5,
         background: pressed ? "var(--bg-selected)" : "transparent",
         color: pressed ? "var(--text)" : "var(--text-muted)",
-        cursor: "pointer",
+        cursor: disabled ? "default" : "pointer",
+        opacity: disabled ? 0.45 : 1,
         flexShrink: 0,
       }}
-      onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+      onMouseEnter={(event) => { if (!disabled) event.currentTarget.style.color = "var(--text)"; }}
       onMouseLeave={(event) => { event.currentTarget.style.color = pressed ? "var(--text)" : "var(--text-muted)"; }}
     >
       {children}
@@ -155,6 +161,12 @@ export function CodeWorkspace({
     else setTreeOpen(next);
   }, [isMobile]);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+  // The tree's own keys, as the sidebar's files panel had them: what it
+  // lists (ignored files too), its search, and an upload into the folder.
+  const [showHidden, setShowHidden] = useState(loadShowIgnoredFiles);
+  const [fileSearchOpen, setFileSearchOpen] = useState(false);
+  const [uploadBusy, setUploadBusy] = useState(false);
+  const explorerRef = useRef<FileExplorerHandle>(null);
   const treeWidthRef = useRef(TREE_DEFAULT_WIDTH);
   const treeResizer = useResizablePanel({
     ariaLabel: t("code.resizeTree"),
@@ -261,6 +273,31 @@ export function CodeWorkspace({
           {projectName ?? t("code.files")}
         </span>
         <IconButton
+          label={t("sidebar.uploadFilesTitle")}
+          disabled={!root || uploadBusy}
+          onClick={() => explorerRef.current?.openUploadPicker()}
+        >
+          <UploadIcon size={14} />
+        </IconButton>
+        <IconButton
+          label={t("sidebar.showIgnoredFiles")}
+          pressed={showHidden}
+          onClick={() => {
+            const next = !showHidden;
+            setShowHidden(next);
+            saveShowIgnoredFiles(next);
+          }}
+        >
+          <EyeIcon size={14} />
+        </IconButton>
+        <IconButton
+          label={t("sidebar.searchFiles")}
+          pressed={fileSearchOpen}
+          onClick={() => setFileSearchOpen((open) => !open)}
+        >
+          <SearchIcon size={14} />
+        </IconButton>
+        <IconButton
           label={t("code.hideTree")}
           onClick={() => setTreeVisible(false)}
         >
@@ -272,11 +309,16 @@ export function CodeWorkspace({
       <div className="scrollbar-subtle" style={{ flex: 1, minHeight: 0, overflow: "auto" }}>
         {root && (
           <FileExplorer
+            ref={explorerRef}
             cwd={root}
             onOpenFile={(filePath, fileName) => openFile(filePath, fileName)}
             refreshKey={refreshKey + treeRefreshKey}
             changesCollapsed
             onAtMention={onAtMention}
+            onUploadBusyChange={setUploadBusy}
+            fileSearchOpen={fileSearchOpen}
+            onFileSearchOpenChange={setFileSearchOpen}
+            showHidden={showHidden}
           />
         )}
       </div>

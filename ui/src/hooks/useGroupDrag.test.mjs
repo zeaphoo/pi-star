@@ -104,8 +104,8 @@ const TREE_TOP = 60;
 
 /**
  * A tree of collapsed groups (the list's 8px spacer, then 28px headers with
- * an 8px spacer between two, then the footer's spacer and its row: /a 8..36,
- * /b 44..72, /c 80..108) in a list box 100px from the top of the page.
+ * an 8px spacer between two: /a 8..36, /b 44..72, /c 80..108) in a list
+ * box 100px from the top of the page.
  */
 function setup({ projects = ["/a", "/b", "/c"], clientHeight = 400, enabled = true } = {}) {
   const { rows } = model(projects);
@@ -232,7 +232,7 @@ test("a mouse drag starts after a few pixels, follows the pointer and drops next
   // footer's spacer (page y 212), below the pointer: the ghost's bottom
   // keeps the gap above the pointer.
   tree.move(tree.at(100));
-  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/c", position: "after", lineY: 112 });
+  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/c", position: "after", lineY: 108 });
   assert.equal(tree.ghost.style.top, `${tree.at(100) - GHOST_GAP_PX.mouse - GHOST_HEIGHT - TREE_TOP}px`);
   // The line in the spacer between /b and /c (76), just above the pointer
   // (78): the ghost goes above the new line, not the last one.
@@ -424,14 +424,14 @@ test("new rows without the dragged group cancel it; with it, the drop is taken a
   const start = tree.at(15);
   tree.press("/a", { y: start });
   tree.move(tree.at(120));
-  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/c", position: "after", lineY: 112 });
+  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/c", position: "after", lineY: 108 });
   // /d joins at the bottom (116..144): the pointer is now over /d's upper
   // half, the line in the spacer between /c and /d.
   const grown = model(["/a", "/b", "/c", "/d"]);
   tree.hook.rerender({ ...tree.props, rows: grown.rows, offsets: getRowOffsets(grown.rows, "desktop") });
   assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/c", position: "after", lineY: 112 });
   tree.move(tree.at(135));
-  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/d", position: "after", lineY: 148 });
+  assert.deepEqual(tree.hook.result.view.drop, { anchorKey: "/d", position: "after", lineY: 144 });
   const gone = model(["/b", "/c", "/d"]);
   tree.hook.rerender({ ...tree.props, rows: gone.rows, offsets: getRowOffsets(gone.rows, "desktop") });
   assert.equal(tree.hook.result.view, null, "archived in another window");
@@ -477,11 +477,15 @@ test("near an edge the list scrolls, never past the rows' own height", () => {
   tree.hook.flush();
   assert.equal(tree.scroll.scrollTop, content - 100, "stops at the rows' height");
   assert.equal(tree.hook.result.view.drop.anchorKey, "/p11", "the target follows the scroll");
-  // The pointer over the footer at the bottom edge, the line above it at the
+  // The pointer past the last group at the bottom edge, the line at the
   // band's end, both in view as the list scrolled: the ghost clears the line.
   const lineAt = tree.at(tree.hook.result.view.drop.lineY);
-  assert.ok(lineAt < bottom && lineAt > SCROLL_TOP_EDGE);
-  assert.equal(tree.ghost.style.top, `${lineAt - GHOST_LINE_GAP_PX - GHOST_HEIGHT - TREE_TOP}px`);
+  // With no footer row below the last group, its drop line sits on the
+  // viewport's last pixel when the list is scrolled to the end.
+  assert.ok(lineAt <= bottom + 1 && lineAt > SCROLL_TOP_EDGE);
+  const ghostTop = Number.parseFloat(tree.ghost.style.top) + TREE_TOP;
+  assert.ok(ghostTop >= SCROLL_TOP_EDGE, "the ghost stays in the list");
+  assert.ok(ghostTop + GHOST_HEIGHT <= lineAt, "and above the drop line");
   tree.move(SCROLL_TOP_EDGE + 1);
   runFrames(1);
   assert.equal(tree.scroll.scrollTop, content - 100 - AUTO_SCROLL_MAX_STEP);

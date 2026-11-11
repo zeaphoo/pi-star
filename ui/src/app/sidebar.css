@@ -116,10 +116,9 @@
   transform: rotate(90deg);
 }
 
-/* Every section header's chevron, the files section's below the sessions too. */
+/* Every section header's chevron. */
 .session-tree-group:hover .session-tree-chevron,
-.session-tree-pinned-toggle:hover .session-tree-chevron,
-.sidebar-files-section-toggle:hover .session-tree-chevron {
+.session-tree-pinned-toggle:hover .session-tree-chevron {
   color: var(--text-muted);
 }
 
@@ -797,8 +796,8 @@ a.session-tree-main {
   color: var(--text);
 }
 
-/* Footer links: open another project, the archive. Their 12px icons in the
-   chevron column, their labels in the text column. */
+/* The footer link: the archive. Its 12px icon in the chevron column, its
+   label in the text column. */
 .session-tree-footer {
   right: var(--session-tree-inset-right);
   left: var(--session-tree-inset-left);
@@ -911,11 +910,8 @@ a.session-tree-main {
 }
 
 /*
- * Sidebar shell (components/SessionSidebar.tsx): header, the Sessions | Files
- * tabs and their panels, or (.is-files-below, the desktop default) both
- * panels in one column, the files under the sessions. Both panels stay
- * mounted; an inactive tab has the hidden attribute (display: none from the
- * base styles). The root is the containing block of the undo toast.
+ * Sidebar shell (components/SessionSidebar.tsx): the header and the sessions
+ * panel. The root is the containing block of the undo toast.
  */
 .session-sidebar {
   position: relative;
@@ -931,18 +927,6 @@ a.session-tree-main {
   padding-bottom: 56px;
 }
 
-/* With the files below, the toast sits at the bottom of the sessions, above
-   the files section (its height, or folded its 28px row and its line; 36px
-   on a coarse pointer, below), so it never covers the file tree. Still the
-   one live region, at the root. */
-.session-sidebar.is-files-below .sidebar-toast-region {
-  bottom: calc(var(--sidebar-files-height, 320px) + 8px);
-}
-
-.session-sidebar.is-files-below.is-files-collapsed .sidebar-toast-region {
-  bottom: 37px;
-}
-
 /* One toolbar row in the cells of the chat's top bar beside it (AppShell):
    36px with its line, as that bar is, so the two read as one bar. Each cell is divided on its
    right; the search cell's right is the sidebar's own edge. */
@@ -955,16 +939,8 @@ a.session-tree-main {
   border-bottom: 1px solid var(--border);
 }
 
-/* The tablist itself holds only the two tabs (ARIA allows nothing else in it). */
-.sidebar-tabs-list {
-  display: flex;
-  flex: none;
-  align-items: stretch;
-}
-
 /* The chat bar's cells: a 2px line on top that takes the accent when the
-   cell is the one chosen (a tab, the open search). */
-.sidebar-tab,
+   cell is the one chosen (the open search, the open New menu). */
 .sidebar-new-button,
 .sidebar-search-toggle {
   display: flex;
@@ -984,63 +960,69 @@ a.session-tree-main {
   transition: background 0.12s, color 0.12s;
 }
 
-.sidebar-tab,
-.sidebar-new-button {
+/* New and its project menu: one cell with two targets, the label's and the
+   caret's. The cell owns the lines on its left and right (the left one laid
+   over the cell before it, as New's was); the buttons inside draw none. */
+.sidebar-new-split {
+  display: flex;
+  flex: none;
+  align-items: stretch;
+  margin-left: -1px;
+  border-left: 1px solid var(--border);
   border-right: 1px solid var(--border);
 }
 
-/* New closes its own left side in both layouts, so New and the search read
-   as two cells, as the chat bar's right-end cell does: the brand before it
-   is no cell, and in the tabs layout the spacer leaves a gap after the last
-   tab at most widths. Its -1px margin lays that line over the last tab's
-   right one where the spacer has collapsed, and keeps New's footprint (and
-   so the fit levels) what it was without the line. */
-.sidebar-new-button {
-  margin-left: -1px;
-  border-left: 1px solid var(--border);
+.sidebar-new-split .sidebar-new-button {
+  margin-left: 0;
+  border-left: 0;
+  border-right: 0;
 }
 
-.sidebar-tab-icon {
+.sidebar-new-caret {
+  display: flex;
   flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  padding: 0;
+  border: 0;
+  border-top: 2px solid transparent;
+  background: transparent;
   color: var(--text-dim);
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
 }
 
-.sidebar-tab:hover,
-.sidebar-new-button:not(:disabled):hover,
+.sidebar-new-caret:hover,
+.sidebar-new-caret[aria-expanded="true"] {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+/* An open menu marks the caret as the open search is marked: the line on top. */
+.sidebar-new-caret[aria-expanded="true"] {
+  border-top-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+.sidebar-new-button:hover,
 .sidebar-search-toggle:hover {
   background: var(--bg-hover);
   color: var(--text);
 }
 
-.sidebar-tab.is-selected,
 .sidebar-search-toggle.is-active {
   border-top-color: var(--accent);
   background: var(--bg-selected);
   color: var(--text);
 }
 
-.sidebar-tab.is-selected {
-  font-weight: 500;
-}
-
-.sidebar-tab.is-selected .sidebar-tab-icon {
-  color: var(--accent);
-}
-
-.sidebar-tab-count {
-  color: var(--text-dim);
-  font-size: 10px;
-  font-variant-numeric: tabular-nums;
-  font-weight: 400;
-}
-
-/* With the files below the sessions there is no tab to choose: the brand
-   stands where the tabs were (PiWebTitle), the panel's typographic anchor,
-   as on the old sidebar. Not a cell: no box, no line on its right; its text
-   in the chevron column (6px in plus a header toggle's 5px). Never cut:
-   New's label gives way first, and on a row too narrow for it the brand
-   takes the sidebar's meta size (data-fit 2, which only it reaches: "Pi
-   Star" fits beside the two cells at the sidebar's 180px minimum). */
+/* The brand (PiWebTitle) is the panel's typographic anchor, not a cell: no
+   box, no line on its right; its text in the chevron column (6px in plus a
+   header toggle's 5px). Never cut: New's label gives way first, and on a row
+   too narrow for it the brand takes the sidebar's meta size (data-fit 2,
+   which only it reaches: "Pi Star" fits beside the cells at the sidebar's
+   180px minimum). */
 .sidebar-brand {
   display: inline-flex;
   flex: none;
@@ -1086,11 +1068,6 @@ a.session-tree-main {
   padding: 0;
 }
 
-.sidebar-new-button:disabled {
-  color: var(--text-dim);
-  cursor: not-allowed;
-}
-
 /* Where the labels do not fit (useHeaderFit measures them: their widths
    change with the language): New keeps its + (data-fit 1), then the tabs
    their icons, or the brand's versions take a smaller type (2). A hidden
@@ -1101,17 +1078,12 @@ a.session-tree-main {
   padding: 0;
 }
 
-.sidebar-header[data-fit="2"] .sidebar-tab {
-  padding: 0 11px;
-}
-
 .sidebar-header[data-fit="2"] .sidebar-brand {
   font-size: 11px;
 }
 
 .sidebar-header[data-fit="1"] .sidebar-new-label,
-.sidebar-header[data-fit="2"] .sidebar-new-label,
-.sidebar-header[data-fit="2"] .sidebar-tab-label {
+.sidebar-header[data-fit="2"] .sidebar-new-label {
   position: absolute;
   width: 1px;
   height: 1px;
@@ -1121,12 +1093,10 @@ a.session-tree-main {
 }
 
 .sidebar-new-button:focus-visible,
+.sidebar-new-caret:focus-visible,
 .sidebar-search-toggle:focus-visible,
-.sidebar-tab:focus-visible,
 .sidebar-archive-back:focus-visible,
-.sidebar-archive-menu-button:focus-visible,
-.sidebar-tool-button:focus-visible,
-.sidebar-files-section-toggle:focus-visible {
+.sidebar-archive-menu-button:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: -2px;
 }
@@ -1138,188 +1108,6 @@ a.session-tree-main {
   min-width: 0;
   min-height: 0;
   overflow: hidden;
-}
-
-/* The files below the sessions: the sessions fill what the files leave and
-   keep a few rows (SESSIONS_SECTION_MIN_HEIGHT in SessionSidebar.tsx); the
-   files section is as tall as the separator sets (--sidebar-files-height, on
-   the root), its top border the line between them. A sidebar too short for
-   both (a landscape phone, a short window) shrinks the files, never past
-   their header row: the sessions' zero basis freezes them at their minimum,
-   so the files take the whole shortfall and nothing runs past the root.
-   Folded, it is its header row alone (28px and its line, a height in pixels
-   so a fold can move to it), at the bottom, and the sessions take the
-   rest. */
-.session-sidebar.is-files-below .sidebar-sessions-panel {
-  flex-basis: 0;
-  min-height: 120px;
-}
-
-.session-sidebar.is-files-below .sidebar-files-panel {
-  flex: 0 1 auto;
-  height: var(--sidebar-files-height, 320px);
-  min-height: 29px;
-  border-top: 1px solid var(--border);
-}
-
-.session-sidebar.is-files-below.is-files-collapsed .sidebar-files-panel {
-  height: 29px;
-}
-
-/* A fold or an unfold (only those: .is-files-folding is on the root while
-   one runs, never for a drag, keys, a window resize or a layout switch)
-   moves the files' height between the separator's and the header row's,
-   the sessions growing or shrinking to match, and the toast above them
-   with it. The body shows from the start of an unfold and stays, inert,
-   to the end of a fold (SessionSidebar.tsx). */
-.session-sidebar.is-files-below.is-files-folding .sidebar-files-panel {
-  transition: height 180ms ease-out;
-}
-
-.session-sidebar.is-files-below.is-files-folding .sidebar-toast-region {
-  transition: bottom 180ms ease-out;
-}
-
-/* The separator between them: a 12px hit area centred on the files
-   section's top border, which is the line it shows; the sidebar's own
-   handle (app/globals.css, .panel-resize-handle) turned on its side, so
-   hover, focus and a drag look the same. */
-.panel-resize-handle.sidebar-files-resize-handle {
-  width: auto;
-  height: 12px;
-  margin: -6px 0;
-  flex: 0 0 12px;
-  cursor: row-resize;
-}
-
-.panel-resize-handle.sidebar-files-resize-handle::after {
-  top: 5px;
-  right: 0;
-  bottom: auto;
-  left: 0;
-  width: auto;
-  height: 2px;
-}
-
-/* Below the sessions, the files' right edge is the session times': a
-   session row ends 6px in, or on the session tree's classic scrollbar's
-   gutter where that is further in (SessionTree puts the gutter's width on
-   the root too), and its time 4px inside the row. The header row's keys and
-   the picker's boxes end there. */
-.session-sidebar.is-files-below {
-  --sidebar-files-inset-right: max(10px, calc(var(--session-tree-scrollbar, 0px) + 4px));
-}
-
-/* The files section's header row (files below the sessions only), one row
-   for the whole files chrome. A section header as the pinned section's is:
-   the chevron in the tree's chevron column (6px in, plus the toggle's 5px),
-   the label in small capitals in the text column, the changed files' count
-   after it (" · N", meta); the whole toggle folds the section. At the right
-   end, on the session times' edge, the files' keys in the files tab's
-   order, the search last: seven keys always there (disabled without a
-   folder), so no key ever moves. The toggle keeps its content (chevron,
-   label, count) and the keys share what it leaves, 18 to 26px each; only
-   with the keys at 18px does the toggle give way: its label first, then
-   the count, down to the chevron (17px). At the default 260px beside
-   Chromium's 10px scrollbar "文件 · 2" leaves the keys about 24px each and
-   "Files · 123" about 21px; from about 300px they are 26px; at the sidebar's
-   180px minimum (159px inside the row's padding) they are 18px and the
-   toggle keeps 31px. */
-.sidebar-files-section {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: 2px;
-  height: 28px;
-  padding: 0 var(--sidebar-files-inset-right) 0 6px;
-}
-
-/* Its content is its basis, with 5px on either side (its hover box never
-   ends on the count, which never touches the first key), and it takes the
-   row's room beyond the keys' 26px, so the whole space up to them folds
-   the section. What does not fit goes whole, never cut: it wraps to a
-   second line, under the first (as tall as the row: the chevron's box is)
-   and clipped with the overflow. The count goes first, then the label. */
-.sidebar-files-section-toggle {
-  display: flex;
-  flex: 1 1 auto;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 3px;
-  min-width: 17px;
-  height: 100%;
-  padding: 0 5px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-muted);
-  font: inherit;
-  font-size: 11px;
-  text-align: left;
-  white-space: nowrap;
-  cursor: pointer;
-}
-
-.sidebar-files-section-toggle:hover {
-  background: var(--bg-hover);
-  color: var(--text);
-}
-
-/* The toggle's first line is as tall as the row: the chevron's box is (its
-   12px icon drawn in the middle, turning there), so a label or count that
-   wraps lands under the row, out of view. */
-.sidebar-files-section-toggle > .session-tree-chevron {
-  height: 100%;
-}
-
-/* The pinned section's label, letter for letter (.session-tree-pinned-label). */
-.sidebar-files-section-label {
-  min-width: 0;
-  overflow: hidden;
-  font-weight: 600;
-  letter-spacing: 0.05em;
-  text-overflow: ellipsis;
-  text-transform: uppercase;
-}
-
-/* The changed files' count, as the pinned section's (.session-tree-pinned-count). */
-.sidebar-files-section-count {
-  flex: none;
-  color: var(--text-dim);
-  font-weight: 400;
-}
-
-/* The keys' group, right-aligned by the toggle before it: never under its
-   seven keys' minimum (no shrink from 7 x 18px), never over their maximum
-   (7 x 26px). Its grow factor, far above the toggle's, gives it the room
-   the toggle's content leaves until the keys reach 26px; the toggle gets
-   the rest (a fraction of a pixel until then). */
-.sidebar-files-keys {
-  display: flex;
-  flex: 1000 0 calc(7 * 18px);
-  align-items: center;
-  max-width: calc(7 * 26px);
-}
-
-/* The section's keys: the files tab's square keys, a step under the row's
-   height, sharing their group's width alike. */
-.sidebar-files-keys .sidebar-tool-button {
-  flex: 1 1 0;
-  min-width: 18px;
-  max-width: 26px;
-  height: 26px;
-  border-radius: 6px;
-}
-
-/* Under that row (or the whole files tab): the head, then the tree filling
-   the rest. Hidden while the section is folded, never unmounted. */
-.sidebar-files-body {
-  display: flex;
-  flex: 1 1 auto;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
 }
 
 .sidebar-search {
@@ -1470,184 +1258,15 @@ a.session-tree-main {
   transform: rotate(-90deg);
 }
 
-/* Files tab: the folder in use (the stacked project picker's two boxes,
-   app/globals.css) and what is done with it, then a line and the tree. */
-.sidebar-files-head {
-  display: flex;
-  flex: none;
-  flex-direction: column;
-  padding: 10px 10px 4px;
-  border-bottom: 1px solid var(--border);
-}
-
-/* Below the sessions the head is the picker's one row (its keys are the
-   header row's): the paths start in the text column (15px, the box's 1px
-   line and its 10px: 26px), the boxes end on the keys' edge, and no line
-   parts it from the tree, whose first row starts 4px under the boxes (the
-   head's 2px, then the tree's own 2px; the scroll box adds none). An error
-   under them keeps that 4px and the boxes' edges. */
-.session-sidebar.is-files-below .sidebar-files-head {
-  padding: 2px var(--sidebar-files-inset-right) 2px 15px;
-  border-bottom: 0;
-}
-
-.session-sidebar.is-files-below .sidebar-files-scroll {
-  padding-top: 0;
-}
-
-.session-sidebar.is-files-below .sidebar-files-error {
-  padding: 2px var(--sidebar-files-inset-right) 4px 15px;
-}
-
-/* The head's last row: the actions on that folder and the tree's two
-   views, used often enough to stay in view (its search is the toolbar
-   row's). The folder's four from the left, the tree's views (ignored files,
-   changes) at the right end, the row's edges on the boxes'. Always the same
-   six (the changes view is disabled, not gone, without changes), so nothing
-   moves as the count flips. At the sidebar's 180px minimum they give way
-   together, down to 21px wide, and the gap before the views closes. */
-.sidebar-files-actions {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 4px;
-}
-
-/* The first of the tree's views. A wrapper around the two would be sized
-   by their icons, not their 32px basis, and squeeze them at any width. */
-.sidebar-files-views-start {
-  margin-left: auto;
-}
-
-/* Square keys, borderless and dim: their box shows on hover. */
-.sidebar-tool-button {
-  display: flex;
-  flex: 0 1 32px;
-  align-items: center;
-  justify-content: center;
-  min-width: 21px;
-  height: 32px;
-  padding: 0;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-dim);
-  cursor: pointer;
-  transition: color 0.12s, background 0.12s;
-}
-
-.sidebar-tool-button:not(:disabled):hover {
-  background: var(--bg-selected);
-  color: var(--text);
-}
-
-.sidebar-tool-button.is-active,
-.sidebar-tool-button.is-active:not(:disabled):hover {
-  background: var(--bg-selected);
-  color: var(--accent);
-}
-
-.sidebar-tool-button.is-done,
-.sidebar-tool-button.is-done:not(:disabled):hover {
-  background: transparent;
-  color: var(--accent);
-}
-
-.sidebar-tool-button:disabled {
-  cursor: default;
-  opacity: 0.6;
-}
-
-/* Under the head's line, on the boxes' edges. */
-.sidebar-files-error {
-  display: flex;
-  flex: none;
-  align-items: flex-start;
-  gap: 6px;
-  padding: 6px 10px 0;
-  color: #f87171;
-  font-size: 10px;
-  line-height: 1.35;
-}
-
-.sidebar-files-error-text {
-  flex: 1;
-  min-width: 0;
-  overflow-wrap: anywhere;
-}
-
-/* The tree's first row 4px under the head's line (with the tree's own 2px),
-   as close as it sits under the boxes below the sessions. */
-.sidebar-files-scroll {
-  flex: 1 1 auto;
-  min-height: 0;
-  padding-top: 2px;
-  overflow-x: hidden;
-  overflow-y: auto;
-}
-
-@media (pointer: coarse) {
-  /* As tall as the picker's boxes there, still square. */
-  .sidebar-tool-button {
-    flex-basis: 36px;
-    height: 36px;
-  }
-
-  /* The files section's header row and its keys, for a finger; the folded
-     section and the toast above it follow its height. The keys come before
-     the label there: 32px, the toggle taking only what they leave (a zero
-     basis), down to its chevron, and only then do they narrow together
-     (to 15px; their group's basis is their width, its minimum zero). */
-  .sidebar-files-section {
-    height: 36px;
-  }
-
-  .sidebar-files-section-toggle {
-    flex: 1 1 0;
-  }
-
-  .sidebar-files-keys {
-    flex: 0 1 auto;
-    min-width: 0;
-    max-width: none;
-  }
-
-  .sidebar-files-keys .sidebar-tool-button {
-    flex: 0 1 32px;
-    width: 32px;
-    min-width: 15px;
-    max-width: none;
-    height: 32px;
-  }
-
-  .session-sidebar.is-files-below .sidebar-files-panel {
-    min-height: 37px;
-  }
-
-  .session-sidebar.is-files-below.is-files-collapsed .sidebar-files-panel {
-    height: 37px;
-  }
-
-  .session-sidebar.is-files-below.is-files-collapsed .sidebar-toast-region {
-    bottom: 45px;
-  }
-}
-
 @media (prefers-reduced-motion: reduce) {
-  .sidebar-tab,
   .sidebar-new-button,
-  .sidebar-search-toggle,
-  .sidebar-tool-button {
+  .sidebar-new-caret,
+  .sidebar-search-toggle {
     transition: none;
   }
 
-  /* The fold and the archive view change at once (no phase starts either:
+  /* The archive view changes at once (no phase starts either:
      useSidebarMotion). */
-  .session-sidebar.is-files-below.is-files-folding .sidebar-files-panel,
-  .session-sidebar.is-files-below.is-files-folding .sidebar-toast-region {
-    transition: none;
-  }
-
   .sidebar-archive-view.is-entering,
   .sidebar-archive-view.is-leaving {
     animation: none;

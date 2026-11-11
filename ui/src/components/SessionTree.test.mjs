@@ -56,7 +56,6 @@ const defaults = {
   onGroupNew: noop,
   onGroupMenu: noop,
   onPinEmptyGroup: noop,
-  onOpenOtherProject: noop,
   onOpenArchive: noop,
 };
 
@@ -109,7 +108,7 @@ function groupRow(extra = {}, projectExtra = {}) {
   return { kind: "group", key: `group:${groupProject.key}`, project: groupProject, expanded: true, running: 0, awaiting: 0, unread: 0, ...extra };
 }
 
-const footer = [{ kind: "footer-open", key: "footer-open" }];
+const footer = [{ kind: "footer-archived", key: "footer-archived", count: 1 }];
 
 test("the pinned header toggles the section and shows activity dots only while collapsed", () => {
   const collapsed = rowMarkup(render({
@@ -386,7 +385,6 @@ test("show more, empty groups, footer links and archive groups", () => {
       { kind: "spacer", key: "footer-spacer" },
       { kind: "archive-group", key: "archive:/work/app", project, count: 2, expanded: true },
       { kind: "archive-group", key: "archive:/work/old", project: { ...project, key: "/work/old", root: "/work/old", name: "old" }, count: 5, expanded: false },
-      { kind: "footer-open", key: "footer-open" },
       { kind: "footer-archived", key: "footer-archived", count: 4 },
     ],
   });
@@ -414,7 +412,6 @@ test("show more, empty groups, footer links and archive groups", () => {
   assert.match(archiveHeader, /aria-label="Archived sessions of app"[^>]*aria-haspopup="menu" aria-expanded="false"/);
   assert.doesNotMatch(archiveHeader, /New session/);
   assert.match(rowMarkup(html, "archive:/work/old"), /aria-expanded="false" title="\/work\/old"><svg[^>]*class="session-tree-chevron"/);
-  assert.match(rowMarkup(html, "footer-open"), /<button type="button" class="session-tree-footer-button"><svg[^>]*>[\s\S]*?<\/svg><span class="session-tree-footer-label">Open another project…<\/span><\/button>/);
   assert.match(rowMarkup(html, "footer-archived"), /<span class="session-tree-footer-label">Archived · 4<\/span><svg[^>]*class="session-tree-footer-chevron"/);
 });
 
@@ -426,7 +423,7 @@ test("loading replaces the rows; the empty label shows only without session, gro
 
   const empty = render({ rows: footer, emptyLabel: "No sessions found" });
   assert.match(empty, /<div class="session-tree-message">No sessions found<\/div><div class="session-tree-scroll scrollbar-subtle">/);
-  assert.deepEqual(renderedKeys(empty), ["footer-open"]);
+  assert.deepEqual(renderedKeys(empty), ["footer-archived"]);
 
   assert.doesNotMatch(render({ rows: [groupRow(), ...footer], emptyLabel: "No sessions found" }), /No sessions found/);
 
@@ -500,7 +497,7 @@ test("renders the model built from a catalog with unique row keys", () => {
   const html = render({ rows: model.rows });
   const keys = renderedKeys(html);
   assert.equal(new Set(keys).size, keys.length);
-  assert.deepEqual(keys, ["pinned-header", "session:pinned:b", "group:/work/app", "session:group:a", "footer-open"]);
+  assert.deepEqual(keys, ["pinned-header", "session:pinned:b", "group:/work/app", "session:group:a"]);
   const familyRow = rowMarkup(html, "session:group:a");
   assert.match(familyRow, /is-selected/);
   assert.match(familyRow, /aria-label="Agent running…"/);
@@ -559,7 +556,7 @@ test("headers lead with their chevron, and every row's text starts in one column
 
   // The text column: the toggle's left padding, the 12px chevron and the
   // gap. Session titles, "show more", the empty group's note, the archive's
-  // project names and the footer's labels (their 12px icons in the
+  // project names and the archive footer's label (its 12px icon in the
   // chevron column) start there too. The last length of a padding
   // shorthand is its left side.
   const lastPx = (rule, property) => {
@@ -572,7 +569,7 @@ test("headers lead with their chevron, and every row's text starts in one column
   // A group header's toggle starts at the row's own left edge.
   assert.match(cssRule(".session-tree-group"), /padding: 0 4px 0 0;/);
   assert.equal(lastPx(".session-tree-footer-button", "padding") + 12 + lastPx(".session-tree-footer-button", "gap"), textStart);
-  assert.deepEqual([...source.matchAll(/<(?:FolderPlus|Archive)Icon size=\{(\d+)\} \/>\s*<span className="session-tree-footer-label">/g)].map((match) => Number(match[1])), [12, 12]);
+  assert.deepEqual([...source.matchAll(/<ArchiveIcon size=\{(\d+)\} \/>\s*<span className="session-tree-footer-label">/g)].map((match) => Number(match[1])), [12]);
   // These rows span the whole width, so their padding adds the rows' inset.
   assert.match(css, /\.session-tree-group-empty,\s*\.session-tree-more \{\s*padding-left: calc\(var\(--session-tree-inset-left\) \+ 20px\);/);
   // The pinned section's chevron in the same column (its row spans the
@@ -584,9 +581,9 @@ test("headers lead with their chevron, and every row's text starts in one column
   // One rhythm: session rows, every header (a project's, the pinned
   // section's, the archive's projects), the empty note and the footer are
   // one height, 28px (44px on a phone); only "show more" is shorter.
-  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-open": 28, "footer-archived": 28, "archive-group": 28 });
+  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-archived": 28, "archive-group": 28 });
   for (const [layout, height] of [["desktop", 28], ["mobile", 44]]) {
-    for (const kind of ["session", "group", "pinned-header", "group-empty", "footer-open", "footer-archived", "archive-group"]) {
+    for (const kind of ["session", "group", "pinned-header", "group-empty", "footer-archived", "archive-group"]) {
       assert.equal(SIDEBAR_ROW_HEIGHTS[layout][kind], height, `${layout} ${kind}`);
     }
   }

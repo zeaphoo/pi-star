@@ -167,7 +167,7 @@ test("forks stay separate rows while subagents fold into their root", () => {
     subagent("child", "parent", { modified: BASE + 1 }),
   ];
   const model = buildSessionTree(input({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" } }));
-  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:fork", "group:parent", "-", "footer-open"]);
+  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:fork", "group:parent"]);
   assert.deepEqual(model.rows[3].family.subagents.map((item) => item.id), ["child"]);
 });
 
@@ -231,8 +231,7 @@ test("groups list the current project first among unpinned projects, then by act
   assert.deepEqual(describeRows(model.rows), [
     "-", "group:fresh", "empty",
     "-", "group:alpha (collapsed)",
-    "-", "group:beta (collapsed)", "-",
-    "footer-open",
+    "-", "group:beta (collapsed)",
   ]);
   assert.equal(model.projects[0].current, true);
   assert.equal(model.archivedCount, 0);
@@ -259,8 +258,7 @@ test("pinned projects come first in pin order and use the stored root without se
   assert.deepEqual(describeRows(model.rows), [
     "-", "group:beta", "group:b1",
     "-", "group:gamma", "empty",
-    "-", "group:alpha (collapsed)", "-",
-    "footer-open",
+    "-", "group:alpha (collapsed)",
   ]);
 });
 
@@ -328,7 +326,7 @@ test("expanded groups show six families plus running, unread and selected ones",
   assert.equal(GROUP_VISIBLE_LIMIT, 6);
   assert.deepEqual(describeRows(model.rows), [
     "-", "group:alpha", "group:s0", "group:s1", "group:s2", "group:s3", "group:s4", "group:s5",
-    "group:s7", "group:s8", "group:s9", "more:1", "-", "footer-open",
+    "group:s7", "group:s8", "group:s9", "more:1",
   ]);
   const group = model.rows[1];
   assert.equal(group.running, 1);
@@ -483,7 +481,7 @@ test("explicit group choices win over the current/pinned default", () => {
 
   const sessions = [session("a1")];
   const model = buildSessionTree(input({ sessions, groupExpansion: { "/work/alpha": true } }));
-  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1", "-", "footer-open"]);
+  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1"]);
 });
 
 test("a group open only because it was current stays open for the page when another project becomes current", () => {
@@ -496,7 +494,7 @@ test("a group open only because it was current stays open for the page when anot
   const saved = { "/work/beta": true };
   // beta opened with its chevron, alpha open by the default; then a session of beta is picked.
   const before = buildSessionTree(input({ sessions, currentProject: alpha, groupExpansion: saved }));
-  assert.deepEqual(describeRows(before.rows), ["-", "group:alpha", "group:a1", "-", "group:beta", "group:b1", "-", "footer-open"]);
+  assert.deepEqual(describeRows(before.rows), ["-", "group:alpha", "group:a1", "-", "group:beta", "group:b1"]);
   const after = buildSessionTree(input({ sessions, currentProject: beta, groupExpansion: saved }));
   const outgoing = after.projects.find((project) => project.key === alpha.key);
   const none = new Set();
@@ -508,7 +506,7 @@ test("a group open only because it was current stays open for the page when anot
   assert.deepEqual(describeRows(settled.rows), describeRows(before.rows), "no row moves");
   // After a reload only the saved choices are left: alpha is closed again.
   const reloaded = buildSessionTree(input({ sessions, currentProject: beta, groupExpansion: saved }));
-  assert.deepEqual(describeRows(reloaded.rows), ["-", "group:alpha (collapsed)", "-", "group:beta", "group:b1", "-", "footer-open"]);
+  assert.deepEqual(describeRows(reloaded.rows), ["-", "group:alpha (collapsed)", "-", "group:beta", "group:b1"]);
 
   // Nothing to keep: an explicit choice (open or closed), a group already
   // kept, a pinned project, the project still being current, or a project
@@ -571,8 +569,7 @@ test("pinned families move to the global section, newest pin first", () => {
 
   assert.deepEqual(describeRows(model.rows), [
     "-", "pinned:2", "pinned:b1", "pinned:a2", "-",
-    "group:alpha", "group:a1", "-",
-    "footer-open",
+    "group:alpha", "group:a1",
   ]);
   assert.deepEqual(model.rows[1], { kind: "pinned-header", key: "pinned-header", count: 2, collapsed: false, running: 0, awaiting: 0, unread: 1 });
   const pinnedRow = model.rows[2];
@@ -584,7 +581,7 @@ test("pinned families move to the global section, newest pin first", () => {
   assert.deepEqual(describeRows(collapsed.rows).slice(0, 3), ["-", "pinned:2", "-"]);
   assert.equal(collapsed.rows[1].collapsed, true);
   // beta's activity comes from its pinned family, so the newer alpha leads.
-  assert.deepEqual(describeRows(collapsed.rows).slice(3), ["group:alpha (collapsed)", "-", "group:beta", "empty", "-", "footer-open"]);
+  assert.deepEqual(describeRows(collapsed.rows).slice(3), ["group:alpha (collapsed)", "-", "group:beta", "empty"]);
 });
 
 test("the pinned section shows eight families, then more or less", () => {
@@ -622,23 +619,23 @@ test("archived families leave the tree and are counted across projects", () => {
   const state = uiState({ sessions: { a2: { archivedAt: BASE + DAY }, b1: { archivedAt: BASE + DAY } } });
   const model = buildSessionTree(input({ sessions, uiState: state, groupExpansion: { "/work/alpha": true } }));
 
-  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1", "-", "footer-open", "archived:2"]);
+  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1", "-", "archived:2"]);
   assert.equal(model.archivedCount, 2);
 });
 
 test("with no sessions and no current or pinned project only the footer remains", () => {
-  assert.deepEqual(describeRows(buildSessionTree(input()).rows), ["-", "footer-open"]);
+  assert.deepEqual(describeRows(buildSessionTree(input()).rows), ["-"]);
   const allArchived = buildSessionTree(input({
     sessions: [session("a1")],
     uiState: uiState({ sessions: { a1: { archivedAt: BASE + DAY } } }),
   }));
-  assert.deepEqual(describeRows(allArchived.rows), ["-", "footer-open", "archived:1"]);
-  // Pinned families and no group: one spacer between the section and the footer.
+  assert.deepEqual(describeRows(allArchived.rows), ["-", "archived:1"]);
+  // Pinned families and no group: one spacer closes the pinned section.
   const pinnedOnly = buildSessionTree(input({
     sessions: [session("a1")],
     uiState: uiState({ sessions: { a1: { pinnedAt: 1 } } }),
   }));
-  assert.deepEqual(describeRows(pinnedOnly.rows), ["-", "pinned:1", "pinned:a1", "-", "footer-open"]);
+  assert.deepEqual(describeRows(pinnedOnly.rows), ["-", "pinned:1", "pinned:a1", "-"]);
 });
 
 test("row keys are unique and session rows carry transient status", () => {
@@ -659,7 +656,7 @@ test("row keys are unique and session rows carry transient status", () => {
   assert.ok(keys.includes("session:group:a1"));
   assert.ok(keys.includes("group:/work/gamma"));
   // One spacer opens the list, one follows the pinned section, one parts each group from the one above, one comes before the footer.
-  assert.deepEqual(model.rows.filter((row) => row.kind === "spacer").map((row) => row.key), ["top-spacer", "pinned-spacer", "group-spacer:/work/alpha", "footer-spacer"]);
+  assert.deepEqual(model.rows.filter((row) => row.kind === "spacer").map((row) => row.key), ["top-spacer", "pinned-spacer", "group-spacer:/work/alpha"]);
   assert.equal(model.rows.find((row) => row.key === "session:group:a2").status.transient, true);
 });
 
@@ -798,10 +795,9 @@ test("row offsets follow each kind's height for the layout", () => {
     { kind: "group", key: "group:a" },
     { kind: "session", key: "session:group:a" },
     { kind: "spacer", key: "footer-spacer" },
-    { kind: "footer-open", key: "footer-open" },
   ];
-  assert.deepEqual(getRowOffsets(rows, "desktop"), [0, 28, 56, 64, 92]);
-  assert.deepEqual(getRowOffsets(rows, "mobile"), [0, 44, 88, 96, 140]);
+  assert.deepEqual(getRowOffsets(rows, "desktop"), [0, 28, 56, 64]);
+  assert.deepEqual(getRowOffsets(rows, "mobile"), [0, 44, 88, 96]);
   assert.deepEqual(getRowOffsets([], "desktop"), [0]);
   assert.equal(SIDEBAR_ROW_HEIGHTS.mobile.session, 44);
   // Both section headers (the pinned section's and a project's) are a
@@ -1146,14 +1142,13 @@ test("group blocks run from each header to the bottom of its last row, with the 
     uiState: uiState({ sessions: { pin: { pinnedAt: 1 } }, projects: { "/work/gamma": pinnedProject(1, "/work/gamma") } }),
     groupExpansion: { "/work/alpha": true },
   }));
-  // Spacers open the list, follow the pinned section, part each group from
-  // the one above it, open or folded, and come before the footer.
+  // Spacers open the list, follow the pinned section, and part each group
+  // from the one above it, open or folded.
   assert.deepEqual(describeRows(model.rows), [
     "-", "pinned:1", "pinned:pin", "-",
     "group:gamma", "empty",
     "-", "group:alpha", "group:a7", "group:a6", "group:a5", "group:a4", "group:a3", "group:a2", "more:2",
-    "-", "group:beta (collapsed)", "-",
-    "footer-open",
+    "-", "group:beta (collapsed)",
   ]);
   const offsets = getRowOffsets(model.rows, "desktop");
   // Headers and session rows are 28px: 8 + 28 + 28 + 8 = 72 to the first group.
@@ -1161,13 +1156,13 @@ test("group blocks run from each header to the bottom of its last row, with the 
   assert.deepEqual(groupBlocks(model.rows, offsets), [
     { key: "/work/gamma", pinned: true, top: 72, bottom: 128, gapAbove: 8, gapBelow: 8 },
     { key: "/work/alpha", pinned: false, top: 136, bottom: 358, gapAbove: 8, gapBelow: 8 },
-    { key: "/work/beta", pinned: false, top: 366, bottom: 394, gapAbove: 8, gapBelow: 8 },
+    { key: "/work/beta", pinned: false, top: 366, bottom: 394, gapAbove: 8, gapBelow: 0 },
   ]);
   assert.deepEqual(groupBlocks([], [0]), []);
-  // The drop line sits mid-spacer: between two groups, or before the footer.
+  // The drop line sits mid-spacer: between two groups, or past the last one.
   const blocks = groupBlocks(model.rows, offsets);
   assert.deepEqual(groupDropAt(blocks, "/work/beta", 0), { anchorKey: "/work/alpha", position: "before", lineY: 132 });
-  assert.deepEqual(groupDropAt(blocks, "/work/alpha", 1000), { anchorKey: "/work/beta", position: "after", lineY: 398 });
+  assert.deepEqual(groupDropAt(blocks, "/work/alpha", 1000), { anchorKey: "/work/beta", position: "after", lineY: 394 });
 });
 
 test("a drop target stays in the dragged group's band and is null where the group already is", () => {
