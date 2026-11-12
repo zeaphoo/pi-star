@@ -5,7 +5,7 @@ import { injectSandboxedHtmlPolyfill, SANDBOX_STORAGE_POLYFILL_SCRIPT } from "./
 
 function runPreviewScript(window) {
   const html = injectSandboxedHtmlPolyfill("<html><head></head><body></body></html>");
-  const script = html.match(/<script data-pi-web-polyfill="storage">([\s\S]*?)<\/script>/)?.[1];
+  const script = html.match(/<script data-pi-star-polyfill="storage">([\s\S]*?)<\/script>/)?.[1];
   assert.ok(script, "preview contains an executable storage shim");
   runInNewContext(script, { window });
 }
@@ -25,7 +25,7 @@ function storageFromPreview() {
 test("injects into the real head rather than a head tag written in a comment", () => {
   const html = '<!doctype html><!-- <head> example --><html><head data-example="a>b"><script>localStorage.getItem("x")</script></head></html>';
   const preview = injectSandboxedHtmlPolyfill(html);
-  assert.ok(preview.startsWith('<!doctype html><!-- <head> example --><html><head data-example="a>b"><script data-pi-web-polyfill="storage">'));
+  assert.ok(preview.startsWith('<!doctype html><!-- <head> example --><html><head data-example="a>b"><script data-pi-star-polyfill="storage">'));
 });
 
 test("many comments with no head do not stall the injection", () => {

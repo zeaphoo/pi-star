@@ -9,27 +9,27 @@
  * quota errors fall back to defaults.
  */
 
-const SIDEBAR_TAB_STORAGE_KEY = "pi-web:sidebar-tab";
-const GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups-v2";
+const SIDEBAR_TAB_STORAGE_KEY = "pi-star:sidebar-tab";
+const GROUP_EXPANSION_STORAGE_KEY = "pi-star:sidebar-groups-v2";
 /**
  * The group choices before v2. A group that stopped being current was saved
  * there as open, so every project ever visited came back expanded; its
  * `true` entries cannot be told from the user's own, and only its collapses
  * move to v2 (loadGroupExpansion).
  */
-const LEGACY_GROUP_EXPANSION_STORAGE_KEY = "pi-web:sidebar-groups";
-const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-archive-collapsed";
-const PINNED_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-pins-collapsed";
-const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-web:sidebar-files-show-ignored";
-const FILES_COLLAPSED_STORAGE_KEY = "pi-web:sidebar-files-collapsed";
-const CHANGES_VIEW_MODE_STORAGE_KEY = "pi-web:sidebar-changes-view-mode";
-const NON_GIT_CWDS_STORAGE_KEY = "pi-web:sidebar-non-git-cwds";
+const LEGACY_GROUP_EXPANSION_STORAGE_KEY = "pi-star:sidebar-groups";
+const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-archive-collapsed";
+const PINNED_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-pins-collapsed";
+const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-star:sidebar-files-show-ignored";
+const FILES_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-files-collapsed";
+const CHANGES_VIEW_MODE_STORAGE_KEY = "pi-star:sidebar-changes-view-mode";
+const NON_GIT_CWDS_STORAGE_KEY = "pi-star:sidebar-non-git-cwds";
 /**
  * Keys nothing reads now: the sessions/explorer split's, which the two tabs
  * replaced, and the group choices before v2 (loadGroupExpansion reads them
  * only while v2 is missing).
  */
-const RETIRED_STORAGE_KEYS = ["pi-web:file-explorer:open", "pi-web:sidebar-session-pane-height", LEGACY_GROUP_EXPANSION_STORAGE_KEY];
+const RETIRED_STORAGE_KEYS = ["pi-star:file-explorer:open", "pi-star:sidebar-session-pane-height", LEGACY_GROUP_EXPANSION_STORAGE_KEY];
 
 /** Oldest choices are dropped beyond this many project keys. */
 const MAX_GROUP_EXPANSION_ENTRIES = 300;

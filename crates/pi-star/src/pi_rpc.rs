@@ -437,7 +437,7 @@ impl PiRpcSession {
         self.set_state(state);
     }
 
-    /// Persist the active tool selection in the same `pi-web:tool-selection`
+    /// Persist the active tool selection in the same `pi-star:tool-selection`
     /// custom entry pi-web uses. `None` records a cleared selection so a later
     /// reopen follows settings.json `defaultTools` again.
     pub fn append_tool_selection(&self, tools: Option<&[String]>) {
@@ -455,7 +455,7 @@ impl PiRpcSession {
             [
                 (
                     "customType".to_string(),
-                    Value::String("pi-web:tool-selection".into()),
+                    Value::String("pi-star:tool-selection".into()),
                 ),
                 ("data".to_string(), data),
             ]
@@ -709,13 +709,13 @@ fn agent_extension_path() -> Option<PathBuf> {
     candidates.into_iter().find(|path| path.exists())
 }
 
-/// The newest valid `pi-web:tool-selection` entry, or `None` when the session
+/// The newest valid `pi-star:tool-selection` entry, or `None` when the session
 /// follows settings.json defaults (no entry, or a later cleared marker).
 fn persisted_tool_selection(path: &Path) -> Option<Vec<String>> {
     let session = read_session(path).ok()?;
     for entry in session.entries.iter().rev() {
         if entry.get("type").and_then(Value::as_str) != Some("custom")
-            || entry.get("customType").and_then(Value::as_str) != Some("pi-web:tool-selection")
+            || entry.get("customType").and_then(Value::as_str) != Some("pi-star:tool-selection")
         {
             continue;
         }

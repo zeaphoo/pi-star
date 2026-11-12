@@ -2,7 +2,7 @@
  * Per-tab "open session" memory.
  *
  * A browser tab remembers the session it showed last, so a reload restores
- * *this* tab's session instead of `pi-web:last-open-by-workspace` — the
+ * *this* tab's session instead of `pi-star:last-open-by-workspace` — the
  * workspace-wide memory that every tab of the browser profile shares and that
  * any other tab overwrites when it switches sessions.
  *
@@ -19,7 +19,7 @@
  * Legacy values are a bare session id; current values are a small JSON object.
  */
 
-const STORAGE_KEY = "pi-web:tab-open-session";
+const STORAGE_KEY = "pi-star:tab-open-session";
 
 interface StorageLike {
   getItem(key: string): string | null;

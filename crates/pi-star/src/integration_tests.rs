@@ -458,7 +458,7 @@ async fn agent_ensure_session_creates_a_file() {
     assert_eq!(status, StatusCode::OK, "{body}");
 
     // Dropping the idle wrapper makes the next get_tools rebuild the harness
-    // from the pi-web:tool-selection entry it just persisted.
+    // from the pi-star:tool-selection entry it just persisted.
     let (status, _) = call(
         app.clone(),
         Request::builder()

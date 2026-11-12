@@ -104,7 +104,7 @@ test("keeps the MCP selection per project and once more for no project", () => {
 });
 
 test("ignores malformed and unavailable browser storage", () => {
-  const malformed = createStorage({ "pi-web:settings-navigation": "{" });
+  const malformed = createStorage({ "pi-star:settings-navigation": "{" });
   const unavailable = {
     getItem() { throw new Error("blocked"); },
     setItem() { throw new Error("blocked"); },

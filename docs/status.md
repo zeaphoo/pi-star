@@ -19,7 +19,7 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | @ 文件索引 | ✅ | git ls-files + 忽略规则回退，模糊匹配 |
 | Git / worktree | ✅ | status、diff、list/add/remove |
 | 终端 | ✅ | portable-pty + SSE + 进程组清理 |
-| Agent 主链路 | ✅ | 后端按会话选择并持久化为 `pi-star:agent-backend` custom entry：默认 `rpc`（`pi --mode rpc`，标准 PI），可选 `quick`（进程内 `AgentHarness`/QuickPI，pi v3 存储，工具经 AllowedRoots 沙箱，含 MCP 与 subagent）；`/api/agent/backends` 与聊天输入区的 Agent 下拉共用同一份状态，运行中禁止切换。QuickPI 的系统提示按 pi 的 sections（tools/rules/docs/context/skills/cwd）渲染，工具 loadout 读取 settings `defaultTools` 与 `pi-web:tool-selection`，`set_tools` 同时持久化选择 |
+| Agent 主链路 | ✅ | 后端按会话选择并持久化为 `pi-star:agent-backend` custom entry：默认 `rpc`（`pi --mode rpc`，标准 PI），可选 `quick`（进程内 `AgentHarness`/QuickPI，pi v3 存储，工具经 AllowedRoots 沙箱，含 MCP 与 subagent）；`/api/agent/backends` 与聊天输入区的 Agent 下拉共用同一份状态，运行中禁止切换。QuickPI 的系统提示按 pi 的 sections（tools/rules/docs/context/skills/cwd）渲染，工具 loadout 读取 settings `defaultTools` 与 `pi-star:tool-selection`，`set_tools` 同时持久化选择 |
 | PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue、模型/thinking、压缩/重试、统计、fork/clone、session rekey、单写者路由、子代理 session 锁、扩展 UI、事件流；`pi-star-agent-extension` 补偿 get/set tools、tree、branch、reload 和基础 subagent 工具；真实 pi + 假模型端到端测试覆盖工具、abort、扩展 UI、fork/rekey。作为默认 `rpc` 后端，仅拥有被选中该后端的会话 |
 | 会话空闲回收 / 租约 | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`，后台 30s 回收；lease 续租 |
 | Subagents | ✅ | 内置 `general-purpose`/`explore`/`plan`、global/workspace/project 三种文件 scope、pi-web 完整 profile 字段（display_name、load_skills/extensions、codemode、mcp、max_turns、prompt_mode、color、isolation、persist_session、扩展工具选择等）、未知 frontmatter 保留、builtin 开关与 `agents/settings.json`、子会话/等待/并发/状态显示 |

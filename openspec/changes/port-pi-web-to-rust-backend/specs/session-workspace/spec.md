@@ -73,7 +73,7 @@ cwd、标题、首条消息、时间、消息数、父会话、projectRoot、pro
 - **THEN** 服务端对每个存在的会话返回统计；不存在的 id 以缺失项报告而不是使整个请求失败
 
 ### Requirement: 侧边栏 UI 状态持久化
-服务端 SHALL 在 agent 目录的 `pi-web-session-state.json` 中保存 pin、archive、项目顺序和项目名，
+服务端 SHALL 在 agent 目录的 `pi-star-session-state.json` 中保存 pin、archive、项目顺序和项目名，
 写入 MUST 串行化、加锁、原子替换，并在文件损坏时备份而不是覆盖。
 
 #### Scenario: 并发写入

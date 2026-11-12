@@ -359,7 +359,7 @@ fn resolve_default_tools(entries: &[String]) -> Vec<String> {
 }
 
 /// The tool loadout a session starts with when it has no persisted
-/// `pi-web:tool-selection`: settings.json `defaultTools`, merged across the
+/// `pi-star:tool-selection`: settings.json `defaultTools`, merged across the
 /// project and global layers, with pi's own read/bash/edit/write fallback.
 pub fn default_tool_names(config: &Config, cwd: &Path) -> Vec<String> {
     let global = settings::read_settings(config);
@@ -382,7 +382,7 @@ pub fn default_tool_names(config: &Config, cwd: &Path) -> Vec<String> {
 }
 
 /// Render the QuickPI system prompt for a session. `active_tools` is the
-/// loadout after `pi-web:tool-selection` and `set_tools` are applied.
+/// loadout after `pi-star:tool-selection` and `set_tools` are applied.
 pub fn build_system_prompt(config: &Config, cwd: &Path, active_tools: &[String]) -> String {
     let custom_prompt = discover_system_prompt(config, cwd)
         .map(|prompt| prompt.trim().to_string())

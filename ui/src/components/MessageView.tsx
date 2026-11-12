@@ -1156,7 +1156,7 @@ export function ThinkingBlock({ block, duration, sessionId, entryId, blockIndex 
 function isSubagentToolDetails(value: unknown): value is SubagentToolDetails {
   if (!value || typeof value !== "object") return false;
   const details = value as Partial<SubagentToolDetails>;
-  return details.kind === "pi-web-subagent" && typeof details.sessionId === "string";
+  return details.kind === "pi-star-subagent" && typeof details.sessionId === "string";
 }
 
 /** A duration pi recorded on a message, or undefined when there is none to trust. */

@@ -66,7 +66,7 @@ pi-star、哪些需要 Rust 后端配套、哪些不适用。
    去掉 `sourceEntryId` 与「Ask in new chat」。注意「Ask in side chat」依赖侧聊，若暂不做侧聊，
    只搬 Quote 部分即可。
 4. **Git changes 列表/树**：`FileExplorer.tsx` 的 `ChangesTreeRows`/`ChangesFolderRow` 与
-   切换按钮；`lib/sidebar-prefs.ts` 增加 `pi-web:sidebar-changes-view-mode`（localStorage）。
+   切换按钮；`lib/sidebar-prefs.ts` 增加 `pi-star:sidebar-changes-view-mode`（localStorage）。
    树的构建复用 `lib/search-tree.ts`；行高改用 `--file-row-height`。
 5. **散文默认换行**：`lib/file-viewer-state.ts` 增加 `wrapsByDefault()` /
    `resolveInitialWrapLines()`，`wrapLines` 变为可选（`undefined` 表示用户没选过）；
@@ -161,7 +161,7 @@ JS API。
 - `98ad390` #1473（**暂缓**）：上游在「子会话自己的一轮对话结束」时读文件、按最后一条
   assistant 的 stop reason 写 `completed/aborted/failed`，用于修复重启切断后 run 永远停在
   `running/queued`。pi-star 目前 RPC 子代理由 `agent-extension/subagent.js` 直接 spawn，
-  既不写 `pi-web:subagent` 元数据也不写 `pi-web:subagent-status`（QuickPI 只在元数据里写
+  既不写 `pi-star:subagent` 元数据也不写 `pi-star:subagent-status`（QuickPI 只在元数据里写
   `running`），而且 pi-star 的子代理面板仍是只读的 `SubagentViewer`，用户无法「在子会话里
   发一轮」——该场景不存在。等子代理运行期生命周期补齐或有可交互面板时再做。
 - `lib/subagent-extension.ts` 在 0.15 改为从 `typebox` 取 `Type`（pi 1.5），pi-star 该文件
@@ -316,9 +316,8 @@ f6c8699 feat(models) provider 名称    8d2fb36 fix(chat) 粘贴
   的 `providerNames` 与显示名、enabled-models 的 `stalePatterns`/`thinkingPin`/`kind` 与
   `prune`、运行中切模型（客户端 + 现有 Rust 透传）、Windows 终端 PowerShell 优先、
   子代理候选列表、通知 `shownAt` 去重、manifest 的 `application/manifest+json`。
-- **侧聊只识别/隐藏**：识别 `pi-web:side` 关系，把 pi-web 创建的 `Side chat` 折叠进父会话
-  family（侧栏不显示，Agents 面板/徽标只统计子代理），统计只算侧聊自身条目、搜索跳过、
-  随父会话删除；`/side`、`SessionChatPanel`、侧聊标签等创建/交互 UI 未移植。
+- **侧聊不识别**：pi-star 不创建也不识别 `pi-web:side`，pi-web 创建的 `Side chat` 会按普通 fork 处理；
+  `/side`、`SessionChatPanel`、侧聊标签等创建/交互 UI 未移植。
 - **暂缓**：`98ad390` 子代理 run 收敛（pi-star 没有可交互的子会话，见 B.4）、`c319c85`
   工具顺序（客户端路径，收益是 prompt cache，见 B.5）。
 - **未动**：pi 1.5.0 升级（`packaging/pi-runtime.json` 仍是 1.4.0）。本次移植不依赖它：

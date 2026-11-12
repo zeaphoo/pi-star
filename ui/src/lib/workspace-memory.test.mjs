@@ -58,28 +58,28 @@ test("clearing the last entry removes the storage key entirely", () => {
   setLastOpenSession("root-a", "session-a", storage);
   clearLastOpen("root-a", storage);
   assert.equal(getLastOpenSession("root-a", storage), null);
-  assert.equal(storage.values.has("pi-web:last-open-by-workspace"), false);
+  assert.equal(storage.values.has("pi-star:last-open-by-workspace"), false);
 });
 
 test("ignores a corrupt stored map", () => {
-  const storage = createStorage({ "pi-web:last-open-by-workspace": "{not-json" });
+  const storage = createStorage({ "pi-star:last-open-by-workspace": "{not-json" });
   assert.equal(getLastOpenSession("root-a", storage), null);
 });
 
 test("ignores a stored map of the wrong shape", () => {
-  const storage = createStorage({ "pi-web:last-open-by-workspace": `"just a string"` });
+  const storage = createStorage({ "pi-star:last-open-by-workspace": `"just a string"` });
   assert.equal(getLastOpenSession("root-a", storage), null);
 });
 
 test("recovers from an array-shaped stored map", () => {
-  const storage = createStorage({ "pi-web:last-open-by-workspace": "[]" });
+  const storage = createStorage({ "pi-star:last-open-by-workspace": "[]" });
   setLastOpenSession("root-a", "session-a", storage);
   assert.equal(getLastOpenSession("root-a", storage), "session-a");
 });
 
 test("ignores an empty or non-string session id", () => {
   const storage = createStorage({
-    "pi-web:last-open-by-workspace": `{"root-a": "", "root-b": 42, "root-c": "ok"}`,
+    "pi-star:last-open-by-workspace": `{"root-a": "", "root-b": 42, "root-c": "ok"}`,
   });
   assert.equal(getLastOpenSession("root-a", storage), null);
   assert.equal(getLastOpenSession("root-b", storage), null);

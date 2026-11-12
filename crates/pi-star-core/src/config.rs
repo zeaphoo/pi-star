@@ -30,9 +30,9 @@ impl Config {
         })
     }
 
-    /// `pi-web-session-state.json` beside pi's own files.
+    /// `pi-star-session-state.json` beside pi's own files.
     pub fn ui_state_path(&self) -> PathBuf {
-        self.agent_dir.join("pi-web-session-state.json")
+        self.agent_dir.join("pi-star-session-state.json")
     }
 
     pub fn settings_path(&self) -> PathBuf {

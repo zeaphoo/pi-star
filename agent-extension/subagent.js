@@ -149,7 +149,7 @@ function profilePrompt(profile) {
 }
 function details(run) {
     return {
-        kind: "pi-web-subagent",
+        kind: "pi-star-subagent",
         sessionId: run.id,
         profile: run.profile,
         description: run.description,
@@ -223,7 +223,7 @@ function startChild(pi, params, runInBackground) {
         run.waiters.push(() => {
             try {
                 pi.sendMessage?.({
-                    customType: "pi-web:subagent-notification",
+                    customType: "pi-star:subagent-notification",
                     content: finalText(run),
                     display: true,
                     details: details(run),
@@ -270,7 +270,7 @@ function withSubagentCandidates(text, sessionManager) {
         if (entry?.type !== "message" || entry.message?.role !== "toolResult")
             continue;
         const details = entry.message.details;
-        if (details?.kind !== "pi-web-subagent" || typeof details.sessionId !== "string" || candidates.has(details.sessionId))
+        if (details?.kind !== "pi-star-subagent" || typeof details.sessionId !== "string" || candidates.has(details.sessionId))
             continue;
         candidates.set(details.sessionId, typeof details.description === "string" ? details.description : "");
     }

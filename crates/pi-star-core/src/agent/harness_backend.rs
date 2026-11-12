@@ -657,7 +657,7 @@ impl HarnessBackend {
                     json!({"version": 1, "cleared": true})
                 };
                 self.harness
-                    .append_custom_entry("pi-web:tool-selection", Some(selection))
+                    .append_custom_entry("pi-star:tool-selection", Some(selection))
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
                 let prompt = super::build_system_prompt(&self.config, &self.cwd, &names);
@@ -966,7 +966,7 @@ fn stored_tool_selection(path: &Path) -> Option<Vec<String>> {
     let session = read_session(path).ok()?;
     for entry in session.entries.iter().rev() {
         if entry.get("type").and_then(Value::as_str) != Some("custom")
-            || entry.get("customType").and_then(Value::as_str) != Some("pi-web:tool-selection")
+            || entry.get("customType").and_then(Value::as_str) != Some("pi-star:tool-selection")
         {
             continue;
         }
@@ -1236,7 +1236,7 @@ impl AgentTool for SubagentTool {
             [
                 (
                     "customType".to_string(),
-                    Value::String("pi-web:subagent".into()),
+                    Value::String("pi-star:subagent".into()),
                 ),
                 (
                     "data".to_string(),

@@ -377,7 +377,7 @@ test("renders subagents as standard tool calls with only an extra side-panel but
     toolCallId: block.toolCallId,
     content: [{ type: "text", text: "Parser is in lib/parser.ts" }],
     details: {
-      kind: "pi-web-subagent",
+      kind: "pi-star-subagent",
       sessionId: "child-session",
       profile: "Explore",
       description: "Find parser",

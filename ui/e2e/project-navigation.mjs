@@ -105,7 +105,7 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
       const expectComposer = async (tab, cwd) => {
         await tab.locator(".new-session-hero").waitFor({ state: "visible" });
         await tab.waitForFunction((expected) => {
-          const open = JSON.parse(sessionStorage.getItem("pi-web:tab-open-session") || "null");
+          const open = JSON.parse(sessionStorage.getItem("pi-star:tab-open-session") || "null");
           return open?.kind === "new" && open.cwd === expected;
         }, cwd);
         const url = new URL(tab.url());
@@ -119,7 +119,7 @@ export async function checkProjectNavigation({ browser, base, artifacts, fixture
         // Remember another project's session, then this project's. Neither
         // memory may override the new tab's explicit cwd (including reload).
         await page.goto(`${base}/?session=${otherSessionId}`, { waitUntil: "domcontentloaded" });
-        await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("pi-web:tab-open-session") || "null")?.sessionId === id, otherSessionId);
+        await page.waitForFunction((id) => JSON.parse(sessionStorage.getItem("pi-star:tab-open-session") || "null")?.sessionId === id, otherSessionId);
         await page.goto(`${base}/?session=${fixture.id}`, { waitUntil: "domcontentloaded" });
         await page.getByText("E2E linked-worktree answer", { exact: true }).waitFor();
         await input.fill("Keep this source-tab draft");

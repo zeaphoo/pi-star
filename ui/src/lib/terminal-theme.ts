@@ -5,7 +5,7 @@ export type TerminalTheme = "dark" | "light";
 /** `auto` follows the app theme; the other values override it. */
 export type TerminalThemePreference = TerminalTheme | "auto";
 
-export const TERMINAL_THEME_STORAGE_KEY = "pi-web:terminal-theme";
+export const TERMINAL_THEME_STORAGE_KEY = "pi-star:terminal-theme";
 export const TERMINAL_THEME_DEFAULT: TerminalThemePreference = "dark";
 
 export function parseTerminalThemePreference(raw: string | null): TerminalThemePreference {

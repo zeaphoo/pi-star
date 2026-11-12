@@ -17,7 +17,7 @@ import type {
 // how the debug panel tells this page's streams from another's. On the window, not in a module:
 // a Fast Refresh re-evaluates the module while the open stream keeps the id it was opened with,
 // and a new id would make the page's own stream look like another page's.
-const PAGE_ID_KEY = Symbol.for("pi-web:page-id");
+const PAGE_ID_KEY = Symbol.for("pi-star:page-id");
 
 export function pageId(): string {
   const store = globalThis as Record<PropertyKey, unknown>;

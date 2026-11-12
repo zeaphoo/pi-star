@@ -519,7 +519,7 @@ fn entry_to_v3(entry: &Entry) -> Result<Value, String> {
             obj.insert("type".into(), Value::String("custom".into()));
             obj.insert(
                 "customType".into(),
-                Value::String("pi-web:tool-selection".into()),
+                Value::String("pi-star:tool-selection".into()),
             );
             // The harness uses a marker for "no tools" because it treats an
             // empty active list as "all tools". Never write that marker into
@@ -675,7 +675,7 @@ pub(crate) fn v3_to_entry(value: &Value, seq: u64) -> SessionResult<Entry> {
         }
     } else if ty == "custom" {
         let custom_type = obj.get("customType").and_then(Value::as_str).unwrap_or("");
-        if custom_type == "pi-web:tool-selection" {
+        if custom_type == "pi-star:tool-selection" {
             if let Some(tools) = obj.get("data").and_then(|data| data.get("tools")).cloned() {
                 let tools = tools
                     .as_array()
@@ -904,7 +904,7 @@ mod tests {
         });
         let wire = entry_to_v3(&entry).unwrap();
         assert_eq!(wire["type"], "custom");
-        assert_eq!(wire["customType"], "pi-web:tool-selection");
+        assert_eq!(wire["customType"], "pi-star:tool-selection");
         let back = v3_to_entry(&wire, 2).unwrap();
         assert!(matches!(back, Entry::ActiveTools(_)));
     }
@@ -950,7 +950,7 @@ mod tests {
                 "id": "tools",
                 "parentId": "sys",
                 "timestamp": iso(1000),
-                "customType": "pi-web:tool-selection",
+                "customType": "pi-star:tool-selection",
                 "data": {"version": 1, "tools": ["read", "bash"]},
             }),
             json!({

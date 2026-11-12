@@ -75,7 +75,7 @@ export function isMessageGroupAnchor(message: { role?: AgentMessage["role"]; cus
   return message.role === "user"
     || (message.role === "custom" && !isHiddenCustomMessage(message) && (
       message.customType === "compaction"
-      || message.customType === "pi-web:subagent-notification"
+      || message.customType === "pi-star:subagent-notification"
       || message.customType === "subagent-notification"
     ));
 }

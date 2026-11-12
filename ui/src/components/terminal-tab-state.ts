@@ -5,7 +5,7 @@ export interface TerminalTab {
   closing?: "close" | "restart";
 }
 
-export const TERMINAL_TABS_KEY = "pi-web:terminal-tabs";
+export const TERMINAL_TABS_KEY = "pi-star:terminal-tabs";
 
 export function newTerminalTab(cwd: string): TerminalTab {
   const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), (byte) => byte.toString(16).padStart(2, "0")).join("");

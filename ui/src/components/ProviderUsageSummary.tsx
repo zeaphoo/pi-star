@@ -23,7 +23,7 @@ type UsageMetric = { id: string; label: string; value: number | string; unit?: s
 type UsageReport = { capturedAt: number; buckets: UsageBucket[]; metrics: UsageMetric[]; notes?: string[] };
 type UsageResponse = { providerId: string; status: "ready" | "auth-unavailable" | "query-failed"; report?: UsageReport; message?: string };
 
-const STORAGE_PREFIX = "pi-web:provider-usage:";
+const STORAGE_PREFIX = "pi-star:provider-usage:";
 
 export function ProviderUsageSummary({ providerId, enabled }: { providerId: string; enabled: boolean }) {
   if (!isProviderUsageId(providerId)) return null;

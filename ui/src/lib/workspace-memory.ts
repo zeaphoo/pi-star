@@ -12,7 +12,7 @@
  * Stored in localStorage; best-effort (silently ignored when unavailable).
  */
 
-const STORAGE_KEY = "pi-web:last-open-by-workspace";
+const STORAGE_KEY = "pi-star:last-open-by-workspace";
 
 interface StorageLike {
   getItem(key: string): string | null;

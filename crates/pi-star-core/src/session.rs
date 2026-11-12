@@ -73,8 +73,6 @@ pub enum SessionRelation {
         description: String,
         status: String,
     },
-    /// A side chat forked by pi-web's `/side`: hidden in its parent's family.
-    Side { parent_session_id: String },
 }
 
 #[derive(Debug, Clone)]
@@ -151,7 +149,7 @@ impl SessionFile {
             .find(|entry| {
                 entry_type(entry) == Some("custom")
                     && entry.get("customType").and_then(Value::as_str)
-                        == Some("pi-web:subagent-status")
+                        == Some("pi-star:subagent-status")
             })
             .and_then(|entry| entry.pointer("/data/status"))
             .and_then(Value::as_str)
@@ -162,7 +160,7 @@ impl SessionFile {
             .find(|entry| entry_type(entry) == Some("custom"))
             .and_then(|entry| {
                 let custom_type = entry.get("customType").and_then(Value::as_str)?;
-                if custom_type != "pi-web:subagent" {
+                if custom_type != "pi-star:subagent" {
                     return None;
                 }
                 let data = entry.get("data")?;
@@ -192,22 +190,7 @@ impl SessionFile {
                         .unwrap_or_else(|| "completed".to_string()),
                 })
             });
-        let side = self
-            .entries
-            .iter()
-            .find(|entry| {
-                entry_type(entry) == Some("custom")
-                    && entry.get("customType").and_then(Value::as_str) == Some("pi-web:side")
-            })
-            .map(|entry| SessionRelation::Side {
-                parent_session_id: entry
-                    .pointer("/data/parentSessionId")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-                    .or_else(|| parent_session_id.clone())
-                    .unwrap_or_default(),
-            });
-        let relation = subagent.or(side).or_else(|| {
+        let relation = subagent.or_else(|| {
             self.header
                 .parent_session
                 .as_ref()
@@ -1022,7 +1005,7 @@ fn count_turns_before(entries: &[Value], oldest_parent: &str) -> usize {
                     && matches!(
                         custom_type,
                         Some(
-                            "compaction" | "pi-web:subagent-notification" | "subagent-notification"
+                            "compaction" | "pi-star:subagent-notification" | "subagent-notification"
                         )
                     )
             }
@@ -1078,32 +1061,6 @@ pub fn session_settings(
         })
         .or(response_model);
     (thinking.unwrap_or_else(|| "off".to_string()), model)
-}
-
-/// A side chat's own entries: everything it added after `createdAt`, so usage
-/// inherited from its parent is not counted twice.
-pub fn side_own_entries(entries: &[Value]) -> Vec<Value> {
-    let created = entries
-        .iter()
-        .find(|entry| {
-            entry_type(entry) == Some("custom")
-                && entry.get("customType").and_then(Value::as_str) == Some("pi-web:side")
-        })
-        .and_then(|entry| entry.pointer("/data/createdAt"))
-        .and_then(Value::as_str);
-    match created {
-        Some(created) => entries
-            .iter()
-            .filter(|entry| {
-                entry
-                    .get("timestamp")
-                    .and_then(Value::as_str)
-                    .is_none_or(|timestamp| timestamp > created)
-            })
-            .cloned()
-            .collect(),
-        None => entries.to_vec(),
-    }
 }
 
 pub fn compute_stats(entries: &[Value]) -> SessionStats {
@@ -1246,52 +1203,6 @@ mod tests {
 
     fn encode_for_test(cwd: &str) -> String {
         crate::config::encode_cwd(Path::new(cwd))
-    }
-
-    #[test]
-    fn a_side_chat_relation_and_own_entries() {
-        let dir = tempfile::tempdir().unwrap();
-        let parent = dir.path().join("parent.jsonl");
-        std::fs::write(&parent, "").unwrap();
-        let path = dir.path().join("side.jsonl");
-        let header = json!({
-            "type": "session", "version": 3, "id": "side-1",
-            "timestamp": "2026-01-01T00:00:00.000Z", "cwd": dir.path(),
-            "parentSession": parent.to_string_lossy(),
-        });
-        let side = json!({
-            "type": "custom", "customType": "pi-web:side",
-            "data": { "version": 1, "parentSessionId": "parent-1", "createdAt": "2026-01-01T00:00:00.000Z" },
-            "id": "side-meta", "parentId": null, "timestamp": "2026-01-01T00:00:00.000Z",
-        });
-        let inherited = json!({
-            "type": "message", "id": "old", "parentId": null,
-            "timestamp": "2025-12-31T00:00:00.000Z",
-            "message": { "role": "user", "content": "inherited" },
-        });
-        let own = json!({
-            "type": "message", "id": "new", "parentId": "old",
-            "timestamp": "2026-01-01T00:00:01.000Z",
-            "message": { "role": "user", "content": "mine" },
-        });
-        std::fs::write(
-            &path,
-            [header, side, inherited, own]
-                .iter()
-                .map(|entry| entry.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-                + "\n",
-        )
-        .unwrap();
-        let session = read_session(&path).unwrap();
-        assert!(matches!(
-            session.info().relation,
-            Some(SessionRelation::Side { ref parent_session_id }) if parent_session_id == "parent-1"
-        ));
-        let own = side_own_entries(&session.entries);
-        assert_eq!(own.len(), 1);
-        assert_eq!(own[0].get("id").and_then(Value::as_str), Some("new"));
     }
 
     #[test]

@@ -242,7 +242,7 @@ test("treats a background subagent completion as a turn anchor", async () => {
 
   assert.equal(isMessageGroupAnchor({
     role: "custom",
-    customType: "pi-web:subagent-notification",
+    customType: "pi-star:subagent-notification",
     content: "Subagent child completed.\n\nParser found",
     display: true,
   }), true);
@@ -282,7 +282,7 @@ test("hides custom messages without display, as pi's TUI does", async () => {
   assert.equal(isHiddenCustomMessage({ role: "user", content: "prompt" }), false);
   assert.equal(isHiddenCustomMessage(assistant([])), false);
   // Nothing renders for it, so it cannot start a turn either.
-  assert.equal(isMessageGroupAnchor(custom("pi-web:subagent-notification", false)), false);
+  assert.equal(isMessageGroupAnchor(custom("pi-star:subagent-notification", false)), false);
   assert.equal(isMessageGroupAnchor(custom("compaction", false)), false);
 });
 

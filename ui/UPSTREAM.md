@@ -28,10 +28,9 @@ These are intentional and must be re-applied after a re-sync:
   upstream's "Pi Web" and `NEXT_PUBLIC_*` reads.
 - The sidebar brand is pi-star's own (`PiWebTitle` without the version popover,
   `sidebar-brand-logo` in `app/sidebar.css`), not upstream's click-for-versions brand.
-- pi-web side chats are recognized (`SessionInfo.relation.kind === "side"`) and folded into
-  their parent's family but are not shown anywhere (no `/side`, no side-chat panel); the
-  Agents panel and badge list only subagents. pi-star never creates side chats, only hides
-  the ones pi-web wrote.
+- pi-star does not create or recognize side chats: upstream's `pi-web:side` relation is ignored, so
+  sessions pi-web created as side chats show up as ordinary forks. The Agents panel and badge list
+  only subagents.
 - `ChatWindow` places `ChatMinimap` over the whole chat column (absolute, top to bottom)
   with a 36px spacer in the message row, and passes `rightInset` to `ExtensionStatusBar`,
   so the rail reaches the page bottom; upstream ends it where the composer starts.

@@ -1,4 +1,4 @@
-export const SESSION_ROW_CONTEXT_MENU_EVENT = "pi-web:session-row-contextmenu";
+export const SESSION_ROW_CONTEXT_MENU_EVENT = "pi-star:session-row-contextmenu";
 
 export interface SessionRowContextMenuDetail {
   id: string;
@@ -12,7 +12,7 @@ export interface SessionRowContextMenuDetail {
 
 declare global {
   interface WindowEventMap {
-    "pi-web:session-row-contextmenu": CustomEvent<SessionRowContextMenuDetail>;
+    "pi-star:session-row-contextmenu": CustomEvent<SessionRowContextMenuDetail>;
   }
 }
 

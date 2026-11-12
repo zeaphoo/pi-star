@@ -5,7 +5,7 @@
  * localStorage: privacy mode or quota errors fall back to unlocked.
  */
 
-const STORAGE_KEY = "pi-web:minimap-preview-locked";
+const STORAGE_KEY = "pi-star:minimap-preview-locked";
 
 interface StorageLike {
   getItem(key: string): string | null;

@@ -66,7 +66,7 @@ ui/                pi-web UI 的 Vite 适配版
 
 - 会话：读取 `~/.pi/agent/sessions/<encoded-cwd>/*.jsonl`，每行一个 JSON 条目；写入追加并 fsync，
   重命名写 `session_info`，删除按父/子关系递归处理。
-- 侧边栏状态：`pi-web-session-state.json`，进程内串行队列 + 文件锁 + 临时文件 rename。
+- 侧边栏状态：`pi-star-session-state.json`，进程内串行队列 + 文件锁 + 临时文件 rename。
 - settings/models/MCP：加锁读-改-写，保留未知字段；损坏文件先备份再重建。
 - 会话列表：基于 `(size, mtime, inode)` 的增量索引，进程重启后可重建。
 

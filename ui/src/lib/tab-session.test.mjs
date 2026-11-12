@@ -40,7 +40,7 @@ test("set then get round-trips the remembered session", () => {
   setTabOpenSession("session-1", storage);
   assert.deepEqual(getTabOpen(storage), { kind: "session", sessionId: "session-1" });
   assert.equal(
-    storage.values.get("pi-web:tab-open-session"),
+    storage.values.get("pi-star:tab-open-session"),
     JSON.stringify({ kind: "session", sessionId: "session-1" }),
   );
 });
@@ -60,12 +60,12 @@ test("remembers a new-session composer for this tab", () => {
 });
 
 test("reads a legacy bare session id", () => {
-  const storage = createStorage({ "pi-web:tab-open-session": "legacy-session" });
+  const storage = createStorage({ "pi-star:tab-open-session": "legacy-session" });
   assert.deepEqual(getTabOpen(storage), { kind: "session", sessionId: "legacy-session" });
 });
 
 test("ignores an empty stored value", () => {
-  const storage = createStorage({ "pi-web:tab-open-session": "" });
+  const storage = createStorage({ "pi-star:tab-open-session": "" });
   assert.equal(getTabOpen(storage), null);
 });
 
@@ -88,7 +88,7 @@ test("clears the remembered session only when the id matches", () => {
   assert.deepEqual(getTabOpen(storage), { kind: "session", sessionId: "session-1" });
   clearTabOpenSession("session-1", storage);
   assert.equal(getTabOpen(storage), null);
-  assert.equal(storage.values.has("pi-web:tab-open-session"), false);
+  assert.equal(storage.values.has("pi-star:tab-open-session"), false);
 });
 
 test("does not clear a remembered new-session composer", () => {

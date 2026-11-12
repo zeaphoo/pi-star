@@ -1,10 +1,10 @@
 import type { SessionInfo } from "./types";
 
 /** Relation kinds that hide a session as a family member instead of a sidebar row. */
-export type HiddenRelation = Extract<SessionInfo["relation"], { kind: "subagent" | "side" }>;
+export type HiddenRelation = Extract<SessionInfo["relation"], { kind: "subagent" }>;
 
 export function isHiddenRelation(relation: SessionInfo["relation"]): relation is HiddenRelation {
-  return relation?.kind === "subagent" || relation?.kind === "side";
+  return relation?.kind === "subagent";
 }
 
 export interface SessionFamily {
@@ -63,8 +63,8 @@ export function listSessionFamilies(sessions: readonly SessionInfo[]): SessionFa
     });
   }
 
-  // Side chats fold into the parent's root but are not listed as family members:
-  // pi-star does not have side-chat UI, so they stay invisible.
+  // Subagents fold into the parent's root but are not listed as family members:
+  // they stay invisible as sidebar rows.
   for (const session of sessions) {
     if (session.relation?.kind !== "subagent") continue;
     const rootId = rootsBySessionId.get(session.id);

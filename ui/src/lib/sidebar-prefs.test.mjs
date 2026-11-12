@@ -58,17 +58,17 @@ test("defaults to the sessions tab, open pins, no explicit group choices, an ope
 test("saves and restores the sidebar tab", () => {
   const storage = createStorage();
   saveSidebarTab("files", storage);
-  assert.equal(storage.values.get("pi-web:sidebar-tab"), "files");
+  assert.equal(storage.values.get("pi-star:sidebar-tab"), "files");
   assert.equal(loadSidebarTab(storage), "files");
   saveSidebarTab("sessions", storage);
   assert.equal(loadSidebarTab(storage), "sessions");
-  assert.equal(loadSidebarTab(createStorage({ "pi-web:sidebar-tab": "bogus" })), "sessions");
+  assert.equal(loadSidebarTab(createStorage({ "pi-star:sidebar-tab": "bogus" })), "sessions");
 });
 
 test("saves and restores the pinned section state", () => {
   const storage = createStorage();
   savePinnedCollapsed(true, storage);
-  assert.equal(storage.values.get("pi-web:sidebar-pins-collapsed"), "true");
+  assert.equal(storage.values.get("pi-star:sidebar-pins-collapsed"), "true");
   assert.equal(loadPinnedCollapsed(storage), true);
   savePinnedCollapsed(false, storage);
   assert.equal(loadPinnedCollapsed(storage), false);
@@ -78,7 +78,7 @@ test("the archive's folded projects round-trip apart from the group choices, new
   const storage = createStorage();
   assert.deepEqual(loadArchiveCollapsed(storage), []);
   saveArchiveCollapsed(["/work/a", "/work/b", "/work/a"], storage);
-  assert.equal(storage.values.get("pi-web:sidebar-archive-collapsed"), '["/work/a","/work/b"]');
+  assert.equal(storage.values.get("pi-star:sidebar-archive-collapsed"), '["/work/a","/work/b"]');
   assert.deepEqual(loadArchiveCollapsed(storage), ["/work/a", "/work/b"]);
   assert.deepEqual(loadGroupExpansion(storage), {});
 
@@ -87,7 +87,7 @@ test("the archive's folded projects round-trip apart from the group choices, new
   assert.deepEqual(loadArchiveCollapsed(storage), many.slice(5));
 
   for (const raw of ["{", "{}", '"x"', "[1, null, \"\", \"/ok\"]"]) {
-    const loaded = loadArchiveCollapsed(createStorage({ "pi-web:sidebar-archive-collapsed": raw }));
+    const loaded = loadArchiveCollapsed(createStorage({ "pi-star:sidebar-archive-collapsed": raw }));
     assert.deepEqual(loaded, raw.includes("/ok") ? ["/ok"] : []);
   }
   assert.deepEqual(loadArchiveCollapsed(unavailable), []);
@@ -96,13 +96,13 @@ test("the archive's folded projects round-trip apart from the group choices, new
 });
 
 test("saves and restores the files section's collapse, apart from the tab", () => {
-  const storage = createStorage({ "pi-web:sidebar-tab": "files" });
+  const storage = createStorage({ "pi-star:sidebar-tab": "files" });
   saveFilesCollapsed(true, storage);
-  assert.equal(storage.values.get("pi-web:sidebar-files-collapsed"), "true");
+  assert.equal(storage.values.get("pi-star:sidebar-files-collapsed"), "true");
   assert.equal(loadFilesCollapsed(storage), true);
   saveFilesCollapsed(false, storage);
   assert.equal(loadFilesCollapsed(storage), false);
-  assert.equal(loadFilesCollapsed(createStorage({ "pi-web:sidebar-files-collapsed": "yes" })), false);
+  assert.equal(loadFilesCollapsed(createStorage({ "pi-star:sidebar-files-collapsed": "yes" })), false);
   // The tabs keep their own choice: folding the section never picks a tab.
   assert.equal(loadSidebarTab(storage), "files");
 });
@@ -110,7 +110,7 @@ test("saves and restores the files section's collapse, apart from the tab", () =
 test("saves and restores the ignored-files switch", () => {
   const storage = createStorage();
   saveShowIgnoredFiles(true, storage);
-  assert.equal(storage.values.get("pi-web:sidebar-files-show-ignored"), "true");
+  assert.equal(storage.values.get("pi-star:sidebar-files-show-ignored"), "true");
   assert.equal(loadShowIgnoredFiles(storage), true);
   saveShowIgnoredFiles(false, storage);
   assert.equal(loadShowIgnoredFiles(storage), false);
@@ -120,11 +120,11 @@ test("saves and restores the changes panel view mode, defaulting to list", () =>
   const storage = createStorage();
   assert.equal(loadChangesViewMode(storage), "list");
   saveChangesViewMode("tree", storage);
-  assert.equal(storage.values.get("pi-web:sidebar-changes-view-mode"), "tree");
+  assert.equal(storage.values.get("pi-star:sidebar-changes-view-mode"), "tree");
   assert.equal(loadChangesViewMode(storage), "tree");
   saveChangesViewMode("list", storage);
   assert.equal(loadChangesViewMode(storage), "list");
-  assert.equal(loadChangesViewMode(createStorage({ "pi-web:sidebar-changes-view-mode": "bogus" })), "list");
+  assert.equal(loadChangesViewMode(createStorage({ "pi-star:sidebar-changes-view-mode": "bogus" })), "list");
   assert.equal(loadChangesViewMode(unavailable), "list");
   saveChangesViewMode("tree", unavailable);
   assert.equal(loadChangesViewMode(null), "list");
@@ -133,17 +133,17 @@ test("saves and restores the changes panel view mode, defaulting to list", () =>
 test("group choices round-trip and drop malformed entries", () => {
   const storage = createStorage();
   saveGroupExpansion({ "/work/a": true, "C:\\work\\b": false }, storage);
-  assert.deepEqual([...storage.values.keys()], ["pi-web:sidebar-groups-v2"]);
+  assert.deepEqual([...storage.values.keys()], ["pi-star:sidebar-groups-v2"]);
   assert.deepEqual(loadGroupExpansion(storage), { "/work/a": true, "C:\\work\\b": false });
 
-  const odd = createStorage({ "pi-web:sidebar-groups-v2": '{"/a":true,"/b":"yes","/c":1,"__proto__":true}' });
+  const odd = createStorage({ "pi-star:sidebar-groups-v2": '{"/a":true,"/b":"yes","/c":1,"__proto__":true}' });
   const loaded = loadGroupExpansion(odd);
   assert.deepEqual(loaded, { "/a": true });
   assert.equal(Object.getPrototypeOf(loaded), Object.prototype);
 
   for (const raw of ["not json", "[true]", "null", "7"]) {
     // A v2 that is there but unreadable is no reason to read the old key.
-    const malformed = createStorage({ "pi-web:sidebar-groups-v2": raw, "pi-web:sidebar-groups": '{"/old":false}' });
+    const malformed = createStorage({ "pi-star:sidebar-groups-v2": raw, "pi-star:sidebar-groups": '{"/old":false}' });
     assert.deepEqual(loadGroupExpansion(malformed), {}, raw);
   }
 });
@@ -152,22 +152,22 @@ test("the old group choices move to v2 once, collapses only", () => {
   // The old keep-open saved every group that stopped being current as open:
   // those cannot be told from the user's own, so only collapses move.
   const storage = createStorage({
-    "pi-web:sidebar-groups": '{"/visited":true,"/closed":false,"/also-visited":true,"C:\\\\closed":false,"/bad":"no"}',
+    "pi-star:sidebar-groups": '{"/visited":true,"/closed":false,"/also-visited":true,"C:\\\\closed":false,"/bad":"no"}',
   });
   assert.deepEqual(loadGroupExpansion(storage), { "/closed": false, "C:\\closed": false });
-  assert.equal(storage.values.get("pi-web:sidebar-groups-v2"), '{"/closed":false,"C:\\\\closed":false}');
+  assert.equal(storage.values.get("pi-star:sidebar-groups-v2"), '{"/closed":false,"C:\\\\closed":false}');
   // The old key goes with the retired ones, after the load; v2 is read from then on.
   forgetRetiredSidebarKeys(storage);
-  assert.equal(storage.values.has("pi-web:sidebar-groups"), false);
+  assert.equal(storage.values.has("pi-star:sidebar-groups"), false);
   assert.deepEqual(loadGroupExpansion(storage), { "/closed": false, "C:\\closed": false });
 
   // A later write keeps to v2 and never brings the old key back.
   saveGroupExpansion({ "/closed": false, "/opened": true }, storage);
   assert.deepEqual(loadGroupExpansion(storage), { "/closed": false, "/opened": true });
-  assert.deepEqual([...storage.values.keys()], ["pi-web:sidebar-groups-v2"]);
+  assert.deepEqual([...storage.values.keys()], ["pi-star:sidebar-groups-v2"]);
 
   // Once v2 exists the old key is never read, even if it was left behind.
-  const leftOver = createStorage({ "pi-web:sidebar-groups-v2": '{"/new":true}', "pi-web:sidebar-groups": '{"/old":false}' });
+  const leftOver = createStorage({ "pi-star:sidebar-groups-v2": '{"/new":true}', "pi-star:sidebar-groups": '{"/old":false}' });
   assert.deepEqual(loadGroupExpansion(leftOver), { "/new": true });
 
   // Nothing to move: no v2 is written for a browser that never had choices.
@@ -176,9 +176,9 @@ test("the old group choices move to v2 once, collapses only", () => {
   assert.deepEqual([...fresh.values.keys()], []);
   // An old key with expansions only or unreadable: an empty v2, so it is not looked at again.
   for (const raw of ['{"/visited":true}', "not json"]) {
-    const old = createStorage({ "pi-web:sidebar-groups": raw });
+    const old = createStorage({ "pi-star:sidebar-groups": raw });
     assert.deepEqual(loadGroupExpansion(old), {}, raw);
-    assert.equal(old.values.get("pi-web:sidebar-groups-v2"), "{}", raw);
+    assert.equal(old.values.get("pi-star:sidebar-groups-v2"), "{}", raw);
   }
 });
 
@@ -218,7 +218,7 @@ test("folders found outside git are kept newest last, leave once found in git, a
   assert.equal(writes, 0);
 
   // Another tab's folders stay: each write reads what is saved first.
-  storage.setItem("pi-web:sidebar-non-git-cwds", JSON.stringify(["/other-tab"]));
+  storage.setItem("pi-star:sidebar-non-git-cwds", JSON.stringify(["/other-tab"]));
   rememberCwdGitStatus("/mine", false, storage);
   assert.deepEqual(loadNonGitCwds(storage), ["/other-tab", "/mine"]);
 
@@ -229,9 +229,9 @@ test("folders found outside git are kept newest last, leave once found in git, a
   assert.equal(kept.at(-1), "/d/54");
 
   // Malformed saves read as none, or keep their strings only.
-  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-web:sidebar-non-git-cwds": "{" })), []);
-  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-web:sidebar-non-git-cwds": '{"/a":true}' })), []);
-  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-web:sidebar-non-git-cwds": '["/a",1,"",null,"/b"]' })), ["/a", "/b"]);
+  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-star:sidebar-non-git-cwds": "{" })), []);
+  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-star:sidebar-non-git-cwds": '{"/a":true}' })), []);
+  assert.deepEqual(loadNonGitCwds(createStorage({ "pi-star:sidebar-non-git-cwds": '["/a",1,"",null,"/b"]' })), ["/a", "/b"]);
   // An empty cwd is never kept.
   rememberCwdGitStatus("", false, storage);
   assert.equal(loadNonGitCwds(storage).includes(""), false);
@@ -239,14 +239,14 @@ test("folders found outside git are kept newest last, leave once found in git, a
 
 test("the keys of the old sessions/explorer split and the old group choices are dropped, and nothing else", () => {
   const storage = createStorage({
-    "pi-web:file-explorer:open": "false",
-    "pi-web:sidebar-session-pane-height": "320",
-    "pi-web:sidebar-groups": '{"/a":true}',
-    "pi-web:sidebar-tab": "files",
-    "pi-web:sidebar-groups-v2": '{"/b":false}',
+    "pi-star:file-explorer:open": "false",
+    "pi-star:sidebar-session-pane-height": "320",
+    "pi-star:sidebar-groups": '{"/a":true}',
+    "pi-star:sidebar-tab": "files",
+    "pi-star:sidebar-groups-v2": '{"/b":false}',
   });
   forgetRetiredSidebarKeys(storage);
-  assert.deepEqual([...storage.values.keys()], ["pi-web:sidebar-tab", "pi-web:sidebar-groups-v2"]);
+  assert.deepEqual([...storage.values.keys()], ["pi-star:sidebar-tab", "pi-star:sidebar-groups-v2"]);
   // A storage without removeItem, or one that refuses, is left as it is.
   assert.doesNotThrow(() => forgetRetiredSidebarKeys({ getItem: () => null, setItem() {} }));
   assert.doesNotThrow(() => forgetRetiredSidebarKeys(unavailable));

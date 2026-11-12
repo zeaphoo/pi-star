@@ -11,9 +11,9 @@ import { disabledBuiltInSubagents } from "./subagent-settings";
 import { PRESET_READ_ONLY } from "./tool-presets";
 import type { SessionEntry, SubagentSessionStatus } from "./types";
 
-export const SUBAGENT_META_TYPE = "pi-web:subagent";
-export const SUBAGENT_STATUS_TYPE = "pi-web:subagent-status";
-export const SUBAGENT_RESULT_TYPE = "pi-web:subagent-result";
+export const SUBAGENT_META_TYPE = "pi-star:subagent";
+export const SUBAGENT_STATUS_TYPE = "pi-star:subagent-status";
+export const SUBAGENT_RESULT_TYPE = "pi-star:subagent-result";
 export const SUBAGENT_CONTROL_TOOL_NAMES = ["Agent", "get_subagent_result", "steer_subagent"] as const;
 
 export type SubagentStatus = SubagentSessionStatus;

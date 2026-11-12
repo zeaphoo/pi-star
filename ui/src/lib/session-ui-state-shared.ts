@@ -2,7 +2,7 @@
 // are pinned or archived, which projects are pinned, the order of the project
 // groups and the names the user gave projects. It is pi-web's state,
 // never written into a session's `.jsonl`, so the pi CLI does not see it. The
-// server keeps it in `pi-web-session-state.json` in the agent dir
+// server keeps it in `pi-star-session-state.json` in the agent dir
 // (`lib/session-ui-state.ts`); this module holds the types and the pure rules
 // both sides apply, so the client can apply a change optimistically exactly as
 // the server will. Client-safe: no Node imports.

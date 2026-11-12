@@ -14,7 +14,7 @@ import {
 import { MAX_SUBAGENT_INPUT_BYTES, MAX_SUBAGENT_INPUT_FILES } from "./subagent-input";
 import { worktreeHasUncommittedFiles } from "./worktree";
 
-export const HOST_SUBAGENT_EXTENSION_NAME = "pi-web-subagents";
+export const HOST_SUBAGENT_EXTENSION_NAME = "pi-star-subagents";
 const HOST_SUBAGENT_EXTENSION_PATH = `<inline:${HOST_SUBAGENT_EXTENSION_NAME}>`;
 const SUBAGENT_TOOL_NAMES = new Set<string>(SUBAGENT_CONTROL_TOOL_NAMES);
 const LEGACY_SUBAGENT_PACKAGE_NAME = "pi-subagents";
@@ -94,7 +94,7 @@ function waitTimeoutText(run: SubagentRunInfo | undefined, sessionId: string, ti
 const SUBAGENT_TOOL_EXPOSURE = "model-only" satisfies ToolExposure;
 
 export interface SubagentToolDetails {
-  kind: "pi-web-subagent";
+  kind: "pi-star-subagent";
   sessionId: string;
   profile: string;
   description: string;
@@ -163,7 +163,7 @@ function agentTypeDescription(profiles: readonly SubagentProfile[]): string {
 
 export function subagentToolDetails(run: SubagentRunInfo): SubagentToolDetails {
   return {
-    kind: "pi-web-subagent",
+    kind: "pi-star-subagent",
     sessionId: run.sessionId,
     profile: run.profile,
     description: run.description,

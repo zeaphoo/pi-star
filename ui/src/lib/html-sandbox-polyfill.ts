@@ -1,5 +1,5 @@
 /** Runs inside an opaque-origin preview, before the document's own scripts. */
-export const SANDBOX_STORAGE_POLYFILL_SCRIPT = `<script data-pi-web-polyfill="storage">
+export const SANDBOX_STORAGE_POLYFILL_SCRIPT = `<script data-pi-star-polyfill="storage">
 (function() {
   function createMemoryStorage() {
     var store = Object.create(null);
@@ -60,7 +60,7 @@ export const SANDBOX_STORAGE_POLYFILL_SCRIPT = `<script data-pi-web-polyfill="st
 
   function polyfillStorage(type) {
     try {
-      window[type].getItem("__pi_web_storage_probe__");
+      window[type].getItem("__pi_star_storage_probe__");
     } catch (error) {
       if (error && error.name === "SecurityError") {
         Object.defineProperty(window, type, {
