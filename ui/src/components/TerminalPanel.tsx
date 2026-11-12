@@ -146,6 +146,19 @@ export function TerminalPanel({
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
+    // xterm measures its cell grid from the font it can see. A bundled webfont
+    // may still be arriving, and setting an option re-measures, so re-apply the
+    // family through a throwaway one once the file is in.
+    if (document.fonts && !document.fonts.check('16px "JetBrains Mono"')) {
+      void document.fonts.load('16px "JetBrains Mono"').then(() => {
+        if (disposed) return;
+        const font = readTerminalFont();
+        terminal.options.fontFamily = "monospace";
+        terminal.options.fontFamily = font.fontFamily;
+      }).catch(() => {
+        // The fallback stack stays; it is what xterm already measured.
+      });
+    }
     terminal.attachCustomKeyEventHandler((event) => {
       if (event.type !== "keydown") return true;
       const key = event.key.toLowerCase();

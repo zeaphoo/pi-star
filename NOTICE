@@ -20,5 +20,14 @@ pi-star-harness is a source copy of the corresponding rpi crates, renamed and
 modified for pi-star. It is maintained in this repository; see
 docs/upstream-rpi.md for the mapping and the local changes.
 
+JetBrains Mono
+Copyright 2020 The JetBrains Mono Project Authors
+(https://github.com/JetBrains/JetBrainsMono)
+License: SIL Open Font License 1.1 (ui/public/fonts/OFL.txt)
+Source: https://github.com/JetBrains/JetBrainsMono, v2.304
+
+The bundled WOFF2 is the upstream variable font (weights 100-800) in a WOFF2
+container, served from ui/public/fonts and used as the default monospace face.
+
 pi-star also reads files produced by the pi coding agent. pi itself is not
 bundled with pi-star.
