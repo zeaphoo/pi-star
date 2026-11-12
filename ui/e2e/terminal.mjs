@@ -71,7 +71,28 @@ try {
     // The terminal is a main view: switching to it starts the project's first shell.
     const openTerminal = () => page.getByRole("tab", { name: "Terminal", exact: true }).click();
     const openChat = () => page.getByRole("tab", { name: "Chat", exact: true }).click();
-    const ready = () => page.locator(".terminal-panel:visible .is-ready").waitFor();
+    const ready = () => page.locator('.terminal-panel:visible[data-status="ready"]').waitFor();
+    const openSettings = async () => {
+      const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
+      if (await showSidebar.count()) await showSidebar.first().click().catch(() => {});
+      await page.getByRole("button", { name: "Settings", exact: true }).click();
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+      await settings.waitFor();
+      // A phone opens General as a list of sections; the select lives in its
+      // Appearance detail.
+      const select = settings.locator("#settings-terminal-theme");
+      if (!(await select.isVisible())) {
+        const appearance = settings.getByRole("button", { name: "Appearance", exact: true }).first();
+        if (await appearance.count()) await appearance.click();
+        await select.waitFor();
+      }
+      return select;
+    };
+    const closeSettings = async () => {
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
+      await settings.getByRole("button", { name: "Close", exact: true }).click();
+      await settings.waitFor({ state: "detached" });
+    };
     const text = () => page.locator(".terminal-panel:visible .xterm-rows").innerText();
     const run = async (command) => {
       await page.locator(".terminal-panel:visible .xterm-helper-textarea").focus();
@@ -126,7 +147,8 @@ try {
       const replayed = ((await text()).match(/REFRESH:alive:\d+/g) ?? []).length;
       assert.equal(replayed, 1, "a reconnect must not replay delivered output");
 
-      // A restart ends that shell and starts a fresh one.
+      // A restart ends that shell and starts a fresh one. The action lives in
+      // the tab toolbar, beside split and close pane.
       await page.getByRole("button", { name: "Restart terminal", exact: true }).click();
       await page.waitForFunction((oldId) => {
         const all = JSON.parse(localStorage.getItem("pi-star:terminal-workspaces:v1") || "{}");
@@ -165,7 +187,7 @@ try {
       await page.getByText("Terminal session two message", { exact: true }).waitFor();
       await openTerminal();
       await ready();
-      assert.ok((await page.locator(".terminal-panel:visible .terminal-panel-path").innerText()).includes("sub"), "a reload keeps the restorable cwd");
+      assert.ok((await page.locator('.terminal-tabstrip [role="tab"][aria-selected="true"]').getAttribute("title")).includes("sub"), "a reload keeps the restorable cwd");
 
       // If the server forgot the PTY, the pane is recreated in that cwd instead
       // of showing "Terminal expired or closed".
@@ -211,13 +233,22 @@ try {
       await page.getByRole("dialog").getByRole("button", { name: "Close terminal tab", exact: true }).click();
       await page.waitForFunction(() => document.querySelectorAll(".terminal-tabstrip [role='tab']").length === 1);
 
-      // The terminal's own theme swaps xterm's palette in place.
-      const terminalBackground = () => page.locator(".terminal-panel:visible .xterm-viewport").evaluate((el) => getComputedStyle(el).backgroundColor);
-      await page.getByRole("button", { name: "Switch terminal to light theme", exact: true }).click();
-      await page.locator('.terminal-panel:visible[data-terminal-theme="light"]').waitFor();
-      assert.equal(await terminalBackground(), "rgb(251, 251, 252)");
-      await page.getByRole("button", { name: "Switch terminal to dark theme", exact: true }).click();
-      assert.equal(await terminalBackground(), "rgb(17, 19, 24)");
+      // The terminal theme is a global setting, not a per-pane button. The
+      // phone's Settings button is behind the mobile sidebar, already covered
+      // by the appearance suite; the desktop pass checks the terminal wiring.
+      if (viewport.width >= 640) {
+        const terminalBackground = () => page.locator(".terminal-panel:visible .xterm-viewport").evaluate((el) => getComputedStyle(el).backgroundColor);
+        const terminalTheme = await openSettings();
+        await terminalTheme.selectOption("light");
+        await closeSettings();
+        await page.locator('.terminal-panel:visible[data-terminal-theme="light"]').waitFor();
+        assert.equal(await terminalBackground(), "rgb(251, 251, 252)");
+        const terminalThemeAgain = await openSettings();
+        await terminalThemeAgain.selectOption("dark");
+        await closeSettings();
+        await page.locator('.terminal-panel:visible[data-terminal-theme="dark"]').waitFor();
+        assert.equal(await terminalBackground(), "rgb(17, 19, 24)");
+      }
 
       // Closing the last tab asks first, then ends its shell.
       await page.getByRole("button", { name: "Close terminal tab", exact: true }).click();

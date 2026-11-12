@@ -645,7 +645,7 @@ html.dark .web-login-error {
   --terminal-error-text: #fca5a5;
   --terminal-scrollbar: 156, 163, 175;
   display: grid;
-  grid-template-rows: 38px auto minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr) auto;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -671,77 +671,19 @@ html.dark .web-login-error {
   color-scheme: light;
 }
 
-.terminal-panel-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  min-width: 0;
-  padding: 0 10px 0 13px;
-  border-bottom: 1px solid var(--terminal-border);
-  background: var(--terminal-header-bg);
-  color: var(--terminal-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.terminal-panel-actions {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  gap: 6px;
-}
-
-.terminal-panel-path {
-  display: flex;
-  align-items: center;
-  min-width: 0;
-  gap: 8px;
-}
-
-.terminal-panel-path span:last-child {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.terminal-status-dot {
-  width: 7px;
-  height: 7px;
-  flex: 0 0 7px;
+/* The connection state belongs to the tab, next to its name, not to a bar
+   over the terminal: a ready shell is a quiet green dot, a connecting or dead
+   one is louder. */
+.terminal-tab-status {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 6px;
   border-radius: 50%;
   background: #facc15;
 }
-
-.terminal-status-dot.is-ready { background: #4ade80; }
-.terminal-status-dot.is-exited,
-.terminal-status-dot.is-error { background: #f87171; }
-
-.terminal-panel-header button {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 27px;
-  flex-shrink: 0;
-  padding: 0 8px;
-  border: 1px solid var(--terminal-button-border);
-  border-radius: 5px;
-  background: transparent;
-  color: var(--terminal-muted);
-  cursor: pointer;
-  font: inherit;
-}
-
-.terminal-panel-exit {
-  padding: 7px 12px;
-  color: var(--terminal-muted);
-  font-family: var(--font-mono);
-  font-size: 11px;
-}
-
-.terminal-panel-header button:hover {
-  background: var(--terminal-hover-bg);
-  color: var(--terminal-strong);
-}
+.terminal-tab-status.is-ready { background: #4ade80; }
+.terminal-tab-status.is-exited,
+.terminal-tab-status.is-error { background: #f87171; }
 
 .terminal-panel-error {
   padding: 7px 12px;
@@ -787,7 +729,7 @@ html.dark .web-login-error {
 }
 
 .terminal-xterm {
-  grid-row: -2 / -1;
+  grid-row: 2;
   min-width: 0;
   min-height: 0;
   padding: 10px 8px 22px 12px;
@@ -799,7 +741,7 @@ html.dark .web-login-error {
 }
 
 .terminal-extra-keys {
-  grid-row: 4;
+  grid-row: 3;
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));
   grid-auto-rows: 36px;

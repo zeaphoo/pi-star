@@ -26,7 +26,7 @@ import {
   type TerminalWorkspaceState,
   type TerminalWorkspaceTab,
 } from "@/lib/terminal-workspace";
-import { TerminalPanel } from "./TerminalPanel";
+import { TerminalPanel, type TerminalStatus } from "./TerminalPanel";
 
 interface Props {
   projectRoot: string | null;
@@ -215,21 +215,19 @@ function TerminalPane({
   pane,
   active,
   onActivate,
-  onClose,
-  onRestart,
   onExpired,
   onCwdChange,
   onStarted,
+  onStatusChange,
   fallbackCwd,
 }: {
   pane: TerminalPaneState;
   active: boolean;
   onActivate: () => void;
-  onClose: () => void;
-  onRestart: () => void;
   onExpired: () => void;
   onCwdChange: (cwd: string) => void;
   onStarted: () => void;
+  onStatusChange: (status: TerminalStatus) => void;
   fallbackCwd: string | null;
 }) {
   const tab = useMemo(() => ({
@@ -255,11 +253,10 @@ function TerminalPane({
         tab={tab}
         active={active}
         onActivate={onActivate}
-        onClose={onClose}
-        onRestart={onRestart}
         onExpired={onExpired}
         onCwdChange={onCwdChange}
         onStarted={onStarted}
+        onStatusChange={onStatusChange}
         fallbackCwd={fallbackCwd}
         onClosed={() => {}}
         onCloseError={() => {}}
@@ -274,11 +271,10 @@ function TerminalNodeView({
   tab,
   activePaneId,
   onActivatePane,
-  onClosePane,
-  onRestartPane,
   onExpiredPane,
   onCwdChangePane,
   onStartedPane,
+  onStatusChangePane,
   fallbackCwd,
   onResizeSplit,
 }: {
@@ -286,11 +282,10 @@ function TerminalNodeView({
   tab: TerminalWorkspaceTab;
   activePaneId: string | null;
   onActivatePane: (paneId: string) => void;
-  onClosePane: (paneId: string) => void;
-  onRestartPane: (paneId: string) => void;
   onExpiredPane: (paneId: string) => void;
   onCwdChangePane: (paneId: string, cwd: string) => void;
   onStartedPane: (paneId: string) => void;
+  onStatusChangePane: (paneId: string, status: TerminalStatus) => void;
   fallbackCwd: string | null;
   onResizeSplit: (splitId: string, sizes: number[]) => void;
 }) {
@@ -302,11 +297,10 @@ function TerminalNodeView({
         pane={node}
         active={node.id === activePaneId}
         onActivate={() => onActivatePane(node.id)}
-        onClose={() => onClosePane(node.id)}
-        onRestart={() => onRestartPane(node.id)}
         onExpired={() => onExpiredPane(node.id)}
         onCwdChange={(cwd) => onCwdChangePane(node.id, cwd)}
         onStarted={() => onStartedPane(node.id)}
+        onStatusChange={(status) => onStatusChangePane(node.id, status)}
         fallbackCwd={fallbackCwd}
       />
     );
@@ -341,11 +335,10 @@ function TerminalNodeView({
               tab={tab}
               activePaneId={activePaneId}
               onActivatePane={onActivatePane}
-              onClosePane={onClosePane}
-              onRestartPane={onRestartPane}
               onExpiredPane={onExpiredPane}
               onCwdChangePane={onCwdChangePane}
               onStartedPane={onStartedPane}
+              onStatusChangePane={onStatusChangePane}
               fallbackCwd={fallbackCwd}
               onResizeSplit={onResizeSplit}
             />
@@ -372,6 +365,7 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
   const autoCreatedForRef = useRef<Set<string>>(new Set());
   const [closingTabId, setClosingTabId] = useState<string | null>(null);
   const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
+  const [paneStatuses, setPaneStatuses] = useState<Record<string, TerminalStatus>>({});
   const closeDialogRef = useRef<HTMLDivElement>(null);
   const workspace = state ?? emptyTerminalWorkspace(projectRoot ?? "");
   const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
@@ -513,6 +507,10 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
     }));
   };
 
+  const changePaneStatus = useCallback((paneId: string, status: TerminalStatus) => {
+    setPaneStatuses((current) => current[paneId] === status ? current : { ...current, [paneId]: status });
+  }, []);
+
   const hasProject = Boolean(projectRoot && defaultCwd);
   const maxPanes = activeTab ? countTerminalPanes(activeTab.root) >= maxTerminalPanes() : false;
   const canSplit = Boolean(activeTab?.activePaneId) && !maxPanes;
@@ -560,12 +558,15 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
         >
           {workspace.tabs.map((tab, index) => {
             const selected = tab.id === workspace.activeTabId;
+            const activePane = tab.activePaneId ? findTerminalPane(tab.root, tab.activePaneId) : null;
+            const status = activePane ? paneStatuses[activePane.id] ?? "connecting" : "connecting";
             return (
               <div
                 key={tab.id}
                 role="tab"
                 aria-selected={selected}
                 tabIndex={selected ? 0 : -1}
+                title={tab.cwd}
                 onClick={() => selectTab(tab.id)}
                 onKeyDown={(event) => {
                   if (event.key === "Enter" || event.key === " ") {
@@ -594,6 +595,7 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
                     <polyline points="4 17 10 11 4 5" /><line x1="12" y1="19" x2="20" y2="19" />
                   </svg>
                 </span>
+                <span className={`terminal-tab-status is-${status}`} title={t(`terminal.${status}`)} />
                 <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }} title={tab.cwd}>
                   {tabLabel(tab, index, t)}
                 </span>
@@ -631,6 +633,11 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
           <IconButton label={t("terminal.splitDown")} onClick={() => splitPane("column")} disabled={!canSplit}>
             <SplitIcon direction="column" />
           </IconButton>
+          <IconButton label={t("terminal.restart")} onClick={() => activeTab?.activePaneId && restartPane(activeTab.activePaneId)} disabled={!activeTab?.activePaneId}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M20 11a8 8 0 1 0-2.34 5.66" /><polyline points="20 4 20 11 13 11" />
+            </svg>
+          </IconButton>
           <IconButton label={t("terminal.closePane")} onClick={() => activeTab?.activePaneId && closePane(activeTab.activePaneId)} disabled={!canClosePane}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
@@ -661,11 +668,10 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
             tab={activeTab}
             activePaneId={activeTab.activePaneId}
             onActivatePane={activatePane}
-            onClosePane={closePane}
-            onRestartPane={restartPane}
             onExpiredPane={recoverPane}
             onCwdChangePane={changePaneCwd}
             onStartedPane={markPaneStarted}
+            onStatusChangePane={changePaneStatus}
             fallbackCwd={defaultCwd ?? projectRoot}
             onResizeSplit={resizeSplit}
           />

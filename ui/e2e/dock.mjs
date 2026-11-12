@@ -107,7 +107,7 @@ try {
     await splitPane();
     await dock.locator(`[data-dock-add="${view}"]`).first().click();
   };
-  const dockReady = () => dock.locator(".terminal-panel .is-ready").first().waitFor();
+  const dockReady = () => dock.locator('.terminal-panel[data-status="ready"]').first().waitFor();
   const savedDock = () => page.evaluate(() => JSON.parse(localStorage.getItem("pi-star:dock:v1") || "{}"));
   const dockTerminalIds = async () => {
     const all = await savedDock();
@@ -166,7 +166,7 @@ try {
     ));
     await page.getByRole("tab", { name: "Terminal", exact: true }).click();
     await mainShell;
-    await page.locator(".terminal-panel:visible .is-ready").first().waitFor();
+    await page.locator('.terminal-panel:visible[data-status="ready"]').first().waitFor();
     assert.equal(created.size, 2, "the main view started a second shell");
     const mainId = [...created].find((id) => id !== firstTerminalIds[0]);
     assert.equal((await fetch(`${base}/api/terminal/${mainId}`)).status, 200);

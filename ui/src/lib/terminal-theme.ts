@@ -2,12 +2,18 @@ import type { ITheme } from "@xterm/xterm";
 
 /** The terminal's own light/dark choice, apart from the app theme. */
 export type TerminalTheme = "dark" | "light";
+/** `auto` follows the app theme; the other values override it. */
+export type TerminalThemePreference = TerminalTheme | "auto";
 
 export const TERMINAL_THEME_STORAGE_KEY = "pi-web:terminal-theme";
-export const TERMINAL_THEME_DEFAULT: TerminalTheme = "dark";
+export const TERMINAL_THEME_DEFAULT: TerminalThemePreference = "dark";
 
-export function parseTerminalTheme(raw: string | null): TerminalTheme {
-  return raw === "light" ? "light" : TERMINAL_THEME_DEFAULT;
+export function parseTerminalThemePreference(raw: string | null): TerminalThemePreference {
+  return raw === "light" || raw === "dark" || raw === "auto" ? raw : TERMINAL_THEME_DEFAULT;
+}
+
+export function resolveTerminalTheme(preference: TerminalThemePreference, appIsDark: boolean): TerminalTheme {
+  return preference === "auto" ? (appIsDark ? "dark" : "light") : preference;
 }
 
 // Keep the backgrounds in step with --terminal-bg in app/globals.css.

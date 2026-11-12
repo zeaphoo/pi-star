@@ -1,25 +1,28 @@
 import { useSyncExternalStore } from "react";
+import { useTheme } from "@/hooks/useTheme";
 import {
-  parseTerminalTheme,
+  parseTerminalThemePreference,
+  resolveTerminalTheme,
   TERMINAL_THEME_DEFAULT,
   TERMINAL_THEME_STORAGE_KEY,
   type TerminalTheme,
+  type TerminalThemePreference,
 } from "@/lib/terminal-theme";
 
-function readStoredTheme(): TerminalTheme {
+function readStoredTheme(): TerminalThemePreference {
   try {
-    return parseTerminalTheme(window.localStorage.getItem(TERMINAL_THEME_STORAGE_KEY));
+    return parseTerminalThemePreference(window.localStorage.getItem(TERMINAL_THEME_STORAGE_KEY));
   } catch {
     return TERMINAL_THEME_DEFAULT;
   }
 }
 
-let theme: TerminalTheme | null = null;
+let preference: TerminalThemePreference | null = null;
 const listeners = new Set<() => void>();
 
-function getSnapshot(): TerminalTheme {
-  if (theme === null) theme = readStoredTheme();
-  return theme;
+function getSnapshot(): TerminalThemePreference {
+  if (preference === null) preference = readStoredTheme();
+  return preference;
 }
 
 function notify(): void {
@@ -30,8 +33,8 @@ function notify(): void {
 function onStorage(event: StorageEvent): void {
   if (event.key !== null && event.key !== TERMINAL_THEME_STORAGE_KEY) return;
   const next = readStoredTheme();
-  if (next === theme) return;
-  theme = next;
+  if (next === preference) return;
+  preference = next;
   notify();
 }
 
@@ -39,7 +42,7 @@ function subscribe(listener: () => void): () => void {
   if (listeners.size === 0) {
     window.addEventListener("storage", onStorage);
     // Nobody listened for another tab's choice meanwhile.
-    theme = readStoredTheme();
+    preference = readStoredTheme();
   }
   listeners.add(listener);
   return () => {
@@ -48,18 +51,27 @@ function subscribe(listener: () => void): () => void {
   };
 }
 
-export function setTerminalTheme(next: TerminalTheme): void {
+export function setTerminalThemePreference(next: TerminalThemePreference): void {
   if (next === getSnapshot()) return;
-  theme = next;
+  preference = next;
   try {
-    window.localStorage.setItem(TERMINAL_THEME_STORAGE_KEY, next);
+    if (next === TERMINAL_THEME_DEFAULT) window.localStorage.removeItem(TERMINAL_THEME_STORAGE_KEY);
+    else window.localStorage.setItem(TERMINAL_THEME_STORAGE_KEY, next);
   } catch {
     // Applies in memory even if the browser cannot save it.
   }
   notify();
 }
 
-/** Every open terminal shares one choice, kept per browser. */
+/** The stored preference, for the Settings selector. */
+export function useTerminalThemePreference() {
+  const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => TERMINAL_THEME_DEFAULT);
+  return { preference: snapshot, setPreference: setTerminalThemePreference };
+}
+
+/** Every open terminal shares one choice; `auto` follows the app's light/dark. */
 export function useTerminalTheme(): TerminalTheme {
-  return useSyncExternalStore(subscribe, getSnapshot, () => TERMINAL_THEME_DEFAULT);
+  const { preference: stored } = useTerminalThemePreference();
+  const { isDark } = useTheme();
+  return resolveTerminalTheme(stored, isDark);
 }
