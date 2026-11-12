@@ -298,15 +298,18 @@ html.dark .catppuccin-file-icon {
   background-image: var(--catppuccin-icon-dark);
 }
 
-/* Use the SVG alpha channel as a mask so file icons follow the app's
-   restrained text palette instead of Catppuccin's language-specific colors. */
+/* Settings › Appearance › Colorful file icons is on by default, so the SVGs
+   paint their own Catppuccin language colors. Turning it off uses their alpha
+   channel as a mask and paints the app's restrained text tone instead. The
+   class lives on <html> so it covers every tree, not only the one Settings was
+   opened from. */
 @supports (mask-image: url("mask.svg")) or (-webkit-mask-image: url("mask.svg")) {
-  .catppuccin-file-icon {
+  html.file-icons-mono .catppuccin-file-icon {
     background: var(--text-dim);
     mask: center / contain no-repeat var(--catppuccin-icon-light);
     -webkit-mask: center / contain no-repeat var(--catppuccin-icon-light);
   }
-  html.dark .catppuccin-file-icon {
+  html.dark.file-icons-mono .catppuccin-file-icon {
     background: var(--text-dim);
     mask-image: var(--catppuccin-icon-dark);
     -webkit-mask-image: var(--catppuccin-icon-dark);

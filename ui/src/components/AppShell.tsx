@@ -46,6 +46,7 @@ import { RightDock } from "./RightDock";
 import { DockPanelIcon } from "./dock-icons";
 import { useTheme } from "@/hooks/useTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
+import { useFileIconStyle } from "@/hooks/useFileIconStyle";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile, useIsNarrowMobile, useViewportWidth } from "@/hooks/useIsMobile";
 import { useViewportHeight } from "@/hooks/useViewportHeight";
@@ -221,6 +222,8 @@ export function AppShell() {
   useTheme();
   // Restore fonts even when Settings and the chat composer have not been opened.
   useFontPreferences();
+  // Apply the saved file-icon palette before the tree mounts.
+  useFileIconStyle();
   const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   const isNarrowMobile = useIsNarrowMobile();

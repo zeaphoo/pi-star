@@ -15,6 +15,7 @@ import {
   useChatAppearance,
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
+import { useFileIconStyle } from "@/hooks/useFileIconStyle";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import {
@@ -101,6 +102,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference } = useTheme();
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
+  const { colorful: colorfulFileIcons, setColorful: setColorfulFileIcons } = useFileIconStyle();
   const enterSendMode = useEnterSendMode();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
@@ -253,6 +255,24 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             );
           })}
+        </div>
+      </section>
+
+      <section className="settings-general-section" aria-label={t("settings.fileIcons")}>
+        <h3 className="settings-general-heading">{t("settings.fileIcons")}</h3>
+        <p id="settings-colorful-file-icons-description" className="settings-general-description">
+          {t("settings.colorfulFileIconsDescription")}
+        </p>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.colorfulFileIcons")}</span>
+            <ConfigSwitch
+              checked={colorfulFileIcons}
+              label={t("settings.colorfulFileIcons")}
+              describedBy="settings-colorful-file-icons-description"
+              onChange={setColorfulFileIcons}
+            />
+          </div>
         </div>
       </section>
 
