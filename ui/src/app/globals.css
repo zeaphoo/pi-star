@@ -289,13 +289,13 @@ html[data-theme="zenburn"],
   }
 }
 
-.catppuccin-file-icon {
+.file-icon {
   display: block;
   flex-shrink: 0;
-  background: center / contain no-repeat var(--catppuccin-icon-light);
+  background: center / contain no-repeat var(--file-icon-light);
 }
-html.dark .catppuccin-file-icon {
-  background-image: var(--catppuccin-icon-dark);
+html.dark .file-icon {
+  background-image: var(--file-icon-dark);
 }
 
 /* Settings › Appearance › Colorful file icons is on by default, so the SVGs
@@ -304,15 +304,15 @@ html.dark .catppuccin-file-icon {
    class lives on <html> so it covers every tree, not only the one Settings was
    opened from. */
 @supports (mask-image: url("mask.svg")) or (-webkit-mask-image: url("mask.svg")) {
-  html.file-icons-mono .catppuccin-file-icon {
+  html.file-icons-mono .file-icon {
     background: var(--text-dim);
-    mask: center / contain no-repeat var(--catppuccin-icon-light);
-    -webkit-mask: center / contain no-repeat var(--catppuccin-icon-light);
+    mask: center / contain no-repeat var(--file-icon-light);
+    -webkit-mask: center / contain no-repeat var(--file-icon-light);
   }
-  html.dark.file-icons-mono .catppuccin-file-icon {
+  html.dark.file-icons-mono .file-icon {
     background: var(--text-dim);
-    mask-image: var(--catppuccin-icon-dark);
-    -webkit-mask-image: var(--catppuccin-icon-dark);
+    mask-image: var(--file-icon-dark);
+    -webkit-mask-image: var(--file-icon-dark);
   }
 }
 

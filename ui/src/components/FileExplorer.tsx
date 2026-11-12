@@ -1,7 +1,7 @@
 "use client";
 
 import { forwardRef, useState, useCallback, useEffect, useImperativeHandle, useMemo, useRef } from "react";
-import { getFileIcon, FolderIcon } from "./FileIcons";
+import { FileIcon, FolderIcon } from "./FileIcons";
 import { DismissButton } from "./DismissButton";
 import {
   encodeFilePathForApi,
@@ -396,7 +396,7 @@ export function TreeNode({
         )}
         {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: hidden ? HIDDEN_ENTRY_OPACITY : 1 }}>
-          {node.isDir ? <FolderIcon size={14} open={open} name={node.name} /> : getFileIcon(node.name, 14)}
+          {node.isDir ? <FolderIcon size={14} open={open} name={node.name} /> : <FileIcon name={node.name} size={14} />}
         </span>
         <span
           data-hidden-reason={hidden}
@@ -659,7 +659,7 @@ function ChangeRow({
       <GitStatusBadge status={status} t={t} />
       {treeMode && <span style={{ width: 10, flexShrink: 0 }} />}
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: 0.85 }}>
-        {getFileIcon(name, 13)}
+        <FileIcon name={name} size={13} />
       </span>
       <span
         title={status.filePath}

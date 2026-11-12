@@ -8,7 +8,7 @@ import { formatShortRelativeTime } from "@/lib/i18n/format";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { SessionArtifact } from "@/lib/session-artifacts";
 import { FileViewer } from "./FileViewer";
-import { getFileIcon } from "./FileIcons";
+import { FileIcon } from "./FileIcons";
 import { SubagentViewer } from "./SubagentViewer";
 import { TabBar, type Tab } from "./TabBar";
 import { agentTabSessionId } from "./file-tab-state";
@@ -225,7 +225,7 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
                   onClick={() => onOpenFile(artifact.filePath)}
                   title={artifact.filePath}
                 >
-                  <span className="artifacts-row-icon">{getFileIcon(getFileName(artifact.filePath), 15)}</span>
+                  <span className="artifacts-row-icon"><FileIcon name={getFileName(artifact.filePath)} size={15} /></span>
                   <span className="artifacts-row-text">
                     <span className="artifacts-row-name">{getFileName(artifact.filePath)}</span>
                     <span className="artifacts-row-path">{artifact.relativePath}</span>

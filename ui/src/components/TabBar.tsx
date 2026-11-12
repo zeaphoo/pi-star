@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { getFileIcon } from "./FileIcons";
+import { FileIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
 
@@ -168,7 +168,7 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
                 <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" />
                 </svg>
-              ) : getFileIcon(tab.label, 13)}
+              ) : <FileIcon name={tab.label} size={13} />}
             </span>
             <span
               style={{

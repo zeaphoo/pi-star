@@ -3,7 +3,7 @@
 import { useI18n } from "@/hooks/useI18n";
 import { getFileName } from "@/lib/file-paths";
 import type { WrittenFile } from "@/lib/turn-written-files";
-import { getFileIcon } from "./FileIcons";
+import { FileIcon } from "./FileIcons";
 
 /**
  * Lists the files a turn actually wrote, as buttons that open each one in the
@@ -42,7 +42,7 @@ export function TurnWrittenFiles({ files, onOpenFile }: {
               cursor: "pointer",
             }}
           >
-            {getFileIcon(name, 12)}
+            <FileIcon name={name} size={12} />
             <span>{name}</span>
           </button>
         );

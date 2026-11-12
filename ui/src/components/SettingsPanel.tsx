@@ -16,6 +16,9 @@ import {
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { useFileIconStyle } from "@/hooks/useFileIconStyle";
+import { useFileIconTheme } from "@/hooks/useFileIconTheme";
+import { ICON_THEMES } from "@/lib/icon-themes";
+import { FileIcon, FolderIcon } from "./FileIcons";
 import { sendAgentCommand } from "@/lib/agent-client";
 import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
 import {
@@ -103,6 +106,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { preference, setThemePreference } = useTheme();
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
   const { colorful: colorfulFileIcons, setColorful: setColorfulFileIcons } = useFileIconStyle();
+  const { theme: fileIconTheme, setTheme: setFileIconTheme } = useFileIconTheme();
   const enterSendMode = useEnterSendMode();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
@@ -264,6 +268,34 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
           {t("settings.colorfulFileIconsDescription")}
         </p>
         <div className="settings-chat-options">
+          <div className="settings-chat-option">
+            <label htmlFor="settings-file-icon-theme">{t("settings.fileIconTheme")}</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 3 }} aria-hidden="true">
+                <FolderIcon size={15} name="src" theme={fileIconTheme} />
+                <FileIcon size={15} name="main.ts" theme={fileIconTheme} />
+                <FileIcon size={15} name="main.rs" theme={fileIconTheme} />
+                <FileIcon size={15} name="README.md" theme={fileIconTheme} />
+              </span>
+              <select
+                id="settings-file-icon-theme"
+                value={fileIconTheme}
+                onChange={(event) => setFileIconTheme(event.target.value as typeof fileIconTheme)}
+                style={{
+                  padding: "4px 8px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                }}
+              >
+                {ICON_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>{theme.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
           <div className="settings-chat-option settings-chat-switch-option">
             <span>{t("settings.colorfulFileIcons")}</span>
             <ConfigSwitch

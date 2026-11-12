@@ -25,7 +25,7 @@ import {
 import { getMarkdownListContinuation } from "@/lib/markdown-list-continuation";
 import { quoteSeparator } from "@/lib/quoted-selection";
 import { isBareMcpCommand, isBuiltinMcpCommand } from "@/lib/mcp-command";
-import { FolderIcon, getFileIcon } from "./FileIcons";
+import { FileIcon, FolderIcon } from "./FileIcons";
 import { ImagePreview } from "./ImagePreview";
 import { DismissButton } from "./DismissButton";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -2299,7 +2299,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                           }}
                         >
                           <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-                            {entry.isDir ? <FolderIcon size={14} /> : getFileIcon(name, 14)}
+                            {entry.isDir ? <FolderIcon size={14} /> : <FileIcon name={name} size={14} />}
                           </span>
                           <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                             {dirPrefix && <span style={{ color: "var(--text-dim)" }}>{dirPrefix}</span>}
