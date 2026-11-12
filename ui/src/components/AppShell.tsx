@@ -45,6 +45,7 @@ import { ArtifactsIcon, EMPTY_ARTIFACT_PANE, SessionArtifactsPane, type Artifact
 import { RightDock } from "./RightDock";
 import { DockPanelIcon } from "./dock-icons";
 import { useTheme } from "@/hooks/useTheme";
+import { useCodeThemePreference } from "@/hooks/useCodeTheme";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { useFileIconStyle } from "@/hooks/useFileIconStyle";
 import { useI18n } from "@/hooks/useI18n";
@@ -224,6 +225,9 @@ export function AppShell() {
   useFontPreferences();
   // Apply the saved file-icon palette before the tree mounts.
   useFileIconStyle();
+  // Keep the code palette (and its cross-tab sync) live for the whole app, not
+  // only while Settings is open; index.html restores it before first paint.
+  useCodeThemePreference();
   const { locale, t: translate } = useI18n();
   const isMobile = useIsMobile();
   const isNarrowMobile = useIsNarrowMobile();

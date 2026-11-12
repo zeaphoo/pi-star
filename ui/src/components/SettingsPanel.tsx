@@ -5,6 +5,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { useTheme } from "@/hooks/useTheme";
 import { THEME_OPTIONS } from "@/lib/theme";
+import { useCodeThemePreference } from "@/hooks/useCodeTheme";
+import { CODE_THEME_OPTIONS, codeThemeScheme } from "@/lib/code-theme";
 import {
   CHAT_CONTENT_WIDTH_DEFAULT,
   CHAT_CONTENT_WIDTH_MAX,
@@ -104,7 +106,8 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
 
 function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, onQuoteSelectionChange }: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange">) {
   const { locale, setLocale, supportedLocales, t } = useI18n();
-  const { preference, setThemePreference } = useTheme();
+  const { preference, setThemePreference, isDark } = useTheme();
+  const { preference: codeTheme, setPreference: setCodeTheme } = useCodeThemePreference();
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
   const { colorful: colorfulFileIcons, setColorful: setColorfulFileIcons } = useFileIconStyle();
   const { theme: fileIconTheme, setTheme: setFileIconTheme } = useFileIconTheme();
@@ -261,6 +264,45 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             );
           })}
+        </div>
+      </section>
+
+      <section className="settings-general-section" aria-label={t("settings.codeTheme")}>
+        <h3 className="settings-general-heading">{t("settings.codeTheme")}</h3>
+        <p id="settings-code-theme-description" className="settings-general-description">
+          {t("settings.codeThemeDescription")}
+        </p>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option">
+            <label htmlFor="settings-code-theme">{t("settings.codeThemeLabel")}</label>
+            <div className="settings-code-theme-row">
+              {/* The swatch carries the palette's own attribute, so the three roles paint
+                  with the variables that palette defines. `auto` inherits the app theme. */}
+              <span
+                className="settings-code-theme-preview"
+                aria-hidden="true"
+                data-code-theme={codeTheme === "auto" ? undefined : codeTheme}
+              >
+                <span style={{ background: "var(--code-keyword)" }} />
+                <span style={{ background: "var(--code-string)" }} />
+                <span style={{ background: "var(--code-comment)" }} />
+              </span>
+              <select
+                id="settings-code-theme"
+                value={codeTheme}
+                aria-describedby="settings-code-theme-description"
+                onChange={(event) => setCodeTheme(event.target.value as typeof codeTheme)}
+              >
+                <option value="auto">{t("settings.codeThemeAuto")}</option>
+                {CODE_THEME_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{t(option.label)}</option>
+                ))}
+              </select>
+            </div>
+            {codeTheme !== "auto" && codeThemeScheme(codeTheme) !== (isDark ? "dark" : "light") ? (
+              <p className="settings-code-theme-note">{t("settings.codeThemeMismatch")}</p>
+            ) : null}
+          </div>
         </div>
       </section>
 

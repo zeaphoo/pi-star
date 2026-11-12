@@ -19,6 +19,19 @@
   --font-mono-font: var(--font-mono);
 }
 
+/* Code colours are roles (lib/code-roles.ts), not a Prism theme: the highlighter
+   writes var(--code-*) and a theme only supplies the values. The defaults derive
+   from the appearance theme, so every palette is code-complete without restating
+   them; a code theme set in Settings overrides the block below it. */
+:root {
+  --code-bg: color-mix(in srgb, var(--bg) 92%, var(--bg-panel));
+  --code-gutter-bg: var(--bg-panel);
+  --code-fg: var(--text);
+  --code-comment: var(--text-muted);
+  --code-meta: var(--text-dim);
+  --code-punctuation: var(--text-dim);
+}
+
 :root,
 [data-theme="light"] {
   color-scheme: light;
@@ -39,6 +52,13 @@
   --bg-subtle: rgba(0,0,0,0.03);
   --chat-content-max-width: 820px;
   --chat-content-font-size: 14px;
+  --code-keyword: #234995;
+  --code-string: #9d3525;
+  --code-number: #22774f;
+  --code-function: #5e3894;
+  --code-type: #277386;
+  --code-property: #213483;
+  --code-tag: #8e2937;
 }
 
 html.dark,
@@ -59,6 +79,13 @@ html.dark,
   --assistant-bg: #1a1a1a;
   --tool-bg: #222222;
   --bg-subtle: rgba(255,255,255,0.04);
+  --code-keyword: #699bd3;
+  --code-string: #d39673;
+  --code-number: #aecd98;
+  --code-function: #dbd69f;
+  --code-type: #5cbcb9;
+  --code-property: #9acef4;
+  --code-tag: #da8188;
 }
 
 [data-theme="mist"] {
@@ -78,6 +105,13 @@ html.dark,
   --assistant-bg: #f4f8f7;
   --tool-bg: #ecf3f0;
   --bg-subtle: rgba(24,65,50,0.04);
+  --code-keyword: #22776b;
+  --code-string: #934d25;
+  --code-number: #366b24;
+  --code-function: #35528d;
+  --code-type: #25687e;
+  --code-property: #266c73;
+  --code-tag: #8a2e4c;
 }
 
 [data-theme="rose"] {
@@ -97,6 +131,13 @@ html.dark,
   --assistant-bg: #fcf7f8;
   --tool-bg: #f7eef2;
   --bg-subtle: rgba(89,39,62,0.04);
+  --code-keyword: #913057;
+  --code-string: #2a6f5a;
+  --code-number: #4a307e;
+  --code-function: #4b3d8f;
+  --code-type: #296d7a;
+  --code-property: #7e303d;
+  --code-tag: #864727;
 }
 
 html[data-theme="pine"],
@@ -117,6 +158,13 @@ html[data-theme="pine"],
   --assistant-bg: #19201f;
   --tool-bg: #222d29;
   --bg-subtle: rgba(210,236,219,0.04);
+  --code-keyword: #7eceb3;
+  --code-string: #d1a375;
+  --code-number: #afca91;
+  --code-function: #bea9da;
+  --code-type: #6bc4c7;
+  --code-property: #98cfe1;
+  --code-tag: #da8f81;
 }
 
 [data-theme="sand"] {
@@ -136,6 +184,13 @@ html[data-theme="pine"],
   --assistant-bg: #faf6ee;
   --tool-bg: #f5efe4;
   --bg-subtle: rgba(92,70,30,0.04);
+  --code-keyword: #8b5218;
+  --code-string: #2a6f52;
+  --code-number: #265373;
+  --code-function: #8d355a;
+  --code-type: #864727;
+  --code-property: #6f5b20;
+  --code-tag: #862f27;
 }
 
 html[data-theme="slate"],
@@ -156,6 +211,13 @@ html[data-theme="slate"],
   --assistant-bg: #161b26;
   --tool-bg: #1b2130;
   --bg-subtle: rgba(200,215,245,0.04);
+  --code-keyword: #8dd4e2;
+  --code-string: #daad81;
+  --code-number: #b3cd98;
+  --code-function: #decd9c;
+  --code-type: #88b3dd;
+  --code-property: #a0e3de;
+  --code-tag: #dd8896;
 }
 
 html[data-theme="dusk"],
@@ -176,6 +238,13 @@ html[data-theme="dusk"],
   --assistant-bg: #1e1a24;
   --tool-bg: #241f2b;
   --bg-subtle: rgba(225,210,245,0.04);
+  --code-keyword: #bd99e6;
+  --code-string: #daad81;
+  --code-number: #aecd98;
+  --code-function: #9fc7db;
+  --code-type: #72cac7;
+  --code-property: #d1a8e6;
+  --code-tag: #dd889d;
 }
 
 [data-theme="lilac"] {
@@ -195,6 +264,13 @@ html[data-theme="dusk"],
   --assistant-bg: #f8f6fc;
   --tool-bg: #f3eff9;
   --bg-subtle: rgba(60,30,110,0.04);
+  --code-keyword: #643399;
+  --code-string: #934625;
+  --code-number: #27683d;
+  --code-function: #35618d;
+  --code-type: #25707e;
+  --code-property: #6a307e;
+  --code-tag: #913051;
 }
 
 html[data-theme="ember"],
@@ -215,6 +291,13 @@ html[data-theme="ember"],
   --assistant-bg: #1f1a16;
   --tool-bg: #251f1a;
   --bg-subtle: rgba(245,220,190,0.04);
+  --code-keyword: #81c4da;
+  --code-string: #dea57c;
+  --code-number: #b4cd98;
+  --code-function: #e1cf98;
+  --code-type: #6bc7bf;
+  --code-property: #9dcee7;
+  --code-tag: #dd8894;
 }
 
 /* High contrast: every text token reaches WCAG AAA (7:1) on every surface. */
@@ -235,6 +318,13 @@ html[data-theme="ember"],
   --assistant-bg: #ffffff;
   --tool-bg: #f7f7f7;
   --bg-subtle: rgba(0,0,0,0.05);
+  --code-keyword: #07247e;
+  --code-string: #741111;
+  --code-number: #0b6036;
+  --code-function: #471579;
+  --code-type: #096071;
+  --code-property: #062274;
+  --code-tag: #7b0a1d;
 }
 
 html[data-theme="contrast-dark"],
@@ -255,6 +345,13 @@ html[data-theme="contrast-dark"],
   --assistant-bg: #000000;
   --tool-bg: #0d0d0d;
   --bg-subtle: rgba(255,255,255,0.06);
+  --code-keyword: #f7e06e;
+  --code-string: #89e699;
+  --code-number: #94d8f9;
+  --code-function: #d2a8f0;
+  --code-type: #89e6e6;
+  --code-property: #fafa9e;
+  --code-tag: #f17e7e;
 }
 
 /* Zenburn's own colors (Jani Nurminen's low-contrast scheme); dim text lifted for WCAG AA. */
@@ -276,6 +373,223 @@ html[data-theme="zenburn"],
   --assistant-bg: #3f3f3f;
   --tool-bg: #3a3a3a;
   --bg-subtle: rgba(220,220,204,0.04);
+  --code-keyword: #f0dfaf;
+  --code-string: #d9a3a3;
+  --code-number: #8cd0d3;
+  --code-function: #efefaf;
+  --code-type: #93e0e3;
+  --code-property: #dcdccc;
+  --code-tag: #dfaf8f;
+}
+
+/* Code themes chosen in Settings › Appearance › Code highlighting. The
+   attribute lives on <html>; :root[...] out-specifies every [data-theme] block,
+   so a palette replaces the appearance theme's code colours, background too. */
+:root[data-code-theme="vscode-dark"],
+[data-code-theme="vscode-dark"] {
+  --code-bg: #1e1e1e;
+  --code-fg: #d4d4d4;
+  --code-gutter-bg: #252526;
+  --code-comment: #6a9955;
+  --code-meta: #569cd6;
+  --code-punctuation: #d4d4d4;
+  --code-keyword: #569cd6;
+  --code-string: #ce9178;
+  --code-number: #b5cea8;
+  --code-function: #dcdcaa;
+  --code-type: #4ec9b0;
+  --code-property: #9cdcfe;
+  --code-tag: #569cd6;
+}
+
+:root[data-code-theme="vscode-light"],
+[data-code-theme="vscode-light"] {
+  --code-bg: #ffffff;
+  --code-fg: #000000;
+  --code-gutter-bg: #f3f3f3;
+  --code-comment: #008000;
+  --code-meta: #0000ff;
+  --code-punctuation: #000000;
+  --code-keyword: #0000ff;
+  --code-string: #a31515;
+  --code-number: #098658;
+  --code-function: #795e26;
+  --code-type: #267f99;
+  --code-property: #001080;
+  --code-tag: #800000;
+}
+
+:root[data-code-theme="github-dark"],
+[data-code-theme="github-dark"] {
+  --code-bg: #0d1117;
+  --code-fg: #c9d1d9;
+  --code-gutter-bg: #161b22;
+  --code-comment: #8b949e;
+  --code-meta: #ff7b72;
+  --code-punctuation: #c9d1d9;
+  --code-keyword: #ff7b72;
+  --code-string: #a5d6ff;
+  --code-number: #79c0ff;
+  --code-function: #d2a8ff;
+  --code-type: #ffa657;
+  --code-property: #7ee787;
+  --code-tag: #7ee787;
+}
+
+:root[data-code-theme="github-light"],
+[data-code-theme="github-light"] {
+  --code-bg: #ffffff;
+  --code-fg: #1f2328;
+  --code-gutter-bg: #f6f8fa;
+  --code-comment: #6e7781;
+  --code-meta: #cf222e;
+  --code-punctuation: #1f2328;
+  --code-keyword: #cf222e;
+  --code-string: #0a3069;
+  --code-number: #0550ae;
+  --code-function: #8250df;
+  --code-type: #953800;
+  --code-property: #116329;
+  --code-tag: #116329;
+}
+
+:root[data-code-theme="solarized-dark"],
+[data-code-theme="solarized-dark"] {
+  --code-bg: #002b36;
+  --code-fg: #93a1a1;
+  --code-gutter-bg: #073642;
+  --code-comment: #586e75;
+  --code-meta: #cb4b16;
+  --code-punctuation: #839496;
+  --code-keyword: #859900;
+  --code-string: #2aa198;
+  --code-number: #d33682;
+  --code-function: #b58900;
+  --code-type: #6c71c4;
+  --code-property: #268bd2;
+  --code-tag: #268bd2;
+}
+
+:root[data-code-theme="solarized-light"],
+[data-code-theme="solarized-light"] {
+  --code-bg: #fdf6e3;
+  --code-fg: #586e75;
+  --code-gutter-bg: #eee8d5;
+  --code-comment: #93a1a1;
+  --code-meta: #cb4b16;
+  --code-punctuation: #586e75;
+  --code-keyword: #859900;
+  --code-string: #2aa198;
+  --code-number: #d33682;
+  --code-function: #b58900;
+  --code-type: #6c71c4;
+  --code-property: #268bd2;
+  --code-tag: #268bd2;
+}
+
+:root[data-code-theme="catppuccin-mocha"],
+[data-code-theme="catppuccin-mocha"] {
+  --code-bg: #1e1e2e;
+  --code-fg: #cdd6f4;
+  --code-gutter-bg: #181825;
+  --code-comment: #7f849c;
+  --code-meta: #f38ba8;
+  --code-punctuation: #9399b2;
+  --code-keyword: #cba6f7;
+  --code-string: #a6e3a1;
+  --code-number: #fab387;
+  --code-function: #89b4fa;
+  --code-type: #f9e2af;
+  --code-property: #89dceb;
+  --code-tag: #f38ba8;
+}
+
+:root[data-code-theme="catppuccin-latte"],
+[data-code-theme="catppuccin-latte"] {
+  --code-bg: #eff1f5;
+  --code-fg: #4c4f69;
+  --code-gutter-bg: #e6e9ef;
+  --code-comment: #8c8fa1;
+  --code-meta: #d20f39;
+  --code-punctuation: #6c6f85;
+  --code-keyword: #8839ef;
+  --code-string: #40a02b;
+  --code-number: #fe640b;
+  --code-function: #1e66f5;
+  --code-type: #df8e1d;
+  --code-property: #04a5e5;
+  --code-tag: #d20f39;
+}
+
+/* Two Monokai (kmnhan/vscode-two-monokai): a Monokai fork built on One Dark's
+   surfaces. Roles follow that theme's own scopes: red keywords and tags, yellow
+   strings, purple numbers, green functions, blue types, cyan property names. */
+:root[data-code-theme="two-monokai"],
+[data-code-theme="two-monokai"] {
+  --code-bg: #282c34;
+  --code-fg: #abb2bf;
+  --code-gutter-bg: #21252b;
+  --code-comment: #676f7d;
+  --code-meta: #d19a66;
+  --code-punctuation: #abb2bf;
+  --code-keyword: #e06c75;
+  --code-string: #e5c07b;
+  --code-number: #c678dd;
+  --code-function: #98c379;
+  --code-type: #61afef;
+  --code-property: #56b6c2;
+  --code-tag: #e06c75;
+}
+
+:root[data-code-theme="zenburn"],
+[data-code-theme="zenburn"] {
+  --code-bg: #3f3f3f;
+  --code-fg: #dcdccc;
+  --code-gutter-bg: #383838;
+  --code-comment: #7f9f7f;
+  --code-meta: #dca3a3;
+  --code-punctuation: #dcdccc;
+  --code-keyword: #f0dfaf;
+  --code-string: #d9a3a3;
+  --code-number: #8cd0d3;
+  --code-function: #efefaf;
+  --code-type: #93e0e3;
+  --code-property: #dcdccc;
+  --code-tag: #dfaf8f;
+}
+
+:root[data-code-theme="contrast-dark"],
+[data-code-theme="contrast-dark"] {
+  --code-bg: #000000;
+  --code-fg: #ffffff;
+  --code-gutter-bg: #0f0f0f;
+  --code-comment: #c8c8c8;
+  --code-meta: #ffd60a;
+  --code-punctuation: #ffffff;
+  --code-keyword: #f7e06e;
+  --code-string: #89e699;
+  --code-number: #94d8f9;
+  --code-function: #d2a8f0;
+  --code-type: #89e6e6;
+  --code-property: #fafa9e;
+  --code-tag: #f17e7e;
+}
+
+:root[data-code-theme="contrast-light"],
+[data-code-theme="contrast-light"] {
+  --code-bg: #ffffff;
+  --code-fg: #000000;
+  --code-gutter-bg: #f3f3f3;
+  --code-comment: #3d3d3d;
+  --code-meta: #a30f2b;
+  --code-punctuation: #000000;
+  --code-keyword: #07247e;
+  --code-string: #741111;
+  --code-number: #0b6036;
+  --code-function: #471579;
+  --code-type: #096071;
+  --code-property: #062274;
+  --code-tag: #7b0a1d;
 }
 
 /* WebKit reports dvh/innerHeight without the status-bar strip for installed
@@ -288,6 +602,8 @@ html[data-theme="zenburn"],
     --app-viewport-height: 100vh;
   }
 }
+
+
 
 .file-icon {
   display: block;

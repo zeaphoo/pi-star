@@ -1,10 +1,7 @@
 "use client";
 
 import { useEffect, useState, useRef, useCallback, useMemo, type CSSProperties, type MouseEvent, type ReactNode } from "react";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import ReactMarkdown from "react-markdown";
-import { useTheme } from "@/hooks/useTheme";
 import { useHighlightedSegments } from "@/hooks/useHighlightedSegments";
 import {
   DOCX_PREVIEW_MAX_BYTES,
@@ -94,16 +91,6 @@ const FILE_CODE_STYLE: CSSProperties = {
   lineHeight: 1.6,
 };
 
-// Prism's light theme colors <pre> with backgroundColor, its dark theme with
-// the background shorthand. The source view draws its own background and the
-// dark theme's shorthand is dropped: a theme switch then cannot make React
-// remove one beside the other.
-function themeTextColor(isDark: boolean): string {
-  const theme = isDark ? vscDarkPlus : vs;
-  const style = theme['code[class*="language-"]'] as CSSProperties | undefined;
-  return typeof style?.color === "string" ? style.color : "var(--text)";
-}
-
 // `lineHeight` is FILE_CODE_STYLE's 13px * 1.6, so both columns share one line
 // box; a code-font change must move it with fontSize.
 const FILE_LINE_NUMBER_STYLE: CSSProperties = {
@@ -111,8 +98,8 @@ const FILE_LINE_NUMBER_STYLE: CSSProperties = {
   minWidth: 48,
   padding: "0 10px",
   textAlign: "right",
-  color: "var(--text-dim)",
-  background: "var(--bg-panel)",
+  color: "var(--code-punctuation)",
+  background: "var(--code-gutter-bg)",
   borderRight: "1px solid var(--border)",
   fontFamily: "var(--font-mono)",
   fontWeight: "var(--font-mono-weight)",
@@ -317,13 +304,11 @@ function diffLines(patch: string): Array<DiffLine | DiffGap> {
 
 function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: boolean; language: string }) {
   const { t } = useI18n();
-  const { isDark } = useTheme();
   const diff = useMemo(() => diffLines(patch), [patch]);
   const highlightPlan = useMemo(() => buildDiffHighlightPlan(diff), [diff]);
   const highlighted = useHighlightedSegments(
     highlightPlan.segments,
     language,
-    isDark,
     language !== "text",
   );
 
@@ -385,6 +370,7 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
       style={{
         width: wrapLines ? "100%" : "max-content",
         minWidth: "100%",
+        background: "var(--code-bg)",
         ...FILE_CODE_STYLE,
       }}
     >
@@ -395,8 +381,8 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
               key={si}
               style={{
                 padding: "2px 16px",
-                color: "var(--text-dim)",
-                background: "var(--bg-panel)",
+                color: "var(--code-punctuation)",
+                background: "var(--code-gutter-bg)",
                 fontSize: 11,
                 borderTop: "1px solid var(--border)",
                 borderBottom: "1px solid var(--border)",
@@ -458,7 +444,7 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
                     padding: "0 8px 0 0",
                     whiteSpace: wrapLines ? "pre-wrap" : "pre",
                     overflowWrap: wrapLines ? "anywhere" : "normal",
-                    color: "var(--text)",
+                    color: "var(--code-fg)",
                   }}
                   dangerouslySetInnerHTML={{ __html: html || "\u00a0" }}
                 />
@@ -471,7 +457,7 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
                     padding: "0 8px 0 0",
                     whiteSpace: wrapLines ? "pre-wrap" : "pre",
                     overflowWrap: wrapLines ? "anywhere" : "normal",
-                    color: "var(--text)",
+                    color: "var(--code-fg)",
                   }}
                 >
                   {line.text || "\u00a0"}
@@ -1239,7 +1225,6 @@ function TextFileViewer({
   onStateChange,
   watchEnabled = true,
 }: Props) {
-  const { isDark } = useTheme();
   const { t } = useI18n();
   const [data, setData] = useState<FileData | null>(null);
   const [gitDiff, setGitDiff] = useState<GitFileDiffResponse | null>(null);
@@ -1559,7 +1544,6 @@ function TextFileViewer({
   const highlightedSegments = useHighlightedSegments(
     sourceSegments,
     language,
-    isDark,
     canHighlightSource
       && sourceLines.length <= SOURCE_HIGHLIGHT_MAX_LINES
       && effectiveDisplayMode === "source",
@@ -1572,14 +1556,14 @@ function TextFileViewer({
     margin: 0,
     padding: 0,
     border: 0,
-    backgroundColor: "var(--bg)",
-    color: themeTextColor(isDark),
+    backgroundColor: "var(--code-bg)",
+    color: "var(--code-fg)",
     ...FILE_CODE_STYLE,
     width: wrapLines ? "100%" : "max-content",
     minWidth: "100%",
     minHeight: "100%",
     overflow: "visible",
-  }), [isDark, wrapLines]);
+  }), [wrapLines]);
 
   // The worker returns escaped per-line markup. Cache the rendered rows so
   // unrelated re-renders (panel open/close, selection changes) reuse them.

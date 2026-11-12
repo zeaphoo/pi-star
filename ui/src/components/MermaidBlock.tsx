@@ -4,11 +4,10 @@ import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "reac
 import type { SyntaxHighlighterProps } from "react-syntax-highlighter";
 import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
 import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
-import { vs } from "react-syntax-highlighter/dist/cjs/styles/prism";
-import { vscDarkPlus } from "react-syntax-highlighter/dist/cjs/styles/prism";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
+import { CODE_THEME_STYLE } from "@/lib/code-roles";
 import { copyText } from "@/lib/clipboard";
 import { takeHighlightBudget, waitForHighlight } from "@/lib/highlight-queue";
 import { prismLanguagesLoaded } from "@/lib/prism-languages";
@@ -314,17 +313,6 @@ interface CodeBlockProps {
   isStreaming?: boolean;
 }
 
-// Prism's light theme uses backgroundColor, while its dark theme uses the
-// background shorthand. Keep the pre background solely in customStyle so a
-// theme switch cannot remove/update one and reset the other in React's diff.
-const codeBlockDarkTheme = {
-  ...vscDarkPlus,
-  'pre[class*="language-"]': {
-    ...vscDarkPlus['pre[class*="language-"]'],
-  },
-};
-delete codeBlockDarkTheme['pre[class*="language-"]'].background;
-
 type CodeLinesProps = Parameters<NonNullable<SyntaxHighlighterProps["renderer"]>>[0];
 
 /**
@@ -367,7 +355,6 @@ function renderCodeLines({ rows, stylesheet, useInlineStyles }: CodeLinesProps) 
  * box, no tokens) until an idle slice lets it take its language.
  */
 export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming }: CodeBlockProps) {
-  const { isDark } = useTheme();
   const { t } = useI18n();
   const [copied, setCopied] = useState(false);
   // Loading starts with the first block, streaming or not, so a streamed
@@ -412,7 +399,8 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
             lineHeight: 1.62,
             whiteSpace: "pre-wrap",
             overflowWrap: "anywhere",
-            backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+            backgroundColor: "var(--code-bg)",
+            color: "var(--code-fg)",
           }}
         >
           <code style={{ fontFamily: "var(--font-mono)" }}>{code}</code>
@@ -420,9 +408,9 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
       ) : (
         <SyntaxHighlighter
           language={highlighted ? lang || "text" : "text"}
-          style={isDark ? codeBlockDarkTheme : vs}
+          style={CODE_THEME_STYLE}
           showLineNumbers
-          lineNumberStyle={{ color: "var(--text-dim)", fontStyle: "normal", flexShrink: 0 }}
+          lineNumberStyle={{ color: "var(--code-punctuation)", fontStyle: "normal", flexShrink: 0 }}
           renderer={renderCodeLines}
           customStyle={{
             margin: 0,
@@ -430,11 +418,11 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
             fontSize: "calc(12.5px + var(--chat-font-size-offset, 0px))",
             lineHeight: 1.62,
             fontWeight: "var(--font-mono-weight)",
-            // The light `vs` theme puts its own 1px #ddd border on <pre>; the
-            // block's wrapper already draws the frame.
+            // The block's wrapper already draws the frame, and the code
+            // background follows the code theme, not the appearance theme.
             border: "none",
             borderRadius: 0,
-            backgroundColor: "color-mix(in srgb, var(--bg) 92%, var(--bg-panel))",
+            backgroundColor: "var(--code-bg)",
           }}
           codeTagProps={{ style: { fontFamily: "var(--font-mono)", fontWeight: "var(--font-mono-weight)" } }}
         >

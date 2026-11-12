@@ -1,10 +1,9 @@
-import { highlightSegments, type HighlightTheme } from "./highlight-core";
+import { highlightSegments } from "./highlight-core";
 
 interface HighlightRequest {
   id: number;
   segments: string[];
   language: string;
-  theme: HighlightTheme;
 }
 
 interface HighlightResponse {
@@ -19,9 +18,9 @@ const scope = self as unknown as {
 };
 
 scope.onmessage = (event) => {
-  const { id, segments, language, theme } = event.data;
+  const { id, segments, language } = event.data;
   try {
-    scope.postMessage({ id, lines: highlightSegments(segments, language, theme) });
+    scope.postMessage({ id, lines: highlightSegments(segments, language) });
   } catch (error) {
     scope.postMessage({
       id,

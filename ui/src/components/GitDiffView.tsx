@@ -5,7 +5,6 @@ import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffFile }
 import { buildDiffHighlightPlan, diffLineHtml } from "@/lib/diff-highlight";
 import { languageForPath } from "@/lib/file-language";
 import { useHighlightedSegments } from "@/hooks/useHighlightedSegments";
-import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
 
 interface Props {
@@ -38,14 +37,13 @@ function gitDiffLineStyle(added: boolean, removed: boolean) {
 
 function GitDiffFile({ file }: { file: SplitDiffFile }) {
   const { t } = useI18n();
-  const { isDark } = useTheme();
   const rows = useMemo(() => unifiedDiffLines(file), [file]);
   const plan = useMemo(() => buildDiffHighlightPlan(rows), [rows]);
   const language = useMemo(
     () => languageForPath(file.newPath ?? file.oldPath ?? ""),
     [file.newPath, file.oldPath],
   );
-  const highlighted = useHighlightedSegments(plan.segments, language, isDark, language !== "text");
+  const highlighted = useHighlightedSegments(plan.segments, language, language !== "text");
 
   return (
     <>
@@ -58,8 +56,8 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
                 padding: "2px 12px",
                 borderTop: "1px solid var(--border)",
                 borderBottom: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text-dim)",
+                background: "var(--code-gutter-bg)",
+                color: "var(--code-punctuation)",
                 fontSize: 11,
               }}
             >
@@ -80,8 +78,8 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
                 padding: "0 8px",
                 boxSizing: "border-box",
                 borderRight: "1px solid var(--border)",
-                background: "var(--bg-panel)",
-                color: "var(--text-dim)",
+                background: "var(--code-gutter-bg)",
+                color: "var(--code-punctuation)",
                 textAlign: "right",
                 fontSize: 10,
                 userSelect: "none",
@@ -93,7 +91,7 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
               style={{
                 width: 16,
                 minWidth: 16,
-                color: added ? "#4ade80" : removed ? "#f87171" : "var(--text-dim)",
+                color: added ? "#4ade80" : removed ? "#f87171" : "var(--code-punctuation)",
                 userSelect: "none",
                 textAlign: "center",
               }}
@@ -102,11 +100,11 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
             </span>
             {html !== null ? (
               <span
-                style={{ padding: "0 10px 0 0", color: "var(--text)", whiteSpace: "pre" }}
+                style={{ padding: "0 10px 0 0", color: "var(--code-fg)", whiteSpace: "pre" }}
                 dangerouslySetInnerHTML={{ __html: html || "\u00a0" }}
               />
             ) : (
-              <span style={{ padding: "0 10px 0 0", color: "var(--text)", whiteSpace: "pre" }}>
+              <span style={{ padding: "0 10px 0 0", color: "var(--code-fg)", whiteSpace: "pre" }}>
                 {row.text || "\u00a0"}
               </span>
             )}
@@ -130,7 +128,7 @@ export function GitDiffView({ patch, emptyLabel }: Props) {
   }
 
   return (
-    <div style={{ height: "100%", overflow: "auto", background: "var(--bg)", ...CODE_STYLE }}>
+    <div style={{ height: "100%", overflow: "auto", background: "var(--code-bg)", ...CODE_STYLE }}>
       {files.map((file, fi) => (
         <div key={`${file.newPath ?? file.oldPath ?? "diff"}:${fi}`}>
           <div

@@ -17,7 +17,9 @@
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <title>Pi Star</title>
     <script>
-      (function(){var t="auto";try{var s=localStorage.getItem("pi-theme");var o=["auto","light","mist","lilac","sand","rose","dark","pine","dusk","ember","slate","contrast-light","contrast-dark","zenburn"];if(o.includes(s))t=s}catch(e){}if(t==="auto")t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var r=document.documentElement;r.dataset.theme=t;r.classList.toggle("dark",["dark","pine","dusk","ember","slate","contrast-dark","zenburn"].includes(t))})();
+      (function(){var t="auto";try{var s=localStorage.getItem("pi-theme");var o=["auto","light","mist","lilac","sand","rose","dark","pine","dusk","ember","slate","contrast-light","contrast-dark","zenburn"];if(o.includes(s))t=s}catch(e){}if(t==="auto")t=window.matchMedia("(prefers-color-scheme: dark)").matches?"dark":"light";var r=document.documentElement;r.dataset.theme=t;r.classList.toggle("dark",["dark","pine","dusk","ember","slate","contrast-dark","zenburn"].includes(t));
+      // A code palette is an attribute-only override; an unknown value simply matches no rule and the appearance theme's roles apply.
+      try{var c=localStorage.getItem("pi-code-theme");if(c)r.dataset.codeTheme=c}catch(e){}})();
     </script>
   </head>
   <body translate="no" class="notranslate">

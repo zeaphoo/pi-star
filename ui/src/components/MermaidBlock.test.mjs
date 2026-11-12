@@ -126,12 +126,12 @@ test("CodeBlock keeps a block comment's color on every line it spans", () => {
   assert.deepEqual(lineRows(html), ["1", "2", "3", "4"]);
 });
 
-test("CodeBlock owns the pre background without a competing shorthand", () => {
+test("CodeBlock owns the pre background, from the code palette", () => {
   for (const isStreaming of [false, true]) {
     const html = renderCode({ code: "const x = 1;", lang: "javascript", isStreaming });
     const pre = html.match(/<pre\b[^>]*>/)?.[0];
     assert.ok(pre);
-    assert.match(pre, /background-color:color-mix/);
+    assert.match(pre, /background-color:var\(--code-bg\)/);
     assert.doesNotMatch(pre, /(?:[;\"]|^)background:/);
   }
 });

@@ -3,8 +3,6 @@
 // refractor/all; the main bundle only gets this small client and the fallback
 // loader is dynamic.
 
-import type { HighlightTheme } from "./highlight-core";
-
 interface PendingRequest {
   resolve: (lines: string[][]) => void;
   reject: (error: Error) => void;
@@ -32,8 +30,8 @@ let workerBroken = false;
 let nextRequestId = 1;
 const pending = new Map<number, PendingRequest>();
 
-function cacheKey(segments: readonly string[], language: string, theme: HighlightTheme): string {
-  return `${theme}\u0000${language}\u0000${segments.join("\u0000")}`;
+function cacheKey(segments: readonly string[], language: string): string {
+  return `${language}\u0000${segments.join("\u0000")}`;
 }
 
 function sizeOf(lines: string[][]): number {
@@ -113,42 +111,38 @@ function requestWorker(
   activeWorker: Worker,
   segments: readonly string[],
   language: string,
-  theme: HighlightTheme,
 ): Promise<string[][]> {
   const id = nextRequestId++;
   return new Promise<string[][]>((resolve, reject) => {
     pending.set(id, { resolve, reject });
-    activeWorker.postMessage({ id, segments, language, theme });
+    activeWorker.postMessage({ id, segments, language });
   });
 }
 
 async function requestMainThread(
   segments: readonly string[],
   language: string,
-  theme: HighlightTheme,
 ): Promise<string[][]> {
   // Only reached when the browser has no worker or the worker failed. The
   // dynamic import keeps refractor/all out of the main chunk until then.
   const core = await import("./highlight-core");
-  return core.highlightSegments(segments, language, theme);
+  return core.highlightSegments(segments, language);
 }
 
 /** Cached result for a synchronous first paint, or null while it is computed. */
 export function cachedHighlight(
   segments: readonly string[],
   language: string,
-  theme: HighlightTheme,
 ): string[][] | null {
-  return readCache(cacheKey(segments, language, theme));
+  return readCache(cacheKey(segments, language));
 }
 
 /** Highlight independent code segments, newest request last. */
 export async function highlightSegments(
   segments: readonly string[],
   language: string,
-  theme: HighlightTheme,
 ): Promise<string[][]> {
-  const key = cacheKey(segments, language, theme);
+  const key = cacheKey(segments, language);
   const cached = readCache(key);
   if (cached) return cached;
 
@@ -156,12 +150,12 @@ export async function highlightSegments(
   let lines: string[][];
   if (activeWorker) {
     try {
-      lines = await requestWorker(activeWorker, segments, language, theme);
+      lines = await requestWorker(activeWorker, segments, language);
     } catch {
-      lines = await requestMainThread(segments, language, theme);
+      lines = await requestMainThread(segments, language);
     }
   } else {
-    lines = await requestMainThread(segments, language, theme);
+    lines = await requestMainThread(segments, language);
   }
   writeCache(key, lines);
   return lines;
