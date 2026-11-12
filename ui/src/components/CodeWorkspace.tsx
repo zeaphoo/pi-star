@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { ReactNode } from "react";
 import { FileExplorer, type FileExplorerHandle } from "./FileExplorer";
 import { FileViewer } from "./FileViewer";
@@ -12,8 +12,15 @@ import { movePanelTab } from "@/lib/panel-tab-order";
 import { saveFileViewerState } from "./file-tab-state";
 import { loadShowIgnoredFiles, saveShowIgnoredFiles } from "@/lib/sidebar-prefs";
 import { EyeIcon, SearchIcon, UploadIcon } from "./SidebarIcons";
+import { SidebarMenu, type SidebarMenuAnchor, type SidebarMenuItem } from "./SidebarMenu";
+import { copyText } from "@/lib/clipboard";
 import type { CodeWorkspaceState } from "@/lib/code-workspace";
-import { closeCodeTab } from "@/lib/code-workspace";
+import {
+  closeAllCodeTabs,
+  closeCodeTab,
+  closeCodeTabsToRight,
+  closeOtherCodeTabs,
+} from "@/lib/code-workspace";
 import type { FileViewerState } from "@/lib/file-viewer-state";
 
 interface Props {
@@ -122,6 +129,14 @@ function RefreshIcon() {
   );
 }
 
+function MoreIcon() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" aria-hidden="true">
+      <path d="M5 12h.01M12 12h.01M19 12h.01" />
+    </svg>
+  );
+}
+
 function CodeEmptyState({ projectName }: { projectName: string | null }) {
   const { t } = useI18n();
   return (
@@ -177,12 +192,19 @@ export function CodeWorkspace({
     else setTreeOpen(next);
   }, [isMobile]);
   const [treeRefreshKey, setTreeRefreshKey] = useState(0);
+  const [fileRefreshKey, setFileRefreshKey] = useState(0);
+  const [treeRefreshing, setTreeRefreshing] = useState(false);
+  const [fileRefreshing, setFileRefreshing] = useState(false);
+  const treeRefreshTimer = useRef<number | null>(null);
+  const fileRefreshTimer = useRef<number | null>(null);
   // The tree's own keys, as the sidebar's files panel had them: what it
   // lists (ignored files too), its search, and an upload into the folder.
   const [showHidden, setShowHidden] = useState(loadShowIgnoredFiles);
   const [fileSearchOpen, setFileSearchOpen] = useState(false);
   const [uploadBusy, setUploadBusy] = useState(false);
   const explorerRef = useRef<FileExplorerHandle>(null);
+  const moreButtonRef = useRef<HTMLSpanElement>(null);
+  const [tabMenu, setTabMenu] = useState<{ anchor: SidebarMenuAnchor; opener: HTMLElement | null } | null>(null);
   const treeWidthRef = useRef(TREE_DEFAULT_WIDTH);
   const treeResizer = useResizablePanel({
     ariaLabel: t("code.resizeTree"),
@@ -237,6 +259,117 @@ export function CodeWorkspace({
     if (!current) return;
     onChange(closeCodeTab(current, tabId));
   }, [onChange]);
+
+  useEffect(() => () => {
+    if (treeRefreshTimer.current !== null) window.clearTimeout(treeRefreshTimer.current);
+    if (fileRefreshTimer.current !== null) window.clearTimeout(fileRefreshTimer.current);
+  }, []);
+
+  const refreshTree = useCallback(() => {
+    setTreeRefreshing(true);
+    setTreeRefreshKey((key) => key + 1);
+    if (treeRefreshTimer.current !== null) window.clearTimeout(treeRefreshTimer.current);
+    treeRefreshTimer.current = window.setTimeout(() => setTreeRefreshing(false), 600);
+  }, []);
+
+  const refreshFile = useCallback(() => {
+    if (!activeTab) return;
+    setFileRefreshing(true);
+    setFileRefreshKey((key) => key + 1);
+    if (fileRefreshTimer.current !== null) window.clearTimeout(fileRefreshTimer.current);
+    fileRefreshTimer.current = window.setTimeout(() => setFileRefreshing(false), 600);
+  }, [activeTab]);
+
+  const openTabMenu = useCallback((anchor: SidebarMenuAnchor, opener: HTMLElement | null) => {
+    setTabMenu({ anchor, opener });
+  }, []);
+
+  const openMoreMenu = useCallback(() => {
+    const button = moreButtonRef.current?.querySelector<HTMLButtonElement>("button");
+    if (!button) return;
+    openTabMenu({ kind: "rect", rect: button.getBoundingClientRect(), align: "end" }, button);
+  }, [openTabMenu]);
+
+  const handleTabContextMenu = useCallback((tabId: string, event: ReactMouseEvent<HTMLDivElement>) => {
+    const current = stateRef.current;
+    if (!current) return;
+    if (current.activeTabId !== tabId) onChange({ ...current, activeTabId: tabId });
+    openTabMenu({ kind: "point", x: event.clientX, y: event.clientY }, event.currentTarget);
+  }, [onChange, openTabMenu]);
+
+  const closeAllTabs = useCallback(() => {
+    const current = stateRef.current;
+    if (current) onChange(closeAllCodeTabs(current));
+  }, [onChange]);
+
+  const closeOtherTabs = useCallback(() => {
+    const current = stateRef.current;
+    if (current?.activeTabId) onChange(closeOtherCodeTabs(current, current.activeTabId));
+  }, [onChange]);
+
+  const closeTabsRight = useCallback(() => {
+    const current = stateRef.current;
+    if (current?.activeTabId) onChange(closeCodeTabsToRight(current, current.activeTabId));
+  }, [onChange]);
+
+  const copyActivePath = useCallback(() => {
+    const current = stateRef.current;
+    const tab = current?.tabs.find((item) => item.id === current.activeTabId);
+    if (tab) void copyText(tab.filePath);
+  }, []);
+
+  const revealActiveInTree = useCallback(() => {
+    const current = stateRef.current;
+    const tab = current?.tabs.find((item) => item.id === current.activeTabId);
+    if (!tab) return;
+    setTreeVisible(true);
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      explorerRef.current?.revealPath(tab.filePath);
+    }));
+  }, [setTreeVisible]);
+
+  const tabMenuItems: SidebarMenuItem[] = useMemo(() => {
+    const tabs = state?.tabs ?? [];
+    const activeIndex = tabs.findIndex((tab) => tab.id === state?.activeTabId);
+    return [
+      {
+        type: "item",
+        id: "close-all",
+        label: t("code.closeAllTabs"),
+        disabled: tabs.length === 0,
+        onSelect: closeAllTabs,
+      },
+      {
+        type: "item",
+        id: "close-others",
+        label: t("code.closeOtherTabs"),
+        disabled: tabs.length <= 1,
+        onSelect: closeOtherTabs,
+      },
+      {
+        type: "item",
+        id: "close-right",
+        label: t("code.closeTabsToRight"),
+        disabled: activeIndex === -1 || activeIndex >= tabs.length - 1,
+        onSelect: closeTabsRight,
+      },
+      { type: "separator", id: "separator" },
+      {
+        type: "item",
+        id: "copy-path",
+        label: t("code.copyPath"),
+        disabled: activeIndex === -1,
+        onSelect: copyActivePath,
+      },
+      {
+        type: "item",
+        id: "reveal",
+        label: t("code.revealInTree"),
+        disabled: activeIndex === -1 || !root,
+        onSelect: revealActiveInTree,
+      },
+    ];
+  }, [closeAllTabs, closeOtherTabs, closeTabsRight, copyActivePath, revealActiveInTree, root, state, t]);
 
   const handleReorderTab = useCallback((source: string, target: string, after: boolean) => {
     if (!state) return;
@@ -327,6 +460,15 @@ export function CodeWorkspace({
           <SearchIcon size={14} />
         </IconButton>
         <IconButton
+          label={t("code.refreshTree")}
+          disabled={!root || treeRefreshing}
+          onClick={refreshTree}
+        >
+          <span style={{ display: "flex", animation: treeRefreshing ? "spin 0.8s linear infinite" : undefined }}>
+            <RefreshIcon />
+          </span>
+        </IconButton>
+        <IconButton
           label={t("code.hideTree")}
           onClick={() => setTreeVisible(false)}
         >
@@ -389,57 +531,58 @@ export function CodeWorkspace({
           className="code-workspace-toolbar"
           style={{
             display: "flex",
-            alignItems: "center",
-            gap: 6,
-            height: 34,
-            padding: "0 8px",
+            alignItems: "stretch",
+            height: "var(--top-bar-height)",
+            padding: 0,
             boxSizing: "border-box",
             borderBottom: "1px solid var(--border)",
             background: "var(--bg-panel)",
             flexShrink: 0,
           }}
         >
-          <IconButton
-            label={treeVisible ? t("code.hideTree") : t("code.showTree")}
-            onClick={() => setTreeVisible(!treeVisible)}
-            pressed={treeVisible}
-          >
-            <TreeIcon />
-          </IconButton>
-          <span
-            title={root ?? undefined}
-            style={{
-              flex: 1,
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-              fontSize: 11,
-              color: "var(--text-muted)",
-              fontFamily: "var(--font-mono)",
-            }}
-          >
-            {projectName ?? ""}
-            {root && projectName ? <span style={{ color: "var(--text-dim)" }}> · {root}</span> : null}
-          </span>
-          <IconButton label={t("code.refresh")} onClick={() => setTreeRefreshKey((key) => key + 1)}>
-            <RefreshIcon />
-          </IconButton>
-        </div>
-
-        {state && state.tabs.length > 0 && (
-          <div style={{ display: "flex", alignItems: "stretch", flexShrink: 0, borderBottom: "1px solid var(--border)" }}>
-            <div style={{ flex: 1, overflow: "hidden", minWidth: 0 }}>
+          <div style={{ display: "flex", alignItems: "center", padding: "0 4px 0 6px", flexShrink: 0 }}>
+            <IconButton
+              label={treeVisible ? t("code.hideTree") : t("code.showTree")}
+              onClick={() => setTreeVisible(!treeVisible)}
+              pressed={treeVisible}
+            >
+              <TreeIcon />
+            </IconButton>
+          </div>
+          <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "stretch" }}>
+            {state && state.tabs.length > 0 ? (
               <TabBar
                 tabs={state.tabs}
                 activeTabId={state.activeTabId ?? ""}
                 onSelectTab={(id) => onChange({ ...state, activeTabId: id })}
                 onCloseTab={handleCloseTab}
                 onReorderTab={handleReorderTab}
+                scrollControls
+                onTabContextMenu={handleTabContextMenu}
               />
-            </div>
+            ) : <div style={{ flex: 1 }} />}
           </div>
-        )}
+          <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 6px", flexShrink: 0 }}>
+            <IconButton
+              label={t("code.refreshFile")}
+              disabled={!activeTab || fileRefreshing}
+              onClick={refreshFile}
+            >
+              <span style={{ display: "flex", animation: fileRefreshing ? "spin 0.8s linear infinite" : undefined }}>
+                <RefreshIcon />
+              </span>
+            </IconButton>
+            <span ref={moreButtonRef} style={{ display: "flex" }}>
+              <IconButton
+                label={t("code.tabActions")}
+                disabled={!state || state.tabs.length === 0}
+                onClick={openMoreMenu}
+              >
+                <MoreIcon />
+              </IconButton>
+            </span>
+          </div>
+        </div>
 
         <div style={{ flex: 1, minHeight: 0, overflow: "hidden" }}>
           {activeTab ? (
@@ -448,7 +591,8 @@ export function CodeWorkspace({
               filePath={activeTab.filePath}
               cwd={root ?? undefined}
               sourceSessionId={null}
-              gitRefreshKey={refreshKey + treeRefreshKey}
+              refreshKey={refreshKey + fileRefreshKey}
+              gitRefreshKey={refreshKey + fileRefreshKey}
               initialDisplayMode={activeTab.initialDisplayMode}
               initialPage={activeTab.page}
               initialState={activeTab.viewerState}
@@ -467,6 +611,18 @@ export function CodeWorkspace({
           )}
         </div>
       </div>
+      <SidebarMenu
+        open={tabMenu !== null}
+        anchor={tabMenu?.anchor ?? null}
+        sheet={isMobile}
+        ariaLabel={t("code.tabActions")}
+        title={t("code.tabActions")}
+        items={tabMenuItems}
+        cancelLabel={t("i18n.cancel")}
+        onClose={() => setTabMenu(null)}
+        returnFocusTo={tabMenu?.opener ?? null}
+        width={220}
+      />
     </div>
   );
 }

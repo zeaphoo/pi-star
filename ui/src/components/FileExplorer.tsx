@@ -66,6 +66,8 @@ interface Props {
 
 export interface FileExplorerHandle {
   openUploadPicker: () => void;
+  /** Expand the path's parents, highlight it, and scroll it into view. */
+  revealPath: (fullPath: string) => void;
 }
 
 type UploadPhase = "idle" | "checking" | "uploading";
@@ -348,6 +350,7 @@ export function TreeNode({
   return (
     <div>
       <div
+        data-file-path={node.fullPath}
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -1124,7 +1127,27 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
     openUploadPicker() {
       if (!uploadBusy) uploadInputRef.current?.click();
     },
-  }), [uploadBusy]);
+    revealPath(fullPath: string) {
+      const target = normalizeFilePathSlashes(fullPath);
+      const relative = getRelativeFilePath(target, cwd);
+      if (relative === target) return;
+      const parts = relative.split("/").filter(Boolean);
+      const parents = parts.slice(0, -1).map((_, index) => (
+        joinFilePath(cwd, parts.slice(0, index + 1).join("/"))
+      ));
+      if (parents.length > 0) {
+        setExpandedPaths((current) => new Set([...current, ...parents]));
+      }
+      setHighlightedPaths(new Set([target]));
+      // Children load after the expanded set renders; wait for two frames and
+      // then scroll the highlighted row into view.
+      window.setTimeout(() => {
+        const row = Array.from(document.querySelectorAll<HTMLElement>("[data-file-path]"))
+          .find((element) => normalizeFilePathSlashes(element.dataset.filePath ?? "") === target);
+        row?.scrollIntoView({ block: "center" });
+      }, 300);
+    },
+  }), [cwd, uploadBusy]);
 
   const resetFileDrag = useCallback(() => {
     fileDragDepthRef.current = 0;

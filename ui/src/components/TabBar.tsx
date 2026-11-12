@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { FileIcon } from "./FileIcons";
 import { useI18n } from "@/hooks/useI18n";
 import type { FileViewerDisplayMode, FileViewerState } from "@/lib/file-viewer-state";
@@ -25,14 +25,41 @@ interface Props {
   onSelectTab: (id: string) => void;
   onCloseTab: (id: string) => void;
   onReorderTab?: (source: string, target: string, after: boolean) => void;
+  /** Chevrons that scroll a strip too wide for its row (the code view). */
+  scrollControls?: boolean;
+  /** Right-click on a tab; the code view opens its tab menu at the pointer. */
+  onTabContextMenu?: (tabId: string, event: ReactMouseEvent<HTMLDivElement>) => void;
 }
 
-export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTab }: Props) {
+export function TabBar({
+  tabs,
+  activeTabId,
+  onSelectTab,
+  onCloseTab,
+  onReorderTab,
+  scrollControls = false,
+  onTabContextMenu,
+}: Props) {
   const { t } = useI18n();
   const [hoveredClose, setHoveredClose] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const draggedId = useRef<string | null>(null);
   const [dropTarget, setDropTarget] = useState<{ id: string; after: boolean } | null>(null);
+  const [canScrollLeft, setCanScrollLeft] = useState(false);
+  const [canScrollRight, setCanScrollRight] = useState(false);
+
+  const updateScrollState = useCallback(() => {
+    const list = listRef.current;
+    if (!list) return;
+    setCanScrollLeft(list.scrollLeft > 1);
+    setCanScrollRight(list.scrollLeft + list.clientWidth < list.scrollWidth - 1);
+  }, []);
+
+  const scrollTabs = (direction: -1 | 1) => {
+    const list = listRef.current;
+    if (!list) return;
+    list.scrollBy({ left: direction * Math.max(160, list.clientWidth * 0.7), behavior: "smooth" });
+  };
 
   // The strip has no scrollbar (globals.css), so a vertical wheel scrolls it
   // sideways. Non-passive: the page must not scroll as well.
@@ -48,6 +75,21 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
     return () => list.removeEventListener("wheel", onWheel);
   }, []);
 
+  // The chevrons appear only for a strip that can actually move; a resize or
+  // a closed tab changes that without a scroll event.
+  useEffect(() => {
+    const list = listRef.current;
+    if (!list || !scrollControls) return;
+    updateScrollState();
+    list.addEventListener("scroll", updateScrollState, { passive: true });
+    const observer = new ResizeObserver(updateScrollState);
+    observer.observe(list);
+    return () => {
+      list.removeEventListener("scroll", updateScrollState);
+      observer.disconnect();
+    };
+  }, [scrollControls, tabs.length, updateScrollState]);
+
   // Bring an opened or selected tab into view by moving the strip only:
   // scrollIntoView could also scroll the panels around it.
   useEffect(() => {
@@ -58,9 +100,10 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
     const { left, right } = tab.getBoundingClientRect();
     if (left < strip.left) list.scrollLeft -= strip.left - left;
     else if (right > strip.right) list.scrollLeft += right - strip.right;
-  }, [activeTabId, tabs.length]);
+    updateScrollState();
+  }, [activeTabId, tabs.length, updateScrollState]);
 
-  return (
+  const list = (
     <div
       ref={listRef}
       role="tablist"
@@ -73,7 +116,9 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
         background: "var(--bg-panel)",
         overflowX: "auto",
         overflowY: "hidden",
-        flexShrink: 0,
+        flex: scrollControls ? "1 1 auto" : undefined,
+        flexShrink: scrollControls ? 1 : 0,
+        minWidth: scrollControls ? 0 : undefined,
         height: "var(--top-bar-height)",
       }}
     >
@@ -130,6 +175,11 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
               }
             }}
             onClick={() => onSelectTab(tab.id)}
+            onContextMenu={(event) => {
+              if (!onTabContextMenu) return;
+              event.preventDefault();
+              onTabContextMenu(tab.id, event);
+            }}
             onMouseDown={(e) => {
               if (e.button === 1) e.preventDefault();
             }}
@@ -211,6 +261,48 @@ export function TabBar({ tabs, activeTabId, onSelectTab, onCloseTab, onReorderTa
           </div>
         );
       })}
+    </div>
+  );
+
+  if (!scrollControls) return list;
+
+  return (
+    <div
+      className="tabbar-scroll-shell"
+      style={{
+        display: "flex",
+        alignItems: "stretch",
+        flex: 1,
+        minWidth: 0,
+        height: "var(--top-bar-height)",
+        background: "var(--bg-panel)",
+      }}
+    >
+      <button
+        type="button"
+        className="tabbar-scroll-button"
+        onClick={() => scrollTabs(-1)}
+        disabled={!canScrollLeft}
+        title={t("code.scrollTabsLeft")}
+        aria-label={t("code.scrollTabsLeft")}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m15 18-6-6 6-6" />
+        </svg>
+      </button>
+      {list}
+      <button
+        type="button"
+        className="tabbar-scroll-button"
+        onClick={() => scrollTabs(1)}
+        disabled={!canScrollRight}
+        title={t("code.scrollTabsRight")}
+        aria-label={t("code.scrollTabsRight")}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="m9 18 6-6-6-6" />
+        </svg>
+      </button>
     </div>
   );
 }

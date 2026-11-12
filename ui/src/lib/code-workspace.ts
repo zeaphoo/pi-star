@@ -191,3 +191,31 @@ export function closeCodeTab(state: CodeWorkspaceState, tabId: string): CodeWork
     : state.activeTabId;
   return { ...state, tabs, activeTabId };
 }
+
+/** Close every open file tab; the caller's empty state shows the tree again. */
+export function closeAllCodeTabs(state: CodeWorkspaceState): CodeWorkspaceState {
+  if (state.tabs.length === 0) return state;
+  return { ...state, tabs: [], activeTabId: null };
+}
+
+/** Keep one tab and drop every other open file tab. */
+export function closeOtherCodeTabs(state: CodeWorkspaceState, keepId: string): CodeWorkspaceState {
+  if (!state.tabs.some((tab) => tab.id === keepId)) return state;
+  if (state.tabs.length === 1) return state;
+  return {
+    ...state,
+    tabs: state.tabs.filter((tab) => tab.id === keepId),
+    activeTabId: keepId,
+  };
+}
+
+/** Drop the tabs after the active one, keeping the active tab. */
+export function closeCodeTabsToRight(state: CodeWorkspaceState, activeId: string): CodeWorkspaceState {
+  const index = state.tabs.findIndex((tab) => tab.id === activeId);
+  if (index === -1 || index === state.tabs.length - 1) return state;
+  return {
+    ...state,
+    tabs: state.tabs.slice(0, index + 1),
+    activeTabId: activeId,
+  };
+}

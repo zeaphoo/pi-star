@@ -49,6 +49,8 @@ interface Props {
   onMentionLines?: (relativePath: string, startLine: number, endLine: number) => void;
   /** Insert this file's relative path into the chat input (@ mention). */
   onAtMention?: (relativePath: string, isDir: boolean) => void;
+  /** Bumped by the code view's refresh action; re-reads the file in place. */
+  refreshKey?: number;
   gitRefreshKey?: number;
   initialDisplayMode?: DisplayMode;
   /** PDF page to open on first render (`#page=N` from a markdown link). */
@@ -56,6 +58,18 @@ interface Props {
   initialState?: FileViewerState;
   onStateChange?: (state: FileViewerState) => void;
   watchEnabled?: boolean;
+}
+
+/** Run `reload` when an external refresh key changes, never on first mount. */
+function useExternalRefresh(refreshKey: number | undefined, reload: () => void): void {
+  const seenRef = useRef(refreshKey);
+  const reloadRef = useRef(reload);
+  reloadRef.current = reload;
+  useEffect(() => {
+    if (refreshKey === undefined || refreshKey === seenRef.current) return;
+    seenRef.current = refreshKey;
+    reloadRef.current();
+  }, [refreshKey]);
 }
 
 interface FileData {
@@ -472,10 +486,11 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
   );
 }
 
-function ImageViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
+function ImageViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
+  useExternalRefresh(refreshKey, () => setBust((value) => value + 1));
   const [size, setSize] = useState<number | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -652,10 +667,11 @@ function formatDuration(seconds: number): string {
   return `${mins}:${String(secs).padStart(2, "0")}`;
 }
 
-function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
+function AudioViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
+  useExternalRefresh(refreshKey, () => setBust((value) => value + 1));
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -813,10 +829,11 @@ function AudioViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
   );
 }
 
-function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Props) {
+function VideoViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
+  useExternalRefresh(refreshKey, () => setBust((value) => value + 1));
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -976,10 +993,11 @@ function VideoViewer({ filePath, cwd, sourceSessionId, watchEnabled = true }: Pr
   );
 }
 
-function DocumentViewer({ filePath, cwd, sourceSessionId, initialPage, watchEnabled = true }: Props) {
+function DocumentViewer({ filePath, cwd, sourceSessionId, refreshKey, initialPage, watchEnabled = true }: Props) {
   const { t } = useI18n();
   const [watching, setWatching] = useState(false);
   const [bust, setBust] = useState(0);
+  useExternalRefresh(refreshKey, () => setBust((value) => value + 1));
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const esRef = useRef<EventSource | null>(null);
@@ -1164,6 +1182,7 @@ export function FileViewer({
   onOpenFile,
   onMentionLines,
   onAtMention,
+  refreshKey,
   gitRefreshKey,
   initialDisplayMode,
   initialState,
@@ -1177,16 +1196,16 @@ export function FileViewer({
   const pageHidden = usePageHiddenFor(HIDDEN_PAGE_GRACE_MS);
   const watchEnabled = watchRequested && !pageHidden;
   if (isImagePath(filePath)) {
-    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
+    return <ImageViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} refreshKey={refreshKey} watchEnabled={watchEnabled} />;
   }
   if (isAudioPath(filePath)) {
-    return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
+    return <AudioViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} refreshKey={refreshKey} watchEnabled={watchEnabled} />;
   }
   if (isVideoPath(filePath)) {
-    return <VideoViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} watchEnabled={watchEnabled} />;
+    return <VideoViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} refreshKey={refreshKey} watchEnabled={watchEnabled} />;
   }
   if (isDocumentPreviewPath(filePath)) {
-    return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} initialPage={initialPage} watchEnabled={watchEnabled} />;
+    return <DocumentViewer filePath={filePath} cwd={cwd} sourceSessionId={sourceSessionId} refreshKey={refreshKey} initialPage={initialPage} watchEnabled={watchEnabled} />;
   }
   return (
     <TextFileViewer
@@ -1196,6 +1215,7 @@ export function FileViewer({
       onOpenFile={onOpenFile}
       onMentionLines={onMentionLines}
       onAtMention={onAtMention}
+      refreshKey={refreshKey}
       gitRefreshKey={gitRefreshKey}
       initialDisplayMode={initialDisplayMode}
       initialState={initialState}
@@ -1212,6 +1232,7 @@ function TextFileViewer({
   onOpenFile,
   onMentionLines,
   onAtMention,
+  refreshKey,
   gitRefreshKey,
   initialDisplayMode,
   initialState,
@@ -1347,6 +1368,8 @@ function TextFileViewer({
       }
     }
   }, [cwd]);
+
+  useExternalRefresh(refreshKey, () => { void fetchContent(filePath); });
 
   // Reset and load the file itself when its identity changes. Live watching is
   // managed separately so pausing it never clears the displayed content.

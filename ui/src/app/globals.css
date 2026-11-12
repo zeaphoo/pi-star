@@ -863,6 +863,32 @@ html[data-keyboard-open] .terminal-extra-keys {
 .tabbar-scroll::-webkit-scrollbar {
   display: none;
 }
+.tabbar-scroll-button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  min-width: 22px;
+  padding: 0;
+  border: none;
+  border-right: 1px solid var(--border);
+  background: var(--bg-panel);
+  color: var(--text-muted);
+  cursor: pointer;
+  flex-shrink: 0;
+}
+.tabbar-scroll-button:last-child {
+  border-right: none;
+  border-left: 1px solid var(--border);
+}
+.tabbar-scroll-button:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+.tabbar-scroll-button:disabled {
+  opacity: 0.3;
+  cursor: default;
+}
 
 /* The terminal picks its surface apart from the app theme, so --text-dim
    could disappear against it. */
