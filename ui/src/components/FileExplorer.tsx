@@ -396,7 +396,7 @@ export function TreeNode({
         )}
         {!node.isDir && <span style={{ width: 10, flexShrink: 0 }} />}
         <span style={{ flexShrink: 0, display: "flex", alignItems: "center", opacity: hidden ? HIDDEN_ENTRY_OPACITY : 1 }}>
-          {node.isDir ? <FolderIcon size={14} open={open} /> : getFileIcon(node.name, 14)}
+          {node.isDir ? <FolderIcon size={14} open={open} name={node.name} /> : getFileIcon(node.name, 14)}
         </span>
         <span
           data-hidden-reason={hidden}
@@ -774,7 +774,7 @@ function ChangesFolderRow({
         <polyline points="3 2 7 5 3 8" />
       </svg>
       <span style={{ flexShrink: 0, display: "flex", alignItems: "center" }}>
-        <FolderIcon size={14} open={open} />
+        <FolderIcon size={14} open={open} name={node.name} />
       </span>
       <span
         style={{
