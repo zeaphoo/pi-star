@@ -37,8 +37,9 @@ test("Session context lives in Settings, not on the toolbar", () => {
 
 test("Terminal sits under General › Appearance in the sidebar", () => {
   assert.doesNotMatch(panelSource, /\{ id: "terminal", label:/);
-  assert.match(panelSource, /const \[generalView, setGeneralView\] = useState<"appearance" \| "terminal" \| "chat">\("appearance"\)/);
-  assert.match(panelSource, /generalView === "terminal" \? <TerminalSettings \/>/);
+  assert.match(panelSource, /const \[generalView, setGeneralView\] = useState<"appearance" \| "terminal" \| "code" \| "chat">\("appearance"\)/);
+  assert.match(panelSource, /generalView === "terminal"/);
+  assert.match(panelSource, /<TerminalSettings \/>/);
   assert.match(panelSource, /setGeneralView\("terminal"\)/);
   assert.match(panelSource, /active=\{generalView === "terminal"\}/);
   assert.match(terminalSource, /<TerminalThemePicker \/>/);
@@ -46,22 +47,36 @@ test("Terminal sits under General › Appearance in the sidebar", () => {
   assert.doesNotMatch(terminalSource, /settings\.typography/);
 });
 
-test("General is a split view too: Appearance, Terminal and Chat", () => {
+test("General is a split view too: Appearance, Terminal, Code and Chat", () => {
   assert.match(panelSource, /<ConfigSplitView>/);
   assert.match(panelSource, /<TerminalSettings \/>/);
   assert.match(panelSource, /generalView === "appearance"/);
   assert.match(panelSource, /generalView === "terminal"/);
+  assert.match(panelSource, /generalView === "code" \? code : conversation/);
+  assert.match(panelSource, /setGeneralView\("code"\)/);
+  assert.match(panelSource, /active=\{generalView === "code"\}/);
 
   const appearance = panelSource.slice(panelSource.indexOf("const appearance = ("), panelSource.indexOf("const conversation = ("));
   const conversation = panelSource.slice(panelSource.indexOf("const conversation = ("), panelSource.indexOf("const account = ("));
-  const account = panelSource.slice(panelSource.indexOf("const account = ("), panelSource.indexOf("return (\n    <div className=\"settings-general-root\">"));
+  const account = panelSource.slice(panelSource.indexOf("const account = ("), panelSource.indexOf("const code = ("));
+  const code = panelSource.slice(panelSource.indexOf("const code = ("), panelSource.indexOf("return (\n    <div className=\"settings-general-root\">"));
 
-  // Looking: theme, fonts and layout, then language and the build's version.
+  // Looking: theme, fonts and layout, then language; the build's versions live
+  // at the bottom of the sidebar.
   assert.match(appearance, /settings\.typography/);
   assert.match(appearance, /settings\.chatContentFontSize/);
   assert.match(account, /common\.language/);
-  assert.match(account, /settings\.version/);
+  assert.doesNotMatch(account, /settings\.version/);
+  assert.match(panelSource, /settings-sidebar-version/);
+  assert.match(panelSource, /settings\.appVersion/);
+  assert.match(panelSource, /settings\.piVersion/);
   assert.doesNotMatch(appearance, /settings\.thinkingExpandedDefault/);
+  // Code is its own view: syntax colours and file icons are not in Appearance.
+  assert.match(code, /settings\.codeTheme/);
+  assert.match(code, /settings\.fileIcons/);
+  assert.match(code, /settings\.colorfulFileIcons/);
+  assert.doesNotMatch(appearance, /settings\.codeTheme/);
+  assert.doesNotMatch(appearance, /settings\.fileIcons/);
 
   // Behaving: how a conversation sends, quotes and reports.
   assert.match(conversation, /settings\.thinkingExpandedDefault/);

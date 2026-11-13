@@ -220,8 +220,8 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   };
 
 
-  // General's two halves: how the app looks, and how a conversation behaves.
-  const [generalView, setGeneralView] = useState<"appearance" | "terminal" | "chat">("appearance");
+  // General's views: the app's look, code styling, the terminal and chat behaviour.
+  const [generalView, setGeneralView] = useState<"appearance" | "terminal" | "code" | "chat">("appearance");
 
   const appearance = (
     <>
@@ -263,91 +263,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             );
           })}
-        </div>
-      </section>
-
-      <section className="settings-general-section" aria-label={t("settings.codeTheme")}>
-        <h3 className="settings-general-heading">{t("settings.codeTheme")}</h3>
-        <p id="settings-code-theme-description" className="settings-general-description">
-          {t("settings.codeThemeDescription")}
-        </p>
-        <div className="settings-chat-options">
-          <div className="settings-chat-option">
-            <label htmlFor="settings-code-theme">{t("settings.codeThemeLabel")}</label>
-            <div className="settings-code-theme-row">
-              {/* The swatch carries the palette's own attribute, so the three roles paint
-                  with the variables that palette defines. `auto` inherits the app theme. */}
-              <span
-                className="settings-code-theme-preview"
-                aria-hidden="true"
-                data-code-theme={codeTheme === "auto" ? undefined : codeTheme}
-              >
-                <span style={{ background: "var(--code-keyword)" }} />
-                <span style={{ background: "var(--code-string)" }} />
-                <span style={{ background: "var(--code-comment)" }} />
-              </span>
-              <select
-                id="settings-code-theme"
-                value={codeTheme}
-                aria-describedby="settings-code-theme-description"
-                onChange={(event) => setCodeTheme(event.target.value as typeof codeTheme)}
-              >
-                <option value="auto">{t("settings.codeThemeAuto")}</option>
-                {CODE_THEME_OPTIONS.map((option) => (
-                  <option key={option.id} value={option.id}>{t(option.label)}</option>
-                ))}
-              </select>
-            </div>
-            {codeTheme !== "auto" && codeThemeScheme(codeTheme) !== (isDark ? "dark" : "light") ? (
-              <p className="settings-code-theme-note">{t("settings.codeThemeMismatch")}</p>
-            ) : null}
-          </div>
-        </div>
-      </section>
-
-      <section className="settings-general-section" aria-label={t("settings.fileIcons")}>
-        <h3 className="settings-general-heading">{t("settings.fileIcons")}</h3>
-        <p id="settings-colorful-file-icons-description" className="settings-general-description">
-          {t("settings.colorfulFileIconsDescription")}
-        </p>
-        <div className="settings-chat-options">
-          <div className="settings-chat-option">
-            <label htmlFor="settings-file-icon-theme">{t("settings.fileIconTheme")}</label>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: 3 }} aria-hidden="true">
-                <FolderIcon size={15} name="src" theme={fileIconTheme} />
-                <FileIcon size={15} name="main.ts" theme={fileIconTheme} />
-                <FileIcon size={15} name="main.rs" theme={fileIconTheme} />
-                <FileIcon size={15} name="README.md" theme={fileIconTheme} />
-              </span>
-              <select
-                id="settings-file-icon-theme"
-                value={fileIconTheme}
-                onChange={(event) => setFileIconTheme(event.target.value as typeof fileIconTheme)}
-                style={{
-                  padding: "4px 8px",
-                  border: "1px solid var(--border)",
-                  borderRadius: 5,
-                  background: "var(--bg)",
-                  color: "var(--text)",
-                  fontSize: 12,
-                }}
-              >
-                {ICON_THEMES.map((theme) => (
-                  <option key={theme.id} value={theme.id}>{theme.label}</option>
-                ))}
-              </select>
-            </div>
-          </div>
-          <div className="settings-chat-option settings-chat-switch-option">
-            <span>{t("settings.colorfulFileIcons")}</span>
-            <ConfigSwitch
-              checked={colorfulFileIcons}
-              label={t("settings.colorfulFileIcons")}
-              describedBy="settings-colorful-file-icons-description"
-              onChange={setColorfulFileIcons}
-            />
-          </div>
         </div>
       </section>
 
@@ -542,14 +457,96 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
         </section>
       )}
 
-      <section className="settings-general-section settings-version-section">
-        <h3 className="settings-general-heading">{t("settings.version")}</h3>
-        <p className="settings-version-line">
-          <span>{t("settings.appVersion", { version: appVersion })}</span>
-          <span aria-hidden="true">·</span>
-          <span>{t("settings.piVersion", { version: piVersion })}</span>
+    </>
+  );
+
+  const code = (
+    <>
+      <section className="settings-general-section" aria-label={t("settings.codeTheme")}>
+        <h3 className="settings-general-heading">{t("settings.codeTheme")}</h3>
+        <p id="settings-code-theme-description" className="settings-general-description">
+          {t("settings.codeThemeDescription")}
         </p>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option">
+            <label htmlFor="settings-code-theme">{t("settings.codeThemeLabel")}</label>
+            <div className="settings-code-theme-row">
+              {/* The swatch carries the palette's own attribute, so the three roles paint
+                  with the variables that palette defines. `auto` inherits the app theme. */}
+              <span
+                className="settings-code-theme-preview"
+                aria-hidden="true"
+                data-code-theme={codeTheme === "auto" ? undefined : codeTheme}
+              >
+                <span style={{ background: "var(--code-keyword)" }} />
+                <span style={{ background: "var(--code-string)" }} />
+                <span style={{ background: "var(--code-comment)" }} />
+              </span>
+              <select
+                id="settings-code-theme"
+                value={codeTheme}
+                aria-describedby="settings-code-theme-description"
+                onChange={(event) => setCodeTheme(event.target.value as typeof codeTheme)}
+              >
+                <option value="auto">{t("settings.codeThemeAuto")}</option>
+                {CODE_THEME_OPTIONS.map((option) => (
+                  <option key={option.id} value={option.id}>{t(option.label)}</option>
+                ))}
+              </select>
+            </div>
+            {codeTheme !== "auto" && codeThemeScheme(codeTheme) !== (isDark ? "dark" : "light") ? (
+              <p className="settings-code-theme-note">{t("settings.codeThemeMismatch")}</p>
+            ) : null}
+          </div>
+        </div>
       </section>
+
+      <section className="settings-general-section" aria-label={t("settings.fileIcons")}>
+        <h3 className="settings-general-heading">{t("settings.fileIcons")}</h3>
+        <p id="settings-colorful-file-icons-description" className="settings-general-description">
+          {t("settings.colorfulFileIconsDescription")}
+        </p>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option">
+            <label htmlFor="settings-file-icon-theme">{t("settings.fileIconTheme")}</label>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: 3 }} aria-hidden="true">
+                <FolderIcon size={15} name="src" theme={fileIconTheme} />
+                <FileIcon size={15} name="main.ts" theme={fileIconTheme} />
+                <FileIcon size={15} name="main.rs" theme={fileIconTheme} />
+                <FileIcon size={15} name="README.md" theme={fileIconTheme} />
+              </span>
+              <select
+                id="settings-file-icon-theme"
+                value={fileIconTheme}
+                onChange={(event) => setFileIconTheme(event.target.value as typeof fileIconTheme)}
+                style={{
+                  padding: "4px 8px",
+                  border: "1px solid var(--border)",
+                  borderRadius: 5,
+                  background: "var(--bg)",
+                  color: "var(--text)",
+                  fontSize: 12,
+                }}
+              >
+                {ICON_THEMES.map((theme) => (
+                  <option key={theme.id} value={theme.id}>{theme.label}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          <div className="settings-chat-option settings-chat-switch-option">
+            <span>{t("settings.colorfulFileIcons")}</span>
+            <ConfigSwitch
+              checked={colorfulFileIcons}
+              label={t("settings.colorfulFileIcons")}
+              describedBy="settings-colorful-file-icons-description"
+              onChange={setColorfulFileIcons}
+            />
+          </div>
+        </div>
+      </section>
+
     </>
   );
 
@@ -571,12 +568,28 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               <ConfigSidebarText className="is-grow">{t("settings.terminal")}</ConfigSidebarText>
             </ConfigSidebarItem>
             <ConfigSidebarItem
+              active={generalView === "code"}
+              onClick={() => setGeneralView("code")}
+            >
+              <ConfigSidebarText className="is-grow">{t("settings.code")}</ConfigSidebarText>
+            </ConfigSidebarItem>
+            <ConfigSidebarItem
               active={generalView === "chat"}
               onClick={() => setGeneralView("chat")}
             >
               <ConfigSidebarText className="is-grow">{t("settings.chat")}</ConfigSidebarText>
             </ConfigSidebarItem>
           </ConfigSidebarList>
+          {/* The build's versions sit at the bottom of the sidebar, below the
+              views, rather than inside Appearance. */}
+          <div className="settings-sidebar-version">
+            <div className="settings-sidebar-version-label">{t("settings.version")}</div>
+            <p className="settings-version-line">
+              <span>{t("settings.appVersion", { version: appVersion })}</span>
+              <span aria-hidden="true">·</span>
+              <span>{t("settings.piVersion", { version: piVersion })}</span>
+            </p>
+          </div>
         </ConfigSidebar>
         <ConfigDetail>
           <ConfigDetailHeader style={{ padding: "20px 20px 0" }}>
@@ -584,14 +597,18 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               <ConfigDetailTitle>
                 {generalView === "appearance"
                   ? t("settings.appearance")
-                  : generalView === "terminal" ? t("settings.terminal") : t("settings.chat")}
+                  : generalView === "terminal"
+                    ? t("settings.terminal")
+                    : generalView === "code" ? t("settings.code") : t("settings.chat")}
               </ConfigDetailTitle>
             </ConfigDetailHeaderInfo>
           </ConfigDetailHeader>
           <div className="settings-general">
             {generalView === "appearance"
               ? <>{appearance}{account}</>
-              : generalView === "terminal" ? <TerminalSettings /> : conversation}
+              : generalView === "terminal"
+                ? <TerminalSettings />
+                : generalView === "code" ? code : conversation}
           </div>
         </ConfigDetail>
       </ConfigSplitView>

@@ -31,7 +31,7 @@ function useResolvedTerminalType() {
   const fontSize = resolveTerminalFontSize(appearance.fontSize, terminalFontSize(chat.fontSize));
   const fontWeight = resolveTerminalFontWeight(appearance.fontWeight, fontPreferences.monoWeight);
   const fontFamily = terminalFontStack(appearance.font, appearance.customFont) ?? "var(--font-mono)";
-  return { appearance, fontSize, fontWeight, fontFamily };
+  return { appearance, fontSize, fontWeight, fontFamily, chatSize: chat.fontSize };
 }
 
 /** A small, non-live preview: the palette and metrics the terminal will use. */
@@ -89,7 +89,7 @@ const CURSOR_LABELS: Record<TerminalCursorStyle, string> = {
 
 export function TerminalTypographySettings() {
   const { t } = useI18n();
-  const { appearance, fontSize } = useResolvedTerminalType();
+  const { appearance, fontSize, chatSize } = useResolvedTerminalType();
   const { setAppearance, resetAppearance } = useTerminalAppearance();
   const matchChat = appearance.fontSize === null;
 
@@ -168,6 +168,11 @@ export function TerminalTypographySettings() {
           disabled={matchChat}
           onChange={(event) => setAppearance({ fontSize: Number(event.target.value) })}
         />
+        {matchChat && (
+          <p className="settings-terminal-hint">
+            {t("settings.terminalFontSizeFollowHint", { terminal: fontSize, chat: chatSize })}
+          </p>
+        )}
       </div>
 
       <div className="settings-chat-option settings-chat-range-option">

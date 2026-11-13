@@ -1505,18 +1505,24 @@
   margin-left: 22px;
   overflow-x: auto;
   overflow-y: hidden;
+  /* The tabs size to their labels, so at normal widths there is nothing to
+     scroll. Keep a wheel/touch path for very narrow dialogs without the bar. */
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.settings-section-tabs::-webkit-scrollbar {
+  display: none;
 }
 
 .settings-section-tab {
   position: relative;
   display: flex;
-  flex: 0 0 96px;
+  flex: 0 0 auto;
   align-items: center;
   justify-content: center;
   gap: 5px;
-  width: 96px;
   height: 100%;
-  padding: 0 2px;
+  padding: 0 10px;
   border: 0;
   outline: none;
   background: transparent;
@@ -1719,10 +1725,21 @@
   line-height: 1.5;
 }
 
-/* The build's versions, last in General. */
-.settings-version-section {
-  padding-top: 18px;
+/* The build's versions, pinned to the bottom of General's sidebar. */
+.settings-sidebar-version {
+  flex: none;
+  padding: 10px 12px 12px;
   border-top: 1px solid var(--border);
+}
+.settings-sidebar-version-label {
+  margin-bottom: 4px;
+  color: var(--text-dim);
+  font-size: 10px;
+  font-weight: 600;
+}
+.settings-sidebar-version .settings-version-line {
+  gap: 4px;
+  font-size: 10px;
 }
 
 .settings-version-line {
@@ -3041,4 +3058,11 @@ select.mcp-add-input {
 .settings-terminal-reset-row {
   display: flex;
   justify-content: flex-start;
+}
+
+.settings-terminal-hint {
+  margin: 6px 0 0;
+  color: var(--text-dim);
+  font-size: 11px;
+  line-height: 1.5;
 }
