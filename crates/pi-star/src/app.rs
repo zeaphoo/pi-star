@@ -35,7 +35,6 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/sessions/{id}/fork", post(routes::sessions::fork_session))
         .route("/sessions/{id}/state", get(routes::sessions::state))
         .route("/sessions/{id}/context", get(routes::sessions::context))
-        .route("/sessions/{id}/export", get(routes::sessions::export))
         .route(
             "/sessions/{id}/auto-name",
             post(routes::sessions::auto_name),

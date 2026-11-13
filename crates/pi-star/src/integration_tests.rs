@@ -1988,7 +1988,7 @@ async fn models_refresh_and_tools_settings_keep_their_contract() {
 }
 
 #[tokio::test]
-async fn session_rename_search_stats_export_and_delete() {
+async fn session_rename_search_stats_and_delete() {
     let fixture = write_fixture();
     let app = router(&fixture).await;
 
@@ -2041,21 +2041,6 @@ async fn session_rename_search_stats_export_and_delete() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert!(body["stats"][fixture.session_id.as_str()]["totalActiveMs"].is_number());
-
-    // Pin the deterministic Rust fallback: this checkout may have the pi CLI
-    // installed, whose export template is not part of the assertion.
-    unsafe { std::env::set_var("PI_STAR_PI_CLI", "/nonexistent/pi-star-pi-export") };
-    let (status, text) = call_text(
-        app.clone(),
-        Request::builder()
-            .uri(format!("/api/sessions/{}/export", fixture.session_id))
-            .body(Body::empty())
-            .unwrap(),
-    )
-    .await;
-    unsafe { std::env::remove_var("PI_STAR_PI_CLI") };
-    assert_eq!(status, StatusCode::OK);
-    assert!(text.contains("fixture reply"));
 
     let (status, body) = call(
         app.clone(),

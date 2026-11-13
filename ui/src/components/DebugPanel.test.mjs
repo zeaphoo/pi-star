@@ -790,9 +790,15 @@ test("AppShell keeps the chat's reader in a ref and the panel open across sessio
   assert.match(shellSource, /onDebugSnapshotReaderChange=\{handleDebugSnapshotReaderChange\}/);
   assert.match(shellSource, /<DebugPanelBoundary fallback=\{translate\("debug\.failed"\)\}>\s*<DebugPanel\s/);
   assert.match(shellSource, /useEffect\(\(\) => \{\s*startPageVisibilityTracking\(\);\s*\}, \[\]\);/);
-  for (const [name, next] of [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"], ["handleSessionDeleted", "handleViewFullHistory"]]) {
+  const closers = [["handleCwdChange", "handleSelectSession"], ["handleSelectSession", "handleNewSession"], ["handleNewSession", "hydrateSelectedSession"]];
+  for (const [name, next] of closers) {
     const body = between(shellSource, `const ${name} = useCallback`, `const ${next} = useCallback`);
     assert.match(body, /setActiveTopPanel\(\(panel\) => panel === "debug" \? panel : null\);/, name);
     assert.doesNotMatch(body, /setActiveTopPanel\(null\)/, name);
   }
+  // handleSessionDeleted is the last of them: what follows is a declaration,
+  // not another callback, so it ends at the composer's comment.
+  const deleted = between(shellSource, "const handleSessionDeleted = useCallback", "// Show chat area if a session is selected");
+  assert.match(deleted, /setActiveTopPanel\(\(panel\) => panel === "debug" \? panel : null\);/);
+  assert.doesNotMatch(deleted, /setActiveTopPanel\(null\)/);
 });

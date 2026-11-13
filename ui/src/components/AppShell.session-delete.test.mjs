@@ -8,7 +8,8 @@ const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8"
 
 function handleSessionDeletedBody() {
   const start = source.indexOf("  const handleSessionDeleted = useCallback");
-  const end = source.indexOf("  const handleViewFullHistory = useCallback", start);
+  // The next declaration after the callback marks where it ends.
+  const end = source.indexOf("  // Show chat area if a session is selected", start);
   assert.notEqual(start, -1, "handleSessionDeleted callback not found");
   assert.notEqual(end, -1, "the callback after handleSessionDeleted was not found");
   return source.slice(start, end);
