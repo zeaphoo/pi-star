@@ -2310,7 +2310,6 @@ export function AppShell() {
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile ? {} : { borderLeft: "1px solid var(--border)" }),
           color: open ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
         }}
@@ -2347,9 +2346,7 @@ export function AppShell() {
           background: open ? "var(--bg-selected)" : "none",
           border: "none",
           borderTop: open ? "2px solid var(--accent)" : "2px solid transparent",
-          ...(mobile
-            ? { borderRight: "1px solid var(--border)" }
-            : { borderLeft: showChat && mainView === "chat" ? "none" : "1px solid var(--border)" }),
+          ...(mobile ? { borderRight: "1px solid var(--border)" } : {}),
           color: open ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.1s, background 0.1s",
         }}
@@ -2388,7 +2385,7 @@ export function AppShell() {
           display: "flex", alignItems: "center", justifyContent: "center",
           width: TOP_BAR_ICON_BUTTON_SIZE, height: "100%", padding: 0,
           background: dockVisible ? "var(--bg-selected)" : "none",
-          border: "none", borderLeft: "1px solid var(--border)",
+          border: "none", borderLeft: showChat ? "1px solid var(--border)" : "none",
           color: dockVisible ? "var(--text)" : "var(--text-muted)",
           cursor: "pointer", flexShrink: 0, transition: "color 0.12s, background 0.12s",
         }}
@@ -2550,7 +2547,17 @@ export function AppShell() {
           style={{ display: "flex", alignItems: "center", position: "relative", borderBottom: "1px solid var(--border)", height: "calc(36px + env(safe-area-inset-top))", paddingTop: "env(safe-area-inset-top)" }}
         >
           {/* The two groups the centred view switch keeps clear of (see tabSlot). */}
-          <div ref={topBarLeftRef} style={{ display: "flex", alignItems: "stretch", height: "100%", flexShrink: 0 }}>
+          <div
+            ref={topBarLeftRef}
+            data-top-bar-group="left"
+            style={{
+              display: "flex",
+              alignItems: "stretch",
+              height: "100%",
+              flexShrink: 0,
+              borderRight: isMobile ? undefined : "1px solid var(--border)",
+            }}
+          >
           <button
             onClick={handleSidebarToggle}
              title={sidebarOpen ? translate("sidebar.hide") : translate("sidebar.show")}
@@ -2692,7 +2699,18 @@ export function AppShell() {
               )}
             </div>
           )}
-          <div ref={topBarRightRef} style={{ display: "flex", alignItems: "stretch", height: "100%", marginLeft: "auto", flexShrink: 0 }}>
+          <div
+            ref={topBarRightRef}
+            data-top-bar-group="right"
+            style={{
+              display: "flex",
+              alignItems: "stretch",
+              height: "100%",
+              marginLeft: "auto",
+              flexShrink: 0,
+              borderLeft: !isMobile && (showChat || canDock) ? "1px solid var(--border)" : undefined,
+            }}
+          >
           {!isMobile && (
             <>
               {renderArtifactsButton(false)}

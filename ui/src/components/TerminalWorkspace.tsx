@@ -690,14 +690,14 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
             disabled={!hasProject || workspace.tabs.length >= maxTerminalTabs()}
             title={t("terminal.newTab")}
             aria-label={t("terminal.newTab")}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, minWidth: 30, border: "none", borderRight: `1px solid ${chrome.border}`, background: "transparent", color: chrome.muted, cursor: hasProject && workspace.tabs.length < maxTerminalTabs() ? "pointer" : "not-allowed", opacity: hasProject && workspace.tabs.length < maxTerminalTabs() ? 1 : 0.45, flexShrink: 0 }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, minWidth: 30, border: "none", background: "transparent", color: chrome.muted, cursor: hasProject && workspace.tabs.length < maxTerminalTabs() ? "pointer" : "not-allowed", opacity: hasProject && workspace.tabs.length < maxTerminalTabs() ? 1 : 0.45, flexShrink: 0 }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
             </svg>
           </button>
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 6px", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 2, padding: "0 6px", flexShrink: 0, borderLeft: `1px solid ${chrome.border}` }}>
           <IconButton label={t("terminal.splitRight")} onClick={() => splitPane("row")} disabled={!canSplit}>
             <SplitIcon direction="row" />
           </IconButton>
