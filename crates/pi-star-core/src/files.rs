@@ -420,9 +420,7 @@ pub fn media_mime_for(path: &Path) -> Option<&'static str> {
         "mov" => Some("video/quicktime"),
         "ogv" => Some("video/ogg"),
         "pdf" => Some("application/pdf"),
-        "docx" => Some(
-            "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        ),
+        "docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document"),
         _ => None,
     }
 }
@@ -743,19 +741,46 @@ mod tests {
         assert_eq!(media_mime_for(Path::new("logo.svg")), Some("image/svg+xml"));
         assert_eq!(media_mime_for(Path::new("song.MP3")), Some("audio/mpeg"));
         assert_eq!(media_mime_for(Path::new("clip.mp4")), Some("video/mp4"));
-        assert_eq!(media_mime_for(Path::new("doc.pdf")), Some("application/pdf"));
+        assert_eq!(
+            media_mime_for(Path::new("doc.pdf")),
+            Some("application/pdf")
+        );
         // A download of a text file is an octet stream, never a guessed type.
-        assert_eq!(download_mime_for(Path::new("app.ts")), "application/octet-stream");
+        assert_eq!(
+            download_mime_for(Path::new("app.ts")),
+            "application/octet-stream"
+        );
     }
 
     #[test]
     fn detects_language_from_content_when_the_path_has_none() {
-        assert_eq!(language_for_content(Path::new("script"), "#!/usr/bin/env python3\nprint(1)"), "python");
-        assert_eq!(language_for_content(Path::new("script"), "#!/bin/bash\necho hi"), "bash");
-        assert_eq!(language_for_content(Path::new("script"), "#!/usr/bin/env node\nconsole.log(1)"), "javascript");
-        assert_eq!(language_for_content(Path::new("config"), "<?xml version=\"1.0\"?>\n<root/>"), "xml");
-        assert_eq!(language_for_content(Path::new("page"), "<!doctype html>\n<html></html>"), "html");
-        assert_eq!(language_for_content(Path::new("data"), "{\"a\": 1}"), "json");
-        assert_eq!(language_for_content(Path::new("LICENSE"), "plain text"), "text");
+        assert_eq!(
+            language_for_content(Path::new("script"), "#!/usr/bin/env python3\nprint(1)"),
+            "python"
+        );
+        assert_eq!(
+            language_for_content(Path::new("script"), "#!/bin/bash\necho hi"),
+            "bash"
+        );
+        assert_eq!(
+            language_for_content(Path::new("script"), "#!/usr/bin/env node\nconsole.log(1)"),
+            "javascript"
+        );
+        assert_eq!(
+            language_for_content(Path::new("config"), "<?xml version=\"1.0\"?>\n<root/>"),
+            "xml"
+        );
+        assert_eq!(
+            language_for_content(Path::new("page"), "<!doctype html>\n<html></html>"),
+            "html"
+        );
+        assert_eq!(
+            language_for_content(Path::new("data"), "{\"a\": 1}"),
+            "json"
+        );
+        assert_eq!(
+            language_for_content(Path::new("LICENSE"), "plain text"),
+            "text"
+        );
     }
 }

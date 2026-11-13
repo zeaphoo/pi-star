@@ -1005,7 +1005,9 @@ fn count_turns_before(entries: &[Value], oldest_parent: &str) -> usize {
                     && matches!(
                         custom_type,
                         Some(
-                            "compaction" | "pi-star:subagent-notification" | "subagent-notification"
+                            "compaction"
+                                | "pi-star:subagent-notification"
+                                | "subagent-notification"
                         )
                     )
             }

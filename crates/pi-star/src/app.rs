@@ -40,10 +40,7 @@ pub fn router(state: Arc<AppState>) -> Router {
             "/sessions/{id}/auto-name",
             post(routes::sessions::auto_name),
         )
-        .route(
-            "/sessions/{id}/entries",
-            get(routes::sessions::entries),
-        )
+        .route("/sessions/{id}/entries", get(routes::sessions::entries))
         .route(
             "/sessions/{id}/entries/{entry_id}",
             get(routes::sessions::entry),

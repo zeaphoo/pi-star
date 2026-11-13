@@ -722,11 +722,7 @@ fn preview_content_at(entry: &mut Value, pointer: &str, chars: usize) -> bool {
         return false;
     };
     for block in blocks.iter_mut() {
-        let Some(kind) = block
-            .get("type")
-            .and_then(Value::as_str)
-            .map(str::to_owned)
-        else {
+        let Some(kind) = block.get("type").and_then(Value::as_str).map(str::to_owned) else {
             continue;
         };
         match kind.as_str() {

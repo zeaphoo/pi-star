@@ -315,7 +315,10 @@ async fn session_entries_serves_the_raw_log_for_the_trace_view() {
     let (status, body) = call(
         app.clone(),
         Request::builder()
-            .uri(format!("/api/sessions/{}/entries?limit=0", fixture.session_id))
+            .uri(format!(
+                "/api/sessions/{}/entries?limit=0",
+                fixture.session_id
+            ))
             .body(Body::empty())
             .unwrap(),
     )
@@ -327,25 +330,22 @@ async fn session_entries_serves_the_raw_log_for_the_trace_view() {
     let (status, body) = call(
         app.clone(),
         Request::builder()
-            .uri(format!(
-                "/api/sessions/{}/entries/a1",
-                fixture.session_id
-            ))
+            .uri(format!("/api/sessions/{}/entries/a1", fixture.session_id))
             .body(Body::empty())
             .unwrap(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["entry"]["id"], "a1");
-    assert_eq!(body["entry"]["message"]["content"][0]["text"], "fixture reply");
+    assert_eq!(
+        body["entry"]["message"]["content"][0]["text"],
+        "fixture reply"
+    );
 
     let (status, _) = call(
         app,
         Request::builder()
-            .uri(format!(
-                "/api/sessions/{}/entries/nope",
-                fixture.session_id
-            ))
+            .uri(format!("/api/sessions/{}/entries/nope", fixture.session_id))
             .body(Body::empty())
             .unwrap(),
     )
