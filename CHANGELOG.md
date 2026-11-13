@@ -8,8 +8,19 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.3] - 2026-11-13
+
+第三个预发布版本：终端外观与内置字体、设置分区，以及终端恢复和交互细节。
+
 ### Added
 
+- **终端外观**：主题改为预设库（Pi、One Dark、Dracula、Nord、Gruvbox、Solarized、
+  GitHub Light、Catppuccin、Tokyo Night），可跟随应用明暗；新增终端字体、字重、字号、
+  行高、光标、字间距、最小对比度和回滚行数设置，修改不会重建 PTY。
+- **内置终端字体**：打包 Noto Sans Mono、完整 Noto Sans Mono CJK SC，以及
+  JetBrainsMono/Hack Nerd Font（Regular + Bold），CJK 与 Nerd 图标开箱可用。
+- **设置分区**：General 左侧栏新增「终端」和「代码」独立视图；「代码」收拢语法高亮与
+  文件图标，版本信息固定在 sidebar 底部。
 - **轨迹视图**：在「对话」右侧新增与会话绑定的「轨迹」标签，把 session 的追加日志压成
   单行事件列表（用户 / 助手 / 思考 / 工具 / 压缩 / 模型切换 / 上下文编辑…），点开一行在
   右侧「概述 / 参数 / 结果 / Schema / 计时」面板里看详情。右侧竖向三轨（输入 / 模型 /
@@ -25,8 +36,23 @@
   mark 共用同一组变量（改主题时自动跟随），一眼可分；错误无论密度多高都保持高亮。
   轨道按 2px 槽位聚合，mark 高度跟随间距，700 个事件也不再糊成一条实心色带。
 
+### Changed
+
+- **终端操作位置**：重启/关闭 pane 的按钮从工具栏最右侧移到 pane 右上角，避免被误读
+  为关闭全部窗口。
+- **聊天字号**：滑块改名为「聊天字体大小」；终端跟随聊天时明确显示终端比聊天小 1px。
+- **工具栏分隔线**：顶部左右分组和终端 Tab/分屏操作区的竖线固定在容器上，不再随按钮
+  增减移动。
+
 ### Fixed
 
+- **终端 split 恢复**：两个 pane 同时丢失 PTY 时只恢复一个；现在逐个恢复，并移除多余
+  的恢复提示条。
+- **`exit` 关闭终端**：shell 以退出码 0 结束时关闭对应 pane，最后一个 pane 连带关闭
+  Tab；非 0 退出保留现场。
+- **提交信息区域**：长提交信息默认限制高度，可拖拽调整（双击或方向键复位），不再把
+  diff 挤出屏幕。
+- **英文设置导航**：section tab 按标签自适应宽度，英文标签不再出现横向滚动条。
 - **会话行 Fork 在有活动运行时失败**：会话一旦有运行中的后端，Fork 会返回 500「Invalid
   entry ID for forking」。RPC 分支在没给 entry 时拿叶子节点去 fork，而 pi 的 fork 是「在这
   条用户消息之前分叉」，叶子通常是助手的回复，于是必然被拒。现在没有 entry 时改用 pi 的
@@ -174,6 +200,7 @@
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
 
-[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.2...HEAD
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.3...HEAD
+[0.1.0-rc.3]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.1
