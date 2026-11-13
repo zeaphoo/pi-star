@@ -50,8 +50,11 @@ function treeOpenKey(instanceId: string | undefined): string {
   return instanceId ? `pi-star:code-tree-open:${instanceId}` : "pi-star:code-tree-open";
 }
 
-function treeWidthKey(instanceId: string | undefined): string {
-  return instanceId ? `pi-star:code-tree-width:${instanceId}` : "pi-star:code-tree-width";
+function treeWidthKey(projectKey: string, instanceId: string | undefined): string {
+  const scope = projectKey || "default";
+  return instanceId
+    ? `pi-star:code-tree-width:${scope}:${instanceId}`
+    : `pi-star:code-tree-width:${scope}`;
 }
 
 function readTreeOpen(instanceId: string | undefined): boolean {
@@ -214,7 +217,7 @@ export function CodeWorkspace({
     growthDirection: "right",
     maxWidth: TREE_MAX_WIDTH,
     minWidth: TREE_MIN_WIDTH,
-    storageKey: treeWidthKey(instanceId),
+    storageKey: treeWidthKey(projectKey ?? root ?? "", instanceId),
     widthRef: treeWidthRef,
   });
 
@@ -390,7 +393,11 @@ export function CodeWorkspace({
       ref={treeResizer.panelRef}
       className="code-workspace-tree"
       style={{
-        width: treeResizer.width,
+        // The hook writes --code-tree-width straight to this element while
+        // dragging; binding the width to the React state would only move it on
+        // pointerup and make the drag feel stuck.
+        "--code-tree-width": `${treeResizer.width}px`,
+        width: "var(--code-tree-width)",
         flexShrink: 0,
         display: "flex",
         flexDirection: "column",
@@ -405,14 +412,14 @@ export function CodeWorkspace({
           zIndex: 32,
           boxShadow: "8px 0 28px rgba(0,0,0,0.22)",
         } : null),
-      }}
+      } as React.CSSProperties}
     >
       <div
         style={{
           display: "flex",
           alignItems: "center",
           gap: 6,
-          height: 34,
+          height: "var(--top-bar-height)",
           padding: "0 8px",
           boxSizing: "border-box",
           borderBottom: "1px solid var(--border)",

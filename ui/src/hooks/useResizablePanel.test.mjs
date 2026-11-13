@@ -160,3 +160,34 @@ test("without persistClamp a click on the separator saves nothing", () => {
   panel.resize(1000);
   assert.equal(panel.shown(), 400, "back to the user's size");
 });
+
+test("a changed storage key restores that panel's own width", () => {
+  mounted?.unmount();
+  stored.clear();
+  stored.set("project-a", "300");
+  stored.set("project-b", "380");
+  let key = "project-a";
+  const widthRef = { current: 0 };
+  const view = renderHook(() => useResizablePanel({
+    ariaLabel: "Resize",
+    axis: "vertical",
+    cssVariable: "--test-height",
+    defaultWidth: 240,
+    getMaxWidth: () => 800,
+    growthDirection: "down",
+    maxWidth: 800,
+    minWidth: 120,
+    storageKey: key,
+    widthRef,
+  }));
+  mounted = view;
+  assert.equal(view.result.width, 300);
+  key = "project-b";
+  view.rerender();
+  view.flush();
+  assert.equal(view.result.width, 380);
+  key = "project-a";
+  view.rerender();
+  view.flush();
+  assert.equal(view.result.width, 300, "switching back keeps each project's width");
+});

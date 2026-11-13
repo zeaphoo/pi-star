@@ -2289,7 +2289,7 @@ pre, code {
 /* File viewer toolbar */
 .file-viewer-toolbar {
   min-width: 0;
-  min-height: 35px;
+  min-height: var(--top-bar-height);
 }
 
 .file-viewer-path {

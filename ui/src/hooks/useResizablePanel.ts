@@ -81,7 +81,9 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
   } = options;
   const panelRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<DragState | null>(null);
-  const restoredRef = useRef(false);
+  // The key whose stored size is currently applied. A project switch changes
+  // the key, so the same mounted panel must restore that project's own width.
+  const restoredKeyRef = useRef<string | null>(null);
   // With persistClamp off: the user's size, which only their own commits change.
   const preferredRef = useRef(defaultWidth);
   const [width, setWidth] = useState(defaultWidth);
@@ -243,8 +245,8 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
   }, [axis, commitWidth, effectiveMaxWidth, growthDirection, minWidth, persistClamp, resetWidth, widthRef]);
 
   useEffect(() => {
-    if (restoredRef.current) return;
-    restoredRef.current = true;
+    if (restoredKeyRef.current === storageKey) return;
+    restoredKeyRef.current = storageKey;
 
     const storedWidth = readStoredWidth(storageKey);
     const candidate = storedWidth ?? getDefaultWidth?.() ?? defaultWidth;
@@ -260,7 +262,7 @@ export function useResizablePanel(options: UseResizablePanelOptions) {
   }, [commitWidth, defaultWidth, getDefaultWidth, maxWidth, minWidth, persistClamp, storageKey]);
 
   useEffect(() => {
-    if (!restoredRef.current) return;
+    if (restoredKeyRef.current === null) return;
     fitWidth();
 
     const onResize = () => {
