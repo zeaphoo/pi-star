@@ -43,6 +43,13 @@ interface Props {
   isMobile: boolean;
   /** False keeps polling and measurement work off a hidden view. */
   active: boolean;
+  /**
+   * Changes whenever the session's log grew (`modified` plus message count).
+   * The trace has to reload on it: a session that is opened before its first
+   * entry is written — every brand-new conversation — otherwise stays empty
+   * for ever, because nothing else ever asks again.
+   */
+  revision: string;
 }
 
 interface EntriesResponse {
@@ -84,7 +91,7 @@ const FILTERS: Array<{ id: keyof TraceFilter; label: string }> = [
  * every event is one line, the whole run is loaded up front so the rail is a
  * true map, and the right-hand panel is the only place detail expands.
  */
-export function TraceView({ sessionId, running, tools, isMobile, active }: Props) {
+export function TraceView({ sessionId, running, tools, isMobile, active, revision }: Props) {
   const { t } = useI18n();
   const [entries, setEntries] = useState<Record<string, unknown>[]>([]);
   const [total, setTotal] = useState(0);
@@ -103,9 +110,22 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollFrameRef = useRef<number | null>(null);
   const lastEntryIdRef = useRef<string | null>(null);
-  /** One sync at a time: a poll firing mid-load would otherwise append the same
-   *  tail twice, because the cursor only advances once the loop finishes. */
+  /**
+   * A tail sync waits for the one in flight: two would append the same tail
+   * twice, because the cursor only advances once a loop finishes. A reset load
+   * never waits — it supersedes, and the older call's writes are dropped by the
+   * generation check. Without that, a load aborted by a fast session switch left
+   * the view empty for good: the cleanup aborted the fetch, the retry hit the
+   * busy flag, and the aborted call cleared it too late for anyone to retry.
+   */
   const syncingRef = useRef(false);
+  /** Bumped by every sync; only the newest may write state or move the cursor. */
+  const generationRef = useRef(0);
+  /** The revision the newest load is known to cover, for the catch-up below. */
+  const revisionRef = useRef(revision);
+  revisionRef.current = revision;
+  /** Revision already folded into the list, so the effect above fires once. */
+  const coveredRevisionRef = useRef<string | null>(null);
   const dragRef = useRef<{ pointerId: number; startX: number; startWidth: number } | null>(null);
   /** The remembered position, waiting for the rows it refers to. */
   const pendingAnchorRef = useRef<TraceViewAnchor | null>(null);
@@ -124,7 +144,15 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
   const sync = useCallback(
     async (options: { reset?: boolean; silent?: boolean; signal?: AbortSignal } = {}): Promise<void> => {
       if (!sessionId) return;
-      if (syncingRef.current) return;
+      const supersedes = options.reset === true;
+      if (!supersedes && syncingRef.current) return;
+      const generation = generationRef.current + 1;
+      generationRef.current = generation;
+      /** False once a newer call owns the state: drop everything this one finds. */
+      const current = (): boolean => generationRef.current === generation;
+      // The revision this load promises to cover; a change during the fetch
+      // means one more pass after it, never a silently stale list.
+      const at = revisionRef.current;
       syncingRef.current = true;
       if (options.reset) {
         lastEntryIdRef.current = null;
@@ -157,6 +185,7 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
                   Boolean(entry) && typeof entry === "object" && !Array.isArray(entry),
               )
             : [];
+          if (!current()) return;
           if (typeof data.total === "number") setTotal(data.total);
           accumulated.push(...page);
           if (accumulated.length > 0) {
@@ -169,19 +198,31 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
           if (data.hasMore !== true || !next || next === after || accumulated.length >= MAX_ENTRIES) break;
           after = next;
         }
+        if (!current()) return;
         const tail = accumulated.at(-1);
         if (tail) lastEntryIdRef.current = entryIdOf(tail) || lastEntryIdRef.current;
         else if (startedFresh) lastEntryIdRef.current = null;
       } catch (cause) {
         if (cause instanceof Error && cause.name === "AbortError") return;
+        if (!current()) return;
         setError(cause instanceof Error ? cause.message : String(cause));
       } finally {
-        syncingRef.current = false;
-        if (!options.silent) setLoading(false);
+        // A superseded call must not clear the flag the newer one now owns.
+        if (current()) {
+          syncingRef.current = false;
+          if (!options.silent) setLoading(false);
+          // The log grew while this pass ran (a brand-new session writes its
+          // first entry mid-fetch): one more pass, which the busy flag would
+          // otherwise suppress until something else happened to ask.
+          if (revisionRef.current !== at) void syncRef.current({});
+        }
       }
     },
     [sessionId],
   );
+  /** `sync` reaches itself for the catch-up pass without depending on itself. */
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
 
   useEffect(() => {
     if (!sessionId) {
@@ -201,6 +242,9 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
     pendingAnchorRef.current = remembered.anchor;
     setRestoreToken((token) => token + 1);
     setError(null);
+    // A different session starts from scratch: whatever revision the previous
+    // one was known to cover says nothing about this log.
+    coveredRevisionRef.current = null;
     const controller = new AbortController();
     void sync({ reset: true, signal: controller.signal });
     return () => controller.abort();
@@ -213,6 +257,26 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
     const timer = setInterval(() => void sync({ silent: true }), POLL_MS);
     return () => clearInterval(timer);
   }, [active, running, sessionId, sync]);
+
+  /**
+   * Catch up when the log grew.
+   *
+   * `running` alone is not enough: a conversation that was just started has no
+   * entries yet when the tab opens, and by the time it does the run may already
+   * have settled, so no poll is scheduled and the view would claim the session
+   * was empty until the user switched away and back. The session's own revision
+   * is the signal that covers every case — a new first entry, a finished turn, an
+   * append from another window.
+   */
+  useEffect(() => {
+    if (!sessionId) return;
+    if (coveredRevisionRef.current === revision) return;
+    const firstSeen = coveredRevisionRef.current === null;
+    coveredRevisionRef.current = revision;
+    // The load below already reads the whole log for a newly selected session.
+    if (firstSeen) return;
+    void sync({});
+  }, [revision, sessionId, sync]);
 
   useEffect(() => {
     const element = scrollRef.current;
@@ -324,7 +388,10 @@ export function TraceView({ sessionId, running, tools, isMobile, active }: Props
     if (!active || wasActive) return;
     pendingAnchorRef.current = sessionId ? getTraceSessionState(sessionId).anchor : null;
     setRestoreToken((token) => token + 1);
-  }, [active, sessionId]);
+    // Whatever the log gained while this tab was hidden, taken on the tail so the
+    // reader's row stays where they left it.
+    void sync({ silent: true });
+  }, [active, sessionId, sync]);
 
   useEffect(
     () => () => {

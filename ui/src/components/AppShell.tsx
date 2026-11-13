@@ -3096,6 +3096,14 @@ export function AppShell() {
                 tools={systemTools}
                 isMobile={isMobile}
                 active={mainView === "trace"}
+                // The session's own fingerprint, refreshed with the catalog row
+                // on every list reload: the trace reloads when the log grows
+                // rather than only while a run is in flight.
+                revision={
+                  selectedSession
+                    ? `${selectedSession.modified}:${selectedSession.messageCount}`
+                    : ""
+                }
               />
             </div>
           )}
