@@ -1,6 +1,6 @@
-import type { SplitDiffGap, UnifiedDiffLine } from "./patch";
+import type { SplitDiffGap, UnifiedDiffHunk, UnifiedDiffLine } from "./patch";
 
-export type DiffHighlightLine = UnifiedDiffLine | SplitDiffGap;
+export type DiffHighlightLine = UnifiedDiffLine | UnifiedDiffHunk | SplitDiffGap;
 
 export interface DiffHighlightSlot {
   segment: number;
@@ -48,7 +48,7 @@ export function buildDiffHighlightPlan(lines: readonly DiffHighlightLine[]): Dif
   };
 
   lines.forEach((line, index) => {
-    if (line.type === "gap") {
+    if (line.type === "gap" || line.type === "hunk") {
       flush();
       return;
     }
@@ -80,7 +80,7 @@ export function diffLineHtml(
   highlighted: string[][] | null,
 ): string | null {
   if (!highlighted) return null;
-  if (line.type === "gap") return null;
+  if (line.type === "gap" || line.type === "hunk") return null;
   const slot = line.type === "removed"
     ? plan.oldAt[index]
     : line.type === "added"

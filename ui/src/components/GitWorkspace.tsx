@@ -27,6 +27,13 @@ const BAR_HEIGHT = 34;
 const FILE_RAIL_WIDTH = 300;
 const COMMIT_RAIL_WIDTH = 300;
 
+// `git diff` ships three context lines. Expanding a gap re-requests the patch
+// with more (`--unified=N`, applied to every hunk), stepping up to a cap so a
+// click can't ask the backend for a whole multi-megabyte file.
+const DIFF_CONTEXT_START = 3;
+const DIFF_CONTEXT_STEP = 20;
+const DIFF_CONTEXT_MAX = 200;
+
 function isChanged(value: string | undefined): boolean {
   const text = (value ?? "").trim();
   return text !== "" && text !== "." && text !== "?";
@@ -173,6 +180,7 @@ function ChangesView({
   status,
   selectedFile,
   diff,
+  onExpandContext,
   onSelectFile,
   isMobile,
   loading,
@@ -182,6 +190,7 @@ function ChangesView({
   status: GitStatusResponse | null;
   selectedFile: { path: string; scope: "staged" | "unstaged" | "all" } | null;
   diff: GitFileDiffResponse | null;
+  onExpandContext?: () => void;
   onSelectFile: (path: string, scope: "staged" | "unstaged" | "all") => void;
   isMobile: boolean;
   loading: boolean;
@@ -276,6 +285,7 @@ function ChangesView({
           <GitDiffView
             patch={diff?.supported ? diff.patch ?? null : null}
             emptyLabel={diff?.supported ? t("git.noTextDiff") : t("git.selectFileHint")}
+            onExpandContext={onExpandContext}
           />
         ) : (
           <EmptyState title={t("git.selectFile")} hint={t("git.selectFileHint")} />
@@ -345,6 +355,7 @@ function HistoryView({
   selectedFilePath,
   commitDiff,
   loading,
+  onExpandContext,
   onSelectCommit,
   onSelectFile,
   isMobile,
@@ -357,6 +368,7 @@ function HistoryView({
   selectedFilePath: string | null;
   commitDiff: string | null;
   loading: boolean;
+  onExpandContext?: () => void;
   onSelectCommit: (sha: string) => void;
   onSelectFile: (file: GitCommitFile) => void;
   isMobile: boolean;
@@ -491,6 +503,7 @@ function HistoryView({
                 <GitDiffView
                   patch={commitDiff}
                   emptyLabel={selectedFile?.binary ? t("git.binaryDiff") : t("git.noTextDiff")}
+                  onExpandContext={onExpandContext}
                 />
               </div>
             </div>
@@ -511,12 +524,31 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
   const [status, setStatus] = useState<GitStatusResponse | null>(null);
   const [statusLoading, setStatusLoading] = useState(false);
   const [diff, setDiff] = useState<GitFileDiffResponse | null>(null);
+  const [diffContext, setDiffContext] = useState(DIFF_CONTEXT_START);
   const [commits, setCommits] = useState<GitHistoryCommit[]>([]);
   const [historyLoading, setHistoryLoading] = useState(false);
   const [detail, setDetail] = useState<GitCommitDetail | null>(null);
   const [commitDiff, setCommitDiff] = useState<string | null>(null);
+  const [commitDiffContext, setCommitDiffContext] = useState(DIFF_CONTEXT_START);
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  const expandDiffContext = useCallback(
+    () => setDiffContext((context) => Math.min(context + DIFF_CONTEXT_STEP, DIFF_CONTEXT_MAX)),
+    [],
+  );
+  const expandCommitDiffContext = useCallback(
+    () => setCommitDiffContext((context) => Math.min(context + DIFF_CONTEXT_STEP, DIFF_CONTEXT_MAX)),
+    [],
+  );
+
+  // A new file (or scope) starts over at the default context.
+  useEffect(() => {
+    setDiffContext(DIFF_CONTEXT_START);
+  }, [state.selectedRepoPath, state.selectedFilePath, state.selectedFileScope]);
+  useEffect(() => {
+    setCommitDiffContext(DIFF_CONTEXT_START);
+  }, [state.selectedRepoPath, state.selectedCommitSha, state.selectedCommitFilePath]);
 
   const update = useCallback((next: Partial<GitWorkspaceState>) => {
     const current = stateRef.current;
@@ -591,6 +623,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
       cwd: state.selectedRepoPath,
       path: state.selectedFilePath,
       scope: state.selectedFileScope,
+      context: String(diffContext),
     });
     fetch(`/api/git/diff?${params.toString()}`, { signal: controller.signal })
       .then((response) => readJson<GitFileDiffResponse>(response, t("git.loadDiffFailed")))
@@ -599,7 +632,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
         if (!controller.signal.aborted) setDiff({ supported: false });
       });
     return () => controller.abort();
-  }, [active, state.selectedRepoPath, state.selectedFilePath, state.selectedFileScope, state.tab, refreshToken, t]);
+  }, [active, state.selectedRepoPath, state.selectedFilePath, state.selectedFileScope, state.tab, refreshToken, t, diffContext]);
 
   // Load history for the selected repository.
   useEffect(() => {
@@ -669,6 +702,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
       path: selectedCommitFile.path,
     });
     if (selectedCommitFile.oldPath) params.set("oldPath", selectedCommitFile.oldPath);
+    params.set("context", String(commitDiffContext));
     fetch(`/api/git/commit-diff?${params.toString()}`, { signal: controller.signal })
       .then((response) => readJson<{ patch: string }>(response, t("git.loadDiffFailed")))
       .then((data) => setCommitDiff(data.patch ?? null))
@@ -676,7 +710,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
         if (!controller.signal.aborted) setCommitDiff(null);
       });
     return () => controller.abort();
-  }, [active, state.selectedRepoPath, state.selectedCommitSha, selectedCommitFile, state.tab, t]);
+  }, [active, state.selectedRepoPath, state.selectedCommitSha, selectedCommitFile, state.tab, t, commitDiffContext]);
 
   // Refresh when the window returns to the foreground while the Git tab is open.
   useEffect(() => {
@@ -825,6 +859,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
           loading={statusLoading}
           isMobile={isMobile}
           t={t}
+          onExpandContext={diffContext < DIFF_CONTEXT_MAX ? expandDiffContext : undefined}
           onSelectFile={(path, scope) => update({ selectedFilePath: path, selectedFileScope: scope })}
         />
       ) : (
@@ -838,6 +873,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
           loading={historyLoading}
           isMobile={isMobile}
           t={t}
+          onExpandContext={commitDiffContext < DIFF_CONTEXT_MAX ? expandCommitDiffContext : undefined}
           onSelectCommit={(sha) => update({ selectedCommitSha: sha, selectedCommitFilePath: null })}
           onSelectFile={(file) => update({ selectedCommitFilePath: file.path })}
         />

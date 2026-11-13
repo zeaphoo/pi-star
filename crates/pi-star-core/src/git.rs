@@ -109,6 +109,16 @@ pub fn diff(cwd: &Path, file_path: &Path) -> GitDiffResponse {
 }
 
 pub fn diff_scoped(cwd: &Path, file_path: &Path, scope: &str) -> GitDiffResponse {
+    diff_scoped_with_context(cwd, file_path, scope, 3)
+}
+
+pub fn diff_scoped_with_context(
+    cwd: &Path,
+    file_path: &Path,
+    scope: &str,
+    context: u32,
+) -> GitDiffResponse {
+    let unified = format!("--unified={}", context.min(500));
     let Some(root) =
         repository_root(cwd).or_else(|| repository_root(file_path.parent().unwrap_or(cwd)))
     else {
@@ -173,7 +183,7 @@ pub fn diff_scoped(cwd: &Path, file_path: &Path, scope: &str) -> GitDiffResponse
         "diff".to_string(),
         "--no-color".to_string(),
         "--no-ext-diff".to_string(),
-        "--unified=3".to_string(),
+        unified,
     ];
     match scope {
         "staged" => args.push("--cached".to_string()),
@@ -998,6 +1008,16 @@ pub fn commit_detail(cwd: &Path, sha: &str) -> Option<GitCommitDetail> {
 }
 
 pub fn commit_diff(cwd: &Path, sha: &str, path: &str, old_path: Option<&str>) -> Option<String> {
+    commit_diff_with_context(cwd, sha, path, old_path, 3)
+}
+
+pub fn commit_diff_with_context(
+    cwd: &Path,
+    sha: &str,
+    path: &str,
+    old_path: Option<&str>,
+    context: u32,
+) -> Option<String> {
     if !valid_commit_sha(sha) {
         return None;
     }
@@ -1013,6 +1033,7 @@ pub fn commit_diff(cwd: &Path, sha: &str, path: &str, old_path: Option<&str>) ->
         "--format=".to_string(),
         "--patch".to_string(),
         "--find-renames".to_string(),
+        format!("--unified={}", context.min(500)),
         sha.to_string(),
         "--".to_string(),
     ];

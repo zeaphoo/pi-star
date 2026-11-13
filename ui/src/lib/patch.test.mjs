@@ -17,8 +17,8 @@ test("parses paired changes into split diff rows", async () => {
 `);
 
   assert.equal(files?.length, 1);
-  assert.equal(files?.[0].oldPath, "a/demo.ts");
-  assert.equal(files?.[0].newPath, "b/demo.ts");
+  assert.equal(files?.[0].oldPath, "demo.ts");
+  assert.equal(files?.[0].newPath, "demo.ts");
   assert.deepEqual(files?.[0].rows.filter((row) => row.type === "line"), [
     {
       type: "line",
@@ -47,8 +47,8 @@ test("pads one-sided additions and removes timestamp suffixes from file paths", 
 +second
 `);
 
-  assert.equal(files?.[0].oldPath, "a/demo.ts");
-  assert.equal(files?.[0].newPath, "b/demo.ts");
+  assert.equal(files?.[0].oldPath, "demo.ts");
+  assert.equal(files?.[0].newPath, "demo.ts");
   assert.deepEqual(files?.[0].rows.at(-1), {
     type: "line",
     left: { lineNo: null, text: "", type: "empty" },
@@ -70,7 +70,7 @@ test("treats in-hunk lines that look like file headers as content", async () => 
 `);
 
   assert.equal(files?.length, 1);
-  assert.equal(files?.[0].newPath, "b/notes.md");
+  assert.equal(files?.[0].newPath, "notes.md");
   const lines = files?.[0].rows.filter((row) => row.type === "line");
   assert.deepEqual(lines?.[0], {
     type: "line",
@@ -99,8 +99,8 @@ test("parses multiple files, resuming header detection after each hunk", async (
 `);
 
   assert.equal(files?.length, 2);
-  assert.equal(files?.[0].newPath, "b/one.ts");
-  assert.equal(files?.[1].newPath, "b/two.ts");
+  assert.equal(files?.[0].newPath, "one.ts");
+  assert.equal(files?.[1].newPath, "two.ts");
 });
 
 test("returns null for text without diff lines", async () => {
@@ -122,6 +122,7 @@ test("a file's rows flatten to one column in patch order", async () => {
 `);
 
   assert.deepEqual(unifiedDiffLines(files[0]), [
+    { type: "hunk", text: "@@ -10,3 +10,4 @@" },
     { type: "context", text: "const keep = true;", oldLineNo: 10, newLineNo: 10 },
     { type: "removed", text: 'const value = "old";', oldLineNo: 11, newLineNo: null },
     { type: "added", text: 'const value = "new";', oldLineNo: null, newLineNo: 11 },
@@ -130,7 +131,7 @@ test("a file's rows flatten to one column in patch order", async () => {
   ]);
 });
 
-test("a single column drops the hunk headers and the padding of a one-sided change", async () => {
+test("a single column keeps the hunk headers and drops the padding of a one-sided change", async () => {
   const { parseUnifiedPatch, unifiedDiffLines } = await loadSubject();
   const files = parseUnifiedPatch(`--- a/demo.ts
 +++ b/demo.ts
@@ -143,10 +144,14 @@ test("a single column drops the hunk headers and the padding of a one-sided chan
 `);
 
   const lines = unifiedDiffLines(files[0]);
-  assert.deepEqual(lines.map((line) => line.type), ["context", "added", "gap", "removed", "added"]);
+  assert.deepEqual(
+    lines.map((line) => line.type),
+    ["hunk", "context", "added", "gap", "hunk", "removed", "added"],
+  );
   // The lines left out between the hunks stay one gap row, as in the split view.
-  assert.deepEqual(lines[2], { type: "gap", count: 38 });
-  const textLines = lines.filter((line) => line.type !== "gap");
+  assert.deepEqual(lines[3], { type: "gap", count: 38 });
+  assert.equal(lines[0].text, "@@ -1,1 +1,2 @@");
+  const textLines = lines.filter((line) => line.type !== "gap" && line.type !== "hunk");
   assert.deepEqual(textLines.map((line) => line.text), ["first", "second", "older", "newer"]);
   // No padded empty row sits where the split view leaves a blank half-row.
   assert.equal(textLines.filter((line) => line.text === "").length, 0);

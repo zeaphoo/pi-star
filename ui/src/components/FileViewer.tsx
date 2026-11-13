@@ -24,7 +24,7 @@ import { CodeBlock, MermaidBlock } from "./MermaidBlock";
 import { DelimitedTable } from "./DelimitedTable";
 import { isDelimitedTablePath } from "@/lib/delimited-table";
 import { FrontmatterCard } from "./FrontmatterCard";
-import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffGap, type UnifiedDiffLine } from "@/lib/patch";
+import { diffGapLabel, parseUnifiedPatch, unifiedDiffLines, type SplitDiffGap, type UnifiedDiffHunk, type UnifiedDiffLine } from "@/lib/patch";
 import { buildDiffHighlightPlan, diffLineHtml } from "@/lib/diff-highlight";
 import { languageForPath } from "@/lib/file-language";
 import type { GitFileDiffResponse } from "@/lib/git-types";
@@ -290,13 +290,16 @@ type DiffLine = UnifiedDiffLine;
 // Unchanged lines the patch leaves out between two hunks.
 type DiffGap = SplitDiffGap;
 
+// A `@@` hunk boundary: layout, not a line of the file.
+type DiffHunk = UnifiedDiffHunk;
+
 function formatSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function diffLines(patch: string): Array<DiffLine | DiffGap> {
+function diffLines(patch: string): Array<DiffLine | DiffGap | DiffHunk> {
   const files = parseUnifiedPatch(patch);
   if (!files) return [];
   return files.flatMap(unifiedDiffLines);
@@ -312,7 +315,7 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
     language !== "text",
   );
 
-  const isChange = (l: DiffLine | DiffGap) => l.type === "added" || l.type === "removed";
+  const isChange = (l: DiffLine | DiffGap | DiffHunk) => l.type === "added" || l.type === "removed";
   const hasChanges = diff.some(isChange);
   if (!hasChanges) {
     return (
@@ -337,15 +340,16 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
 
   // Collapsed lines and the lines the patch leaves out between hunks share one
   // marker; its count is unknown when a gap's is.
-  const isShown = (j: number) => diff[j].type !== "gap" && visible.has(j);
+  // Hunk headers stay put as landmarks between the collapsed context runs.
+  const isShown = (j: number) => diff[j].type === "hunk" || (diff[j].type !== "gap" && visible.has(j));
   const blocks: Array<
     { hidden: true; count: number | null }
-    | { hidden: false; lines: Array<{ line: DiffLine; index: number }> }
+    | { hidden: false; lines: Array<{ line: DiffLine | DiffHunk; index: number }> }
   > = [];
   let i = 0;
   while (i < diff.length) {
     if (isShown(i)) {
-      const block: Array<{ line: DiffLine; index: number }> = [];
+      const block: Array<{ line: DiffLine | DiffHunk; index: number }> = [];
       while (i < diff.length && isShown(i)) {
         const line = diff[i];
         if (line.type !== "gap") block.push({ line, index: i });
@@ -393,6 +397,28 @@ function DiffView({ patch, wrapLines, language }: { patch: string; wrapLines: bo
           );
         }
         const lines = block.lines.map(({ line, index }, li) => {
+          if (line.type === "hunk") {
+            return (
+              <div
+                key={li}
+                className="file-diff-line"
+                style={{
+                  minWidth: "100%",
+                  padding: "2px 16px",
+                  color: "var(--code-punctuation)",
+                  background: "var(--code-gutter-bg)",
+                  fontSize: 11,
+                  borderTop: "1px solid var(--border)",
+                  borderBottom: "1px solid var(--border)",
+                  whiteSpace: "pre",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                }}
+              >
+                {line.text}
+              </div>
+            );
+          }
           const bg =
             line.type === "added"
               ? "rgba(0,200,80,0.12)"

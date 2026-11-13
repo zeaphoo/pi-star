@@ -74,13 +74,13 @@ export function parseUnifiedPatch(text: string): SplitDiffFile[] | null {
     if (!insideHunk) {
       if (line.startsWith("--- ")) {
         flushChanges();
-        pendingOldPath = cleanPatchPath(line.slice(4));
+        pendingOldPath = cleanPatchPath(line.slice(4), "a");
         continue;
       }
 
       if (line.startsWith("+++ ")) {
         flushChanges();
-        current = { oldPath: pendingOldPath, newPath: cleanPatchPath(line.slice(4)), rows: [] };
+        current = { oldPath: pendingOldPath, newPath: cleanPatchPath(line.slice(4), "b"), rows: [] };
         files.push(current);
         prevHunkEnd = null;
         continue;
@@ -159,16 +159,27 @@ export interface UnifiedDiffLine {
   newLineNo: number | null;
 }
 
+/** A `@@ -a,b +c,d @@` row: a hunk boundary, not a line of the file. */
+export interface UnifiedDiffHunk {
+  type: "hunk";
+  text: string;
+}
+
+export type UnifiedDiffRow = UnifiedDiffLine | UnifiedDiffHunk | SplitDiffGap;
+
 /**
  * One file's rows as a single column. A pair the split view puts side by side
  * becomes two lines, the removed one above the added one, and a context row
  * becomes one line instead of two copies of itself. Hunk headers carry no file
  * content, as in the split view; a gap between hunks stays a gap.
  */
-export function unifiedDiffLines(file: SplitDiffFile): Array<UnifiedDiffLine | SplitDiffGap> {
-  const lines: Array<UnifiedDiffLine | SplitDiffGap> = [];
+export function unifiedDiffLines(file: SplitDiffFile): UnifiedDiffRow[] {
+  const lines: UnifiedDiffRow[] = [];
   for (const row of file.rows) {
-    if (row.type === "hunk") continue;
+    if (row.type === "hunk") {
+      lines.push(row);
+      continue;
+    }
     if (row.type === "gap") {
       lines.push(row);
       continue;
@@ -197,6 +208,12 @@ export function diffGapLabel(count: number, t: (key: string, params?: Translatio
   return count === 1 ? t("diff.unchangedLine") : t("diff.unchangedLines", { count });
 }
 
-function cleanPatchPath(path: string): string {
-  return path.split("\t")[0].trim();
+function cleanPatchPath(path: string, stripPrefix?: "a" | "b"): string {
+  const clean = path.split("\t")[0].trim();
+  // `git diff` writes `--- a/path` / `+++ b/path`; the prefix names the side,
+  // not a directory, so drop it for display (renames still read `old → new`).
+  if (stripPrefix && clean.startsWith(`${stripPrefix}/`)) {
+    return clean.slice(2);
+  }
+  return clean;
 }

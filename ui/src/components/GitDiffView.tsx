@@ -10,6 +10,8 @@ import { useI18n } from "@/hooks/useI18n";
 interface Props {
   patch: string | null;
   emptyLabel: string;
+  /** When set, a gap row is a button that asks for more context lines. */
+  onExpandContext?: () => void;
 }
 
 const CODE_STYLE = {
@@ -35,7 +37,30 @@ function gitDiffLineStyle(added: boolean, removed: boolean) {
   } as const;
 }
 
-function GitDiffFile({ file }: { file: SplitDiffFile }) {
+// GitHub draws two number columns (old | new) and tints the gutter with the
+// same row color as the code, a shade stronger: the gutter then reads as the
+// row's own band instead of a separate stripe that only carries digits.
+const GUTTER_CELL = {
+  width: 44,
+  minWidth: 44,
+  padding: "0 8px",
+  boxSizing: "border-box",
+  borderRight: "1px solid var(--border)",
+  color: "var(--code-punctuation)",
+  textAlign: "right",
+  fontSize: 11,
+  fontVariantNumeric: "tabular-nums",
+  userSelect: "none",
+  flexShrink: 0,
+} as const;
+
+function gutterBackground(added: boolean, removed: boolean): string {
+  if (added) return "rgba(0, 200, 80, 0.16)";
+  if (removed) return "rgba(240, 60, 60, 0.18)";
+  return "var(--code-gutter-bg)";
+}
+
+function GitDiffFile({ file, onExpandContext }: { file: SplitDiffFile; onExpandContext?: () => void }) {
   const { t } = useI18n();
   const rows = useMemo(() => unifiedDiffLines(file), [file]);
   const plan = useMemo(() => buildDiffHighlightPlan(rows), [rows]);
@@ -48,7 +73,7 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
   return (
     <>
       {rows.map((row, ri) => {
-        if (row.type === "gap") {
+        if (row.type === "hunk") {
           return (
             <div
               key={ri}
@@ -59,33 +84,68 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
                 background: "var(--code-gutter-bg)",
                 color: "var(--code-punctuation)",
                 fontSize: 11,
+                whiteSpace: "pre",
+                overflow: "hidden",
+                textOverflow: "ellipsis",
               }}
             >
-              {row.count === null ? "⋯" : `⋯ ${diffGapLabel(row.count, t)}`}
+              {row.text}
             </div>
+          );
+        }
+        if (row.type === "gap") {
+          const label = row.count === null ? "⋯" : `⋯ ${diffGapLabel(row.count, t)}`;
+          const gapStyle = {
+            padding: "2px 12px",
+            borderTop: "1px solid var(--border)",
+            borderBottom: "1px solid var(--border)",
+            background: "var(--code-gutter-bg)",
+            color: "var(--code-punctuation)",
+            fontSize: 11,
+          } as const;
+          if (!onExpandContext) {
+            return (
+              <div key={ri} style={gapStyle}>
+                {label}
+              </div>
+            );
+          }
+          return (
+            <button
+              key={ri}
+              type="button"
+              onClick={onExpandContext}
+              title={t("diff.expandContext")}
+              onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(event) => { event.currentTarget.style.background = gapStyle.background; }}
+              style={{
+                ...gapStyle,
+                display: "block",
+                width: "100%",
+                border: "none",
+                borderTop: gapStyle.borderTop,
+                borderBottom: gapStyle.borderBottom,
+                textAlign: "left",
+                cursor: "pointer",
+                font: "inherit",
+                fontSize: 11,
+              }}
+            >
+              {label}
+            </button>
           );
         }
         const added = row.type === "added";
         const removed = row.type === "removed";
-        const lineNo = removed ? row.oldLineNo : row.newLineNo;
+        const gutterBg = gutterBackground(added, removed);
         const html = diffLineHtml(row, ri, plan, highlighted);
         return (
           <div key={ri} style={gitDiffLineStyle(added, removed)}>
-            <span
-              style={{
-                width: 46,
-                minWidth: 46,
-                padding: "0 8px",
-                boxSizing: "border-box",
-                borderRight: "1px solid var(--border)",
-                background: "var(--code-gutter-bg)",
-                color: "var(--code-punctuation)",
-                textAlign: "right",
-                fontSize: 10,
-                userSelect: "none",
-              }}
-            >
-              {lineNo ?? ""}
+            <span style={{ ...GUTTER_CELL, background: gutterBg }}>
+              {row.oldLineNo ?? ""}
+            </span>
+            <span style={{ ...GUTTER_CELL, background: gutterBg }}>
+              {row.newLineNo ?? ""}
             </span>
             <span
               style={{
@@ -116,7 +176,7 @@ function GitDiffFile({ file }: { file: SplitDiffFile }) {
 }
 
 /** A compact unified diff for the Git tab, using the same parser as the file viewer. */
-export function GitDiffView({ patch, emptyLabel }: Props) {
+export function GitDiffView({ patch, emptyLabel, onExpandContext }: Props) {
   const files = patch ? parseUnifiedPatch(patch) : null;
 
   if (!patch || !files) {
@@ -149,7 +209,7 @@ export function GitDiffView({ patch, emptyLabel }: Props) {
           >
             {fileLabel(file.oldPath, file.newPath)}
           </div>
-          <GitDiffFile file={file} />
+          <GitDiffFile file={file} onExpandContext={onExpandContext} />
         </div>
       ))}
     </div>

@@ -1471,7 +1471,7 @@ export function PatchDiffFiles({ files, layout }: { files: SplitDiffFile[]; layo
           <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)" }}>
             {file.rows.map((row, rowIndex) => {
               if (row.type === "hunk") {
-                return null;
+                return <DiffHunkRow key={rowIndex} text={row.text} />;
               }
               if (row.type === "gap") {
                 return <DiffGapRow key={rowIndex} gap={row} />;
@@ -1490,7 +1490,9 @@ export function PatchDiffFiles({ files, layout }: { files: SplitDiffFile[]; layo
           {layout === "stacked" && unifiedDiffLines(file).map((line, lineIndex) => (
             line.type === "gap"
               ? <DiffGapRow key={lineIndex} gap={line} />
-              : <StackedDiffLineView key={lineIndex} line={line} />
+              : line.type === "hunk"
+                ? <DiffHunkRow key={lineIndex} text={line.text} />
+                : <StackedDiffLineView key={lineIndex} line={line} />
           ))}
         </div>
       ))}
@@ -1514,6 +1516,28 @@ function DiffGapRow({ gap }: { gap: SplitDiffGap }) {
       }}
     >
       {gap.count === null ? "⋯" : `⋯ ${diffGapLabel(gap.count, t)}`}
+    </div>
+  );
+}
+
+/** A `@@ -a,b +c,d @@` hunk boundary, across the whole width. */
+function DiffHunkRow({ text }: { text: string }) {
+  return (
+    <div
+      style={{
+        gridColumn: "1 / -1",
+        padding: "1px 10px",
+        color: "var(--text-dim)",
+        background: "var(--bg-panel)",
+        borderTop: "1px solid var(--border)",
+        borderBottom: "1px solid var(--border)",
+        whiteSpace: "pre",
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        userSelect: "none",
+      }}
+    >
+      {text}
     </div>
   );
 }

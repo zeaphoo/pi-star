@@ -1076,8 +1076,8 @@ test("one column names a file section by the file's own path, not by Before and 
 `);
   const html = renderPatchFiles(files, "stacked");
 
-  assert.ok(html.includes("b/one.ts"), "the first file names its section");
-  assert.ok(html.includes("b/two.ts"), "the second file names its section");
+  assert.ok(html.includes(">one.ts<"), "the first file names its section");
+  assert.ok(html.includes(">two.ts<"), "the second file names its section");
   assert.ok(!html.includes(">Before<") && !html.includes(">After<"), "two labels over one column read as two columns");
 });
 
@@ -1123,6 +1123,7 @@ test("one column names a deleted file's section by its old path", () => {
 +b
 `), "stacked");
 
-  assert.ok(html.includes(">a/gone.ts<"));
+  assert.ok(html.includes(">gone.ts<"));
   assert.ok(!html.includes("/dev/null"));
+  assert.ok(!html.includes("a/gone.ts"));
 });

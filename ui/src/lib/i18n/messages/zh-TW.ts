@@ -1792,6 +1792,7 @@ export const zhTWLocale: LocalePlugin = {
     "i18n.after": "變更後",
     "diff.unchangedLine": "1 行未變更",
     "diff.unchangedLines": "{count} 行未變更",
+    "diff.expandContext": "展開更多上下文",
     "i18n.sessionComplete": "工作階段已完成",
     "i18n.taskFinished": "任務已完成。",
     "i18n.attentionNeeded": "Pi 需要你處理",

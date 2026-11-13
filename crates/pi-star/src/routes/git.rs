@@ -19,6 +19,8 @@ pub struct CwdQuery {
     cwd: Option<String>,
     path: Option<String>,
     scope: Option<String>,
+    // Context lines for a diff (`--unified`); other routes ignore it.
+    context: Option<u32>,
 }
 
 pub async fn status(State(state): State<Arc<AppState>>, Query(query): Query<CwdQuery>) -> Response {
@@ -59,10 +61,11 @@ pub async fn diff(State(state): State<Arc<AppState>>, Query(query): Query<CwdQue
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    no_store(git::diff_scoped(
+    no_store(git::diff_scoped_with_context(
         &cwd,
         &path,
         query.scope.as_deref().unwrap_or("all"),
+        query.context.unwrap_or(3),
     ))
 }
 
@@ -331,6 +334,7 @@ pub struct CommitDiffQuery {
     path: Option<String>,
     #[serde(rename = "oldPath")]
     old_path: Option<String>,
+    context: Option<u32>,
 }
 
 pub async fn commit_diff(
@@ -356,7 +360,13 @@ pub async fn commit_diff(
     if !cwd.is_dir() {
         return not_found("Directory not found");
     }
-    match git::commit_diff(&cwd, &sha, &path, query.old_path.as_deref()) {
+    match git::commit_diff_with_context(
+        &cwd,
+        &sha,
+        &path,
+        query.old_path.as_deref(),
+        query.context.unwrap_or(3),
+    ) {
         Some(patch) => no_store(json!({ "patch": patch })),
         None => not_found("Diff not found"),
     }
