@@ -1953,6 +1953,7 @@ export const enLocale: LocalePlugin = {
     "git.selectFileHint": "Choose a changed file to see its diff.",
     "git.selectCommit": "Select a commit",
     "git.selectCommitHint": "Choose a commit to see its details.",
+    "git.resizeCommitMessage": "Resize commit message",
     "git.noRepos": "No Git repositories",
     "git.noReposHint": "No Git repository was found under the current project directory.",
     "git.refresh": "Refresh Git",

@@ -1953,6 +1953,7 @@ export const zhTWLocale: LocalePlugin = {
     "git.selectFileHint": "選擇一個變更檔案查看其變更。",
     "git.selectCommit": "選擇提交",
     "git.selectCommitHint": "選擇一個提交查看詳情。",
+    "git.resizeCommitMessage": "調整提交訊息高度",
     "git.noRepos": "沒有發現 Git 儲存庫",
     "git.noReposHint": "目前專案目錄下沒有掃描到 Git 儲存庫。",
     "git.refresh": "重新整理 Git",

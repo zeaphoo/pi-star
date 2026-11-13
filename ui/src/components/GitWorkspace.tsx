@@ -375,6 +375,44 @@ function HistoryView({
   t: ReturnType<typeof useI18n>["t"];
 }) {
   const selectedFile = detail?.files.find((file) => file.path === selectedFilePath) ?? detail?.files[0] ?? null;
+  // Long commit bodies used to push the diff off screen. The header is capped
+  // by default and gets a drag handle; double-click returns it to the cap.
+  const [messageHeight, setMessageHeight] = useState<number | null>(null);
+  const messageRef = useRef<HTMLDivElement>(null);
+  const messageResizeRef = useRef<{ startY: number; startHeight: number; maxHeight: number } | null>(null);
+
+  useEffect(() => {
+    setMessageHeight(null);
+  }, [selectedCommitSha]);
+
+  const startMessageResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.pointerType === "mouse" && event.button !== 0) return;
+    const header = messageRef.current;
+    const pane = header?.parentElement;
+    if (!header || !pane) return;
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    messageResizeRef.current = {
+      startY: event.clientY,
+      startHeight: header.getBoundingClientRect().height,
+      maxHeight: Math.max(120, pane.getBoundingClientRect().height * 0.72),
+    };
+  };
+  const moveMessageResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const drag = messageResizeRef.current;
+    if (!drag) return;
+    setMessageHeight(Math.round(Math.min(drag.maxHeight, Math.max(52, drag.startHeight + event.clientY - drag.startY))));
+  };
+  const finishMessageResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    messageResizeRef.current = null;
+    try {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    } catch {
+      // Capture may already be released.
+    }
+  };
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
@@ -440,7 +478,18 @@ function HistoryView({
           <div style={{ padding: 16, color: "var(--text-dim)", fontSize: 12 }}>{t("git.loading")}</div>
         ) : (
           <>
-            <div style={{ flexShrink: 0, padding: "10px 14px", borderBottom: "1px solid var(--border)", background: "var(--bg)" }}>
+            <div
+              ref={messageRef}
+              style={{
+                flexShrink: 0,
+                height: messageHeight ?? "auto",
+                maxHeight: messageHeight === null ? "40%" : "72%",
+                overflowY: "auto",
+                padding: "10px 14px",
+                borderBottom: "1px solid var(--border)",
+                background: "var(--bg)",
+              }}
+            >
               <div style={{ fontSize: 13, fontWeight: 600, color: "var(--text)" }}>{detail.subject}</div>
               <div style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 5, color: "var(--text-dim)", fontSize: 10, fontFamily: "var(--font-mono)" }}>
                 <span>{detail.shortSha}</span>
@@ -454,6 +503,54 @@ function HistoryView({
                   {detail.body}
                 </pre>
               )}
+            </div>
+            <div
+              role="separator"
+              aria-orientation="horizontal"
+              aria-label={t("git.resizeCommitMessage")}
+              title={t("git.resizeCommitMessage")}
+              tabIndex={0}
+              onPointerDown={startMessageResize}
+              onPointerMove={moveMessageResize}
+              onPointerUp={finishMessageResize}
+              onPointerCancel={finishMessageResize}
+              onLostPointerCapture={() => { messageResizeRef.current = null; }}
+              onDoubleClick={() => setMessageHeight(null)}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowUp" && event.key !== "ArrowDown") return;
+                const header = messageRef.current;
+                const pane = header?.parentElement;
+                if (!header || !pane) return;
+                event.preventDefault();
+                const current = header.getBoundingClientRect().height;
+                const max = Math.max(120, pane.getBoundingClientRect().height * 0.72);
+                const next = current + (event.key === "ArrowUp" ? -24 : 24);
+                setMessageHeight(Math.round(Math.min(max, Math.max(52, next))));
+              }}
+              onMouseEnter={(event) => { event.currentTarget.style.background = "var(--bg-hover)"; }}
+              onMouseLeave={(event) => { event.currentTarget.style.background = "var(--bg-panel)"; }}
+              style={{
+                position: "relative",
+                flex: "0 0 6px",
+                cursor: "row-resize",
+                touchAction: "none",
+                background: "var(--bg-panel)",
+                borderBottom: "1px solid var(--border)",
+              }}
+            >
+              <span
+                aria-hidden="true"
+                style={{
+                  position: "absolute",
+                  top: 2,
+                  left: "50%",
+                  width: 34,
+                  height: 2,
+                  borderRadius: 1,
+                  background: "var(--border)",
+                  transform: "translateX(-50%)",
+                }}
+              />
             </div>
             <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: isMobile ? "column" : "row" }}>
               <div
