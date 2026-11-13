@@ -205,10 +205,6 @@ impl SessionRuntime {
             .unwrap_or_default()
     }
 
-    /// The v3 file is the source of truth; a forced refresh keeps the cached
-    /// harness state, so this is intentionally a no-op.
-    pub fn replace_entries(&self, _entries: Vec<Value>) {}
-
     pub fn state_json(&self, include_prompt: bool) -> Value {
         if let Some(harness) = self.harness.get() {
             return harness.state_json(include_prompt);

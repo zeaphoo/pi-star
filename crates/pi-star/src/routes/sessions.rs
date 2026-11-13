@@ -53,8 +53,6 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
 
 #[derive(Debug, Deserialize, Default)]
 pub struct SessionQuery {
-    #[serde(rename = "force")]
-    force: Option<String>,
     tail: Option<usize>,
     before: Option<String>,
     tree: Option<String>,
@@ -77,25 +75,12 @@ pub async fn get_session(
         Ok(session) => session,
         Err(error) => return internal(error),
     };
-    // A live wrapper serves its own snapshot: two processes writing one JSONL
-    // is unsupported. A mount/refresh read (`?force=1`) adopts the file and
-    // says it rebuilt, after which ordinary reads are stable again (#632).
-    let runtime = state.agents.get(&id);
-    let force = query.force.as_deref() == Some("1");
-    let wrapper_rebuilt = if let Some(runtime) = &runtime {
-        if force {
-            runtime.replace_entries(session.entries.clone());
-            Some(true)
-        } else {
-            None
-        }
-    } else {
-        None
-    };
-    let entries = match (&runtime, force) {
-        (Some(runtime), false) => runtime.entries_snapshot(),
-        _ => session.entries.clone(),
-    };
+    // The v3 file is the source of truth, live wrapper or not: the harness
+    // appends through to it, and every other read path (`/context`, `/entries`,
+    // `/stats`) already reads it. A wrapper used to shadow the file here, which
+    // made this one route disagree with the rest and left `?force=1` with
+    // nothing to rebuild.
+    let entries = session.entries.clone();
     let info = session.info();
     state.roots.add(&info.cwd);
     if let Some(root) = &info.project_root {
@@ -143,9 +128,6 @@ pub async fn get_session(
         "stats": stats,
         "totalActiveMs": total_active_ms(&entries),
     });
-    if let Some(rebuilt) = wrapper_rebuilt {
-        response["wrapperRebuilt"] = Value::Bool(rebuilt);
-    }
     if query.tree.as_deref() == Some("summary") {
         response["treeFormat"] = Value::String("summary".into());
     }
@@ -390,26 +372,23 @@ pub async fn fork_session(
 async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) -> Response {
     if state.route_backend(id) == BackendKind::Rpc {
         if let Some(active) = state.pi_rpc.get(id) {
-            let entry = match entry_id {
-                Some(entry) => entry.to_string(),
-                None => {
-                    let entries = match active.send(&json!({"type":"get_entries"})).await {
-                        Ok(entries) => entries,
+            // With an entry, pi forks before that user message. Without one the
+            // session is copied as it stands, which is what the file-backed path
+            // below does. Asking pi to fork the leaf was wrong: pi's fork splits
+            // before a *user* message and rejects a leaf that is the assistant's
+            // reply, so forking any settled session failed with "Invalid entry ID
+            // for forking".
+            let result = match entry_id {
+                Some(entry) if !entry.is_empty() => {
+                    match active.send(&json!({"type":"fork", "entryId": entry})).await {
+                        Ok(result) => result,
                         Err(error) => return internal(error),
-                    };
-                    entries
-                        .get("leafId")
-                        .and_then(Value::as_str)
-                        .unwrap_or_default()
-                        .to_string()
+                    }
                 }
-            };
-            if entry.is_empty() {
-                return bad_request("entryId is required");
-            }
-            let result = match active.send(&json!({"type":"fork", "entryId": entry})).await {
-                Ok(result) => result,
-                Err(error) => return internal(error),
+                _ => match active.send(&json!({"type":"clone"})).await {
+                    Ok(result) => result,
+                    Err(error) => return internal(error),
+                },
             };
             let new_id = result
                 .get("newSessionId")

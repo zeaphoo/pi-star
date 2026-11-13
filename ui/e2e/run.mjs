@@ -222,26 +222,47 @@ try {
   assert.equal(compacted.context.messages.some((entry) => entry.role === "user"), false);
   console.log("PASS: bounded history, branch context, pagination root, and API errors");
 
-  // #632 regression: a live wrapper shadows the session file. Ordinary reads
-  // keep that snapshot (two processes writing one JSONL is unsupported). A
-  // mount/refresh GET (?force=1) must see the external append and stay stable.
+  // The v3 file is the source of truth, live wrapper or not. pi-web kept a
+  // wrapper snapshot in front of the file and needed `?force=1` to adopt an
+  // external append (#632); pi-star's harness writes through to the file, so
+  // every read path already sees the append — `/context`, `/entries` and the
+  // session read alike. A wrapper must therefore not hide it, and the flag that
+  // used to announce a rebuild is gone rather than reported as `false`.
   {
     const file = join(sessionDir, `2026-08-23T00-00-00-000Z_${APPEND}.jsonl`);
     await post(`/api/agent/${APPEND}`, { type: "get_state" });
     const beforeAppend = await api(`/api/sessions/${APPEND}`);
-    assert.deepEqual(beforeAppend.context.entryIds, ["root", "reply"], "the wrapper must serve its own snapshot first");
+    assert.deepEqual(beforeAppend.context.entryIds, ["root", "reply"], "the session reads as written");
     appendFileSync(file, `${JSON.stringify(message("external", "reply", "assistant", "E2E external append"))}\n`);
     const ordinaryRead = await api(`/api/sessions/${APPEND}`);
-    assert.deepEqual(ordinaryRead.context.entryIds, ["root", "reply"], "post-turn reads must not probe disk");
-    assert.equal(ordinaryRead.wrapperRebuilt, undefined);
+    assert.deepEqual(
+      ordinaryRead.context.entryIds,
+      ["root", "reply", "external"],
+      "a live wrapper must not hide an append the harness wrote through",
+    );
+    assert.equal(ordinaryRead.wrapperRebuilt, undefined, "there is no wrapper snapshot to rebuild");
+    // `?force=1` is still accepted for older clients and must change nothing.
     const afterForce = await api(`/api/sessions/${APPEND}?force=1`);
-    assert.deepEqual(afterForce.context.entryIds, ["root", "reply", "external"], "a mount/refresh read must see the external append");
-    assert.equal(afterForce.wrapperRebuilt, true);
+    assert.deepEqual(afterForce.context.entryIds, ["root", "reply", "external"]);
+    assert.equal(afterForce.wrapperRebuilt, undefined);
     const again = await api(`/api/sessions/${APPEND}`);
-    assert.deepEqual(again.context.entryIds, ["root", "reply", "external"], "repeated reads must stay stable");
+    assert.deepEqual(again.context.entryIds, ["root", "reply", "external"], "repeated reads stay stable");
     const appended = await api(`/api/sessions/${APPEND}/context?tail=1`);
     assert.deepEqual(appended.context.entryIds, ["external"], "the appended entry must be readable on its own");
-    console.log("PASS: external session-file appends are visible on force/mount reads");
+    // The trace reads the same log, and unlike `/context` it keeps the entries
+    // that are not messages — mounting a session records its model and thinking
+    // level, which the trace shows and the transcript does not.
+    const entries = await api(`/api/sessions/${APPEND}/entries?previewChars=8`);
+    assert.deepEqual(
+      entries.entries.filter((entry) => entry.type === "message").map((entry) => entry.id),
+      ["root", "reply", "external"],
+      "the trace reads the same messages the session does",
+    );
+    assert.ok(
+      entries.entries.some((entry) => entry.type !== "message"),
+      "and keeps the events a transcript drops",
+    );
+    console.log("PASS: the session file is the source of truth, live wrapper or not");
   }
 
   browser = await chromium.launch(chromiumOptions());

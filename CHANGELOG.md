@@ -27,6 +27,21 @@
 
 ### Fixed
 
+- **会话行 Fork 在有活动运行时失败**：会话一旦有运行中的后端，Fork 会返回 500「Invalid
+  entry ID for forking」。RPC 分支在没给 entry 时拿叶子节点去 fork，而 pi 的 fork 是「在这
+  条用户消息之前分叉」，叶子通常是助手的回复，于是必然被拒。现在没有 entry 时改用 pi 的
+  `clone`（复制当前分支），与文件后端的做法一致：整条分支都被复制，`parentSessionId` 与
+  `relation` 照旧带上。
+- **会话读取不再假装有 wrapper 快照**：`GET /sessions/{id}` 曾为活动 wrapper 返回缓存快照、
+  并要求 `?force=1` 才采纳文件。但 pi-star 的 harness 本来就是写穿到 v3 文件的，`/context`、
+  `/entries`、`/stats` 全都直接读文件，这条路由是唯一不一致的地方，`?force=1` 也没有调用者。
+  现在一律读文件，`wrapperRebuilt` 与空的 `replace_entries` 一并删除。
+- **e2e 套件恢复可跑**：`resolveServerBinary` 原先固定优先 `target/release`，一个几周前的
+  release 二进制会盖住刚构建的 debug，于是整套用例在测旧的、没有 `/entries` 路由的程序
+  （表现成 404）。改为取两者中较新的一个并打印所用路径。另外三处陈旧断言跟上产品现状：
+  provider 列表按显示名匹配（「Anthropic」而非 id）、会话读取改为断言「文件即真相」、
+  归档入口改为点列表下方的固定条而不是已删除的 `footer-archived` 行；键盘 Fork 用例顺带
+  被上面的 Fork 修复救活。整套 36 项 PASS。
 - **轨迹视图在会话刚建立时一直空着**：新建对话后切到「轨迹」会停在「这个会话还没有任何
   事件」，只有切到别的会话再切回来才有内容。视图原先只在「会话切换」和「运行中轮询」两条
   路径上重新加载，而首条记录写入时这轮运行可能已经结束，于是没有任何人再去问一次。现在按

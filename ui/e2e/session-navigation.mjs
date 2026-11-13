@@ -194,7 +194,8 @@ export async function checkSessionNavigation({ browser, base, artifacts, a, b, a
     await row(page, b.id).getByRole("button", { name: "Archive", exact: true }).click();
     await row(page, b.id).waitFor({ state: "detached" });
     await expectShows(page, a.id);
-    await panel(page).locator('[data-row-key="footer-archived"] button').click();
+    // The way into the archive is a bar pinned under the list, not a row.
+    await panel(page).locator('.sidebar-archive-footer-button').click();
     await link(page, b.id, "archive").waitFor();
     assert.equal(await link(page, b.id, "archive").getAttribute("href"), `?session=${b.id}`);
     tab = await newTab(() => link(page, b.id, "archive").click({ modifiers: ["ControlOrMeta"] }));

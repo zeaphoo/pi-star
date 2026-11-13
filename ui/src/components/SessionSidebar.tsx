@@ -1298,8 +1298,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
   // menu's opener, the toast's View) and Back removes the archive's own
   // controls; while the view slides in or away, what it covers or what
   // leaves is inert first (focusIfHidden counts both). Focus that went with
-  // them moves to the archive's Back button, then back to the footer link,
-  // or to the tab when that row is not shown.
+  // them moves to the archive's Back button, then back to the pinned footer
+  // that opened the view, or to the tab when that bar is not shown.
   const archiveBackRef = useRef<HTMLButtonElement>(null);
   const previousArchiveViewRef = useRef(archiveView);
   // Where closing the archive put focus: a fork opened from the archive
@@ -1312,7 +1312,7 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       focusIfHidden(archiveBackRef.current);
       return;
     }
-    const footer = sessionsPanelRef.current?.querySelector<HTMLElement>('[data-row-key="footer-archived"] button');
+    const footer = sessionsPanelRef.current?.querySelector<HTMLElement>(".sidebar-archive-footer-button");
     const target = footer && footer.getClientRects().length > 0 ? footer : focusFallback();
     focusIfHidden(target);
     if (target && document.activeElement === target) archiveCloseFocusRef.current = target;

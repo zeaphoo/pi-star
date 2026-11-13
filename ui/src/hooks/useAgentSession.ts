@@ -88,8 +88,6 @@ export interface SessionData {
   };
   /** Cumulative usage over ALL session-file entries (incl. compacted history). */
   stats?: SessionFileStats;
-  /** True when GET ?force=1 dropped a stale live wrapper and rebuilt from disk. */
-  wrapperRebuilt?: boolean;
 }
 
 interface AgentEvent {
@@ -930,10 +928,6 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           totalActiveMs: d.totalActiveMs,
           loadedEntryIds: d.context.entryIds ?? [],
         });
-      }
-      if (d.wrapperRebuilt) {
-        eventConnectionRef.current?.close("rebuilt");
-        eventConnectionRef.current?.maintain(sid);
       }
       if (!includeState && d.context.thinkingLevel && d.context.thinkingLevel !== "off") {
         setLiveThinkingLevel(asConcreteThinkingLevel(d.context.thinkingLevel));

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { createWriteStream, existsSync } from "node:fs";
+import { createWriteStream, existsSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 /** The repository root that holds `target/` and `ui/`. */
@@ -20,13 +20,19 @@ export function chromiumOptions() {
 }
 
 export function resolveServerBinary(root) {
-  const candidates = [
-    process.env.PI_STAR_BIN,
-    join(root, "target/release/pi-star"),
-    join(root, "target/debug/pi-star"),
-  ].filter(Boolean);
-  const binary = candidates.find((candidate) => existsSync(candidate));
-  assert.ok(binary, `pi-star binary not found (tried ${candidates.join(", ")}); run cargo build first`);
+  if (process.env.PI_STAR_BIN) {
+    assert.ok(existsSync(process.env.PI_STAR_BIN), `PI_STAR_BIN is not a file: ${process.env.PI_STAR_BIN}`);
+    return process.env.PI_STAR_BIN;
+  }
+  const candidates = [join(root, "target/release/pi-star"), join(root, "target/debug/pi-star")]
+    .filter((candidate) => existsSync(candidate));
+  assert.ok(candidates.length > 0, `pi-star binary not found (tried target/release and target/debug); run cargo build first`);
+  // The newest build wins. A release binary from months ago used to shadow a
+  // debug build made a minute ago, and the suite then tested the old routes —
+  // which reads as an unrelated product failure.
+  const binary = candidates.reduce((newest, candidate) =>
+    statSync(candidate).mtimeMs > statSync(newest).mtimeMs ? candidate : newest);
+  console.log(`server binary: ${binary}`);
   return binary;
 }
 
