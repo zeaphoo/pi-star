@@ -78,6 +78,30 @@ function openingTag(html, id) {
   return match[0];
 }
 
+test("the way into the archive is pinned under the list, and there before anything is archived", () => {
+  const html = render();
+  const footer = html.indexOf('class="sidebar-archive-footer"');
+  assert.notEqual(footer, -1, "the archive footer is rendered");
+  // Outside the scrolling views, so the list runs under it instead of ending
+  // with it: a footer row used to ride at the end of the tree and vanished
+  // entirely once nothing was archived, which read as a missing feature.
+  const views = html.indexOf('class="sidebar-sessions-views"');
+  assert.ok(views !== -1 && footer > views, "the footer follows the views container");
+  assert.doesNotMatch(source, /session-tree-footer/, "the tree keeps no archive row");
+  // With nothing archived it still renders, with the bare label rather than
+  // "Archived · 0".
+  assert.match(html, /class="sidebar-archive-footer-label">Archived</);
+  assert.doesNotMatch(html, /sidebar-archive-footer-label">Archived · 0/);
+  // It counts once there is something to count, and opens the archive.
+  assert.match(
+    source,
+    /archivedCount > 0\s*\?\s*t\("sidebar\.archivedCount", \{ count: archivedCount \}\)\s*:\s*t\("sidebar\.archived"\)/,
+  );
+  assert.match(source, /className="sidebar-archive-footer-button"\s+onClick=\{\(\) => openArchiveView\(\)\}/);
+  // While the archive is open its own header carries the way back.
+  assert.match(source, /\{!archiveView && \(\s*<div className="sidebar-archive-footer">/);
+});
+
 test("scrolling keeps the focused session and the viewport mounted without expanding the whole tree", () => {
   const sessions = Array.from({ length: 2000 }, (_, index) => session(`s${index}`, { modified: BASE - index * 60_000 }));
   const { rows } = buildSessionTree(treeInput({ sessions, currentProject: { key: "/work/alpha", root: "/work/alpha" }, moreShown: { "/work/alpha": 5000 } }));

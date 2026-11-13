@@ -1075,16 +1075,6 @@ const PlainRowView = memo(function PlainRowView({
           )}
         </div>
       );
-    case "footer-archived":
-      return (
-        <div className="session-tree-row session-tree-footer" style={style} data-row-key={row.key}>
-          <button type="button" className="session-tree-footer-button" onClick={() => handlers.current.onOpenArchive()}>
-            <ArchiveIcon size={12} />
-            <span className="session-tree-footer-label">{t("sidebar.archivedCount", { count: row.count })}</span>
-            <ChevronIcon size={10} className="session-tree-footer-chevron" />
-          </button>
-        </div>
-      );
   }
 });
 

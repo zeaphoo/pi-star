@@ -108,7 +108,9 @@ function groupRow(extra = {}, projectExtra = {}) {
   return { kind: "group", key: `group:${groupProject.key}`, project: groupProject, expanded: true, running: 0, awaiting: 0, unread: 0, ...extra };
 }
 
-const footer = [{ kind: "footer-archived", key: "footer-archived", count: 1 }];
+// Rows that are neither a session nor a group: the empty label still shows
+// among them, and they survive the loading state.
+const nonTreeRows = [{ kind: "spacer", key: "pinned-spacer" }];
 
 test("the pinned header toggles the section and shows activity dots only while collapsed", () => {
   const collapsed = rowMarkup(render({
@@ -375,17 +377,15 @@ test("delete confirmation shows a shortened title and both answers", () => {
   assert.doesNotMatch(html, /More actions/);
 });
 
-test("show more, empty groups, footer links and archive groups", () => {
+test("show more, empty groups and archive groups", () => {
   const html = render({
     rows: [
       { kind: "pinned-more", key: "pinned-more", hidden: 0, canShowLess: true },
       { kind: "group-more", key: "more:/work/app", projectKey: "/work/app", hidden: 3, canShowLess: false },
       { kind: "group-more", key: "more:/work/big", projectKey: "/work/big", hidden: 24, canShowLess: true },
       { kind: "group-empty", key: "empty:/work/app", project },
-      { kind: "spacer", key: "footer-spacer" },
       { kind: "archive-group", key: "archive:/work/app", project, count: 2, expanded: true },
       { kind: "archive-group", key: "archive:/work/old", project: { ...project, key: "/work/old", root: "/work/old", name: "old" }, count: 5, expanded: false },
-      { kind: "footer-archived", key: "footer-archived", count: 4 },
     ],
   });
   assert.match(rowMarkup(html, "pinned-more"), /<button type="button" class="session-tree-more-toggle" data-more-action="less">Show less<\/button><\/div>/);
@@ -403,7 +403,6 @@ test("show more, empty groups, footer links and archive groups", () => {
   );
   const pinnedEmpty = render({ rows: [{ kind: "group-empty", key: "empty:/work/app", project: { ...project, pinned: true } }] });
   assert.match(rowMarkup(pinnedEmpty, "empty:/work/app"), /No sessions yet<\/span><\/div>/);
-  assert.doesNotMatch(html, /footer-spacer/);
   // The archive's project header is a group header that folds its rows: the
   // chevron, the name, the count; ⋯ for its archived sessions, no "+".
   const archiveHeader = rowMarkup(html, "archive:/work/app");
@@ -412,20 +411,19 @@ test("show more, empty groups, footer links and archive groups", () => {
   assert.match(archiveHeader, /aria-label="Archived sessions of app"[^>]*aria-haspopup="menu" aria-expanded="false"/);
   assert.doesNotMatch(archiveHeader, /New session/);
   assert.match(rowMarkup(html, "archive:/work/old"), /aria-expanded="false" title="\/work\/old"><svg[^>]*class="session-tree-chevron"/);
-  assert.match(rowMarkup(html, "footer-archived"), /<span class="session-tree-footer-label">Archived · 4<\/span><svg[^>]*class="session-tree-footer-chevron"/);
 });
 
 test("loading replaces the rows; the empty label shows only without session, group or archive-group rows", () => {
-  const loading = render({ loading: true, rows: [groupRow(), ...footer], emptyLabel: "No sessions found" });
+  const loading = render({ loading: true, rows: [groupRow(), ...nonTreeRows], emptyLabel: "No sessions found" });
   assert.match(loading, /<div class="session-tree-message">Loading...<\/div>/);
   assert.deepEqual(renderedKeys(loading), []);
   assert.doesNotMatch(loading, /No sessions found/);
 
-  const empty = render({ rows: footer, emptyLabel: "No sessions found" });
+  const empty = render({ rows: nonTreeRows, emptyLabel: "No sessions found" });
   assert.match(empty, /<div class="session-tree-message">No sessions found<\/div><div class="session-tree-scroll scrollbar-subtle">/);
-  assert.deepEqual(renderedKeys(empty), ["footer-archived"]);
+  assert.deepEqual(renderedKeys(empty), []);
 
-  assert.doesNotMatch(render({ rows: [groupRow(), ...footer], emptyLabel: "No sessions found" }), /No sessions found/);
+  assert.doesNotMatch(render({ rows: [groupRow(), ...nonTreeRows], emptyLabel: "No sessions found" }), /No sessions found/);
 
   const foldedArchive = render({
     rows: [
@@ -442,9 +440,9 @@ test("loading replaces the rows; the empty label shows only without session, gro
   });
   assert.doesNotMatch(foldedArchive, /No archived sessions/);
   assert.deepEqual(renderedKeys(foldedArchive), ["archive:/work/app", "archive:/work/old"]);
-  assert.doesNotMatch(render({ rows: footer, emptyLabel: null }), /session-tree-message/);
+  assert.doesNotMatch(render({ rows: nonTreeRows, emptyLabel: null }), /session-tree-message/);
 
-  const failed = render({ rows: footer, emptyLabel: "No sessions found", error: "HTTP 500" });
+  const failed = render({ rows: nonTreeRows, emptyLabel: "No sessions found", error: "HTTP 500" });
   assert.match(failed, /<div class="session-tree-message is-error">HTTP 500<\/div>/);
   assert.doesNotMatch(failed, /No sessions found/);
 });
@@ -568,8 +566,13 @@ test("headers lead with their chevron, and every row's text starts in one column
   assert.equal(lastPx(".session-tree-session", "padding"), textStart);
   // A group header's toggle starts at the row's own left edge.
   assert.match(cssRule(".session-tree-group"), /padding: 0 4px 0 0;/);
-  assert.equal(lastPx(".session-tree-footer-button", "padding") + 12 + lastPx(".session-tree-footer-button", "gap"), textStart);
-  assert.deepEqual([...source.matchAll(/<ArchiveIcon size=\{(\d+)\} \/>\s*<span className="session-tree-footer-label">/g)].map((match) => Number(match[1])), [12]);
+  // The archive's way in left the tree for a bar pinned under it (its own
+  // file, its own test): the tree has no footer row to align any more.
+  assert.doesNotMatch(source, /session-tree-footer/);
+  // Its bar is pinned: it takes no share of the panel's height and does not
+  // scroll with the list.
+  assert.match(cssRule(".sidebar-archive-footer"), /display: flex;\s*flex: none;/);
+  assert.match(cssRule(".sidebar-archive-footer-button"), /min-width: 0;/);
   // These rows span the whole width, so their padding adds the rows' inset.
   assert.match(css, /\.session-tree-group-empty,\s*\.session-tree-more \{\s*padding-left: calc\(var\(--session-tree-inset-left\) \+ 20px\);/);
   // The pinned section's chevron in the same column (its row spans the
@@ -577,26 +580,25 @@ test("headers lead with their chevron, and every row's text starts in one column
   assert.match(cssRule(".session-tree-pinned-toggle"), /padding: 0 8px 0 calc\(var\(--session-tree-inset-left\) \+ 5px\);/);
 
   // No layout overrides these paddings, so phones line up the same way.
-  assert.doesNotMatch(css, /\.is-mobile \.session-tree-(?:session|group-toggle|group-empty|more|pinned-toggle|archive-group|footer-button) \{[^}]*padding/);
+  assert.doesNotMatch(css, /\.is-mobile \.session-tree-(?:session|group-toggle|group-empty|more|pinned-toggle|archive-group) \{[^}]*padding/);
   // One rhythm: session rows, every header (a project's, the pinned
-  // section's, the archive's projects), the empty note and the footer are
-  // one height, 28px (44px on a phone); only "show more" is shorter.
-  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "footer-archived": 28, "archive-group": 28 });
+  // section's, the archive's projects) and the empty note are one height,
+  // 28px (44px on a phone); only "show more" is shorter.
+  assert.deepEqual(SIDEBAR_ROW_HEIGHTS.desktop, { "pinned-header": 28, session: 28, "pinned-more": 26, group: 28, "group-more": 26, "group-empty": 28, spacer: 8, "archive-group": 28 });
   for (const [layout, height] of [["desktop", 28], ["mobile", 44]]) {
-    for (const kind of ["session", "group", "pinned-header", "group-empty", "footer-archived", "archive-group"]) {
+    for (const kind of ["session", "group", "pinned-header", "group-empty", "archive-group"]) {
       assert.equal(SIDEBAR_ROW_HEIGHTS[layout][kind], height, `${layout} ${kind}`);
     }
   }
 });
 
 test("group headers draw nothing for a drag while idle", () => {
-  // Three groups (the spacers between them render nothing), then the footer.
+  // Three groups (the spacers between them render nothing), then a spacer.
   const rows = [
     groupRow({}, { key: "/work/a", name: "a", pinned: true }),
     groupRow({}, { key: "/work/b", name: "b" }),
     groupRow({}, { key: "/work/c", name: "c", current: false }),
-    { kind: "spacer", key: "footer-spacer" },
-    ...footer,
+    ...nonTreeRows,
   ];
   const html = render({ rows, onMoveGroup: noop });
   assert.match(html, /^<div class="session-tree">/);

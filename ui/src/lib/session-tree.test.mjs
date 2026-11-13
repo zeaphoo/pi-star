@@ -110,7 +110,6 @@ function describeRows(rows) {
       case "pinned-header": return `pinned:${row.count}`;
       case "group-empty": return "empty";
       case "spacer": return "-";
-      case "footer-archived": return `archived:${row.count}`;
       case "archive-group": return `archive-group:${row.project.name}:${row.count}${row.expanded ? "" : " (collapsed)"}`;
       default: return row.kind;
     }
@@ -619,17 +618,20 @@ test("archived families leave the tree and are counted across projects", () => {
   const state = uiState({ sessions: { a2: { archivedAt: BASE + DAY }, b1: { archivedAt: BASE + DAY } } });
   const model = buildSessionTree(input({ sessions, uiState: state, groupExpansion: { "/work/alpha": true } }));
 
-  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1", "-", "archived:2"]);
+  // The rows leave the tree; the count is what the sidebar's pinned footer shows.
+  assert.deepEqual(describeRows(model.rows), ["-", "group:alpha", "group:a1"]);
   assert.equal(model.archivedCount, 2);
 });
 
-test("with no sessions and no current or pinned project only the footer remains", () => {
+test("with no sessions and no current or pinned project the tree is empty", () => {
   assert.deepEqual(describeRows(buildSessionTree(input()).rows), ["-"]);
   const allArchived = buildSessionTree(input({
     sessions: [session("a1")],
     uiState: uiState({ sessions: { a1: { archivedAt: BASE + DAY } } }),
   }));
-  assert.deepEqual(describeRows(allArchived.rows), ["-", "archived:1"]);
+  // Nothing in the tree; the archive is a footer, not a row.
+  assert.deepEqual(describeRows(allArchived.rows), ["-"]);
+  assert.equal(allArchived.archivedCount, 1);
   // Pinned families and no group: one spacer closes the pinned section.
   const pinnedOnly = buildSessionTree(input({
     sessions: [session("a1")],

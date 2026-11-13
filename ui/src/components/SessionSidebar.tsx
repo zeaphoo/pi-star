@@ -2449,7 +2449,8 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
                   >
                     <ChevronIcon size={13} className="sidebar-icon-back" />
                     <span>{t("sidebar.archived")}</span>
-                    <span className="sidebar-archive-count">· {archivedCount}</span>
+                    {/* No "· 0": an empty archive is a state, not a count. */}
+                    {archivedCount > 0 && <span className="sidebar-archive-count">· {archivedCount}</span>}
                   </button>
                   <button
                     type="button"
@@ -2475,6 +2476,30 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
             )}
           </div>
         </SessionSearch>
+        {/* The way into the archive, pinned under the list instead of riding at
+            its end: the list scrolls under it, and it is there before anything
+            has been archived — with no archived session the section used to
+            vanish, which read as a missing feature. It steps aside while the
+            archive is open, whose own header carries the way back. */}
+        {!archiveView && (
+          <div className="sidebar-archive-footer">
+            <button
+              type="button"
+              className="sidebar-archive-footer-button"
+              onClick={() => openArchiveView()}
+              title={t("sidebar.viewArchived", { count: archivedCount })}
+              aria-label={t("sidebar.viewArchived", { count: archivedCount })}
+            >
+              <ArchiveIcon size={12} />
+              <span className="sidebar-archive-footer-label">
+                {archivedCount > 0
+                  ? t("sidebar.archivedCount", { count: archivedCount })
+                  : t("sidebar.archived")}
+              </span>
+              <ChevronIcon size={10} className="sidebar-archive-footer-chevron" />
+            </button>
+          </div>
+        )}
       </div>
 
       {/* The header's New menu: its own anchor and items, so the rows' menus

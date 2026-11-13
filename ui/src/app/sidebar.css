@@ -798,31 +798,42 @@ a.session-tree-main {
 
 /* The footer link: the archive. Its 12px icon in the chevron column, its
    label in the text column. */
-.session-tree-footer {
-  right: var(--session-tree-inset-right);
-  left: var(--session-tree-inset-left);
+/* The archive's way in, pinned under the session list: outside the scrolling
+   tree, so it holds its place instead of riding at the end of the list, and
+   present even with nothing archived. */
+.sidebar-archive-footer {
+  display: flex;
+  flex: none;
   align-items: stretch;
+  height: 30px;
+  padding: 0 6px 2px;
+  box-sizing: border-box;
+  border-top: 1px solid color-mix(in srgb, var(--border) 70%, transparent);
 }
 
-.session-tree-footer-button {
+.sidebar-archive-footer-button {
   display: flex;
   flex: 1;
   align-items: center;
-  gap: 3px;
+  gap: 5px;
   min-width: 0;
-  padding: 0 4px 0 5px;
+  padding: 0 5px;
+  border: none;
   border-radius: 7px;
+  background: none;
   color: var(--text-dim);
+  font: inherit;
   font-size: 12px;
   text-align: left;
+  cursor: pointer;
 }
 
-.session-tree-footer-button:hover {
+.sidebar-archive-footer-button:hover {
   background: var(--bg-hover);
   color: var(--text-muted);
 }
 
-.session-tree-footer-label {
+.sidebar-archive-footer-label {
   flex: 1;
   min-width: 0;
   overflow: hidden;
@@ -830,7 +841,7 @@ a.session-tree-main {
   white-space: nowrap;
 }
 
-.session-tree-footer-chevron {
+.sidebar-archive-footer-chevron {
   flex: none;
 }
 
