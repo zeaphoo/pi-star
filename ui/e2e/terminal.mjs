@@ -72,6 +72,11 @@ try {
     const openTerminal = () => page.getByRole("tab", { name: "Terminal", exact: true }).click();
     const openChat = () => page.getByRole("tab", { name: "Chat", exact: true }).click();
     const ready = () => page.locator('.terminal-panel:visible[data-status="ready"]').waitFor();
+    // The main view is remembered, so a reload may already show the terminal.
+    const reopenTerminal = async () => {
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await ready();
+    };
     const openSettings = async () => {
       const showSidebar = page.getByRole("button", { name: "Show sidebar", exact: true });
       if (await showSidebar.count()) await showSidebar.first().click().catch(() => {});
@@ -138,9 +143,7 @@ try {
 
       // A reload reattaches to the shell that is still running.
       await page.reload();
-      await page.getByText("Terminal session two message", { exact: true }).waitFor();
-      await openTerminal();
-      await ready();
+      await reopenTerminal();
       assert.equal(created.size, 1, "a reload must reconnect, not create");
       await run("printf '\\nREFRESH:%s:%s\\n' \"$E2E_TOKEN\" \"$$\"");
       await waitOutput(`REFRESH:alive:${pid}`);
@@ -184,9 +187,7 @@ try {
         return panes.some((pane) => pane.cwd === expected);
       }, workspaceSubdir);
       await page.reload();
-      await page.getByText("Terminal session two message", { exact: true }).waitFor();
-      await openTerminal();
-      await ready();
+      await reopenTerminal();
       assert.ok((await page.locator('.terminal-tabstrip [role="tab"][aria-selected="true"]').getAttribute("title")).includes("sub"), "a reload keeps the restorable cwd");
 
       // If the server forgot the PTY, the pane is recreated in that cwd instead
@@ -194,10 +195,7 @@ try {
       const beforeRecovery = created.size;
       await fetch(`${base}/api/terminal/${cwdTerminalId}`, { method: "DELETE" });
       await page.reload();
-      await page.getByText("Terminal session two message", { exact: true }).waitFor();
-      await openTerminal();
-      await ready();
-      await page.getByText(/reopened in/).waitFor();
+      await reopenTerminal();
       await page.waitForFunction((oldId) => {
         const all = JSON.parse(localStorage.getItem("pi-star:terminal-workspaces:v1") || "{}");
         const ids = [];
@@ -257,6 +255,55 @@ try {
       await page.locator(".terminal-panel").waitFor({ state: "detached" });
       assert.equal((await fetch(`${base}/api/terminal/${finalTerminalId}`)).status, 404);
       assert.deepEqual(await savedTerminalIds(), [], "no shell is remembered after its tab closed");
+
+      // A split tab recovers every pane. Both panes notice the lost PTY in the
+      // same tick, so the later update must not write back the earlier pane's
+      // dead id (one pane used to stay blank).
+      await page.getByRole("button", { name: "Open workspace terminal", exact: true }).click();
+      await ready();
+      await run("cd sub");
+      await page.waitForFunction((expected) => {
+        const all = JSON.parse(localStorage.getItem("pi-star:terminal-workspaces:v1") || "{}");
+        const panes = [];
+        const walk = (node) => {
+          if (node.kind === "pane") panes.push(node);
+          else for (const child of node.children) walk(child);
+        };
+        for (const workspace of Object.values(all)) for (const tab of workspace.tabs) walk(tab.root);
+        return panes.some((pane) => pane.cwd === expected);
+      }, workspaceSubdir);
+      await page.getByRole("button", { name: "Split pane right", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".terminal-panel").length === 2);
+      await page.waitForFunction(() => [...document.querySelectorAll(".terminal-panel")].every((element) => element.getAttribute("data-status") === "ready"));
+      const beforeSplitRecovery = created.size;
+      const splitTerminalIds = await savedTerminalIds();
+      assert.equal(splitTerminalIds.length, 2, "a split tab remembers both shells");
+      for (const oldId of splitTerminalIds) {
+        await fetch(`${base}/api/terminal/${oldId}`, { method: "DELETE" });
+      }
+      await page.reload();
+      await page.getByRole("tab", { name: "Terminal", exact: true }).click();
+      await page.waitForFunction(() => document.querySelectorAll(".terminal-panel").length === 2);
+      await page.waitForFunction(() => [...document.querySelectorAll(".terminal-panel")].every((element) => element.getAttribute("data-status") === "ready"));
+      const recoveredSplitIds = await savedTerminalIds();
+      assert.equal(recoveredSplitIds.length, 2, "both split panes keep their layout");
+      for (const oldId of splitTerminalIds) {
+        assert.ok(!recoveredSplitIds.includes(oldId), "no pane keeps a forgotten terminal id");
+      }
+      assert.equal(created.size, beforeSplitRecovery + 2, "each split pane starts one replacement shell");
+      const recoveredCwds = await Promise.all(recoveredSplitIds.map(async (terminalId) => (await (await fetch(`${base}/api/terminal/${terminalId}`)).json()).cwd));
+      assert.deepEqual(recoveredCwds, [workspaceSubdir, workspaceSubdir]);
+
+      // `exit` closes that shell's pane, and the last pane takes its tab with
+      // it, the way a terminal window behaves.
+      await page.locator(".terminal-panel").nth(1).locator(".xterm-helper-textarea").focus();
+      await page.keyboard.type("exit");
+      await page.keyboard.press("Enter");
+      await page.waitForFunction(() => document.querySelectorAll(".terminal-panel").length === 1);
+      await ready();
+      await run("exit");
+      await page.locator(".terminal-panel").waitFor({ state: "detached" });
+      assert.deepEqual(await savedTerminalIds(), [], "exit closes the last pane and its tab");
 
       assert.deepEqual(errors, []);
       console.log(`PASS: terminal at ${viewport.width}px (project-scoped shell, reload reattach, restart, theme)`);

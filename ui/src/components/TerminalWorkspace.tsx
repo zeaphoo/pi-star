@@ -214,30 +214,75 @@ function SplitSash({
 function TerminalPane({
   pane,
   active,
+  exited,
   onActivate,
   onExpired,
   onCwdChange,
   onStarted,
   onStatusChange,
+  onExit,
+  onRestart,
+  onClose,
+  canClose,
   fallbackCwd,
 }: {
   pane: TerminalPaneState;
   active: boolean;
+  exited: boolean;
   onActivate: () => void;
   onExpired: () => void;
   onCwdChange: (cwd: string) => void;
   onStarted: () => void;
   onStatusChange: (status: TerminalStatus) => void;
+  onExit: (exitCode: number) => void;
+  onRestart: () => void;
+  onClose: () => void;
+  canClose: boolean;
   fallbackCwd: string | null;
 }) {
+  const { t } = useI18n();
   const tab = useMemo(() => ({
     id: pane.terminalId,
     cwd: pane.cwd,
     restored: pane.restored,
   }), [pane.cwd, pane.restored, pane.terminalId]);
 
+  // The actions belong to this pane, not to the window: the old toolbar put
+  // the close X at the far right edge, where it read as "close all".
+  const actions = (
+    <div className="terminal-pane-actions">
+      <button
+        type="button"
+        className="terminal-pane-action"
+        title={t("terminal.restart")}
+        aria-label={t("terminal.restart")}
+        onClick={onRestart}
+      >
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M20 11a8 8 0 1 0-2.34 5.66" /><polyline points="20 4 20 11 13 11" />
+        </svg>
+      </button>
+      {canClose && (
+        <button
+          type="button"
+          className="terminal-pane-action"
+          title={t("terminal.closePane")}
+          aria-label={t("terminal.closePane")}
+          onClick={onClose}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
+            <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+          </svg>
+        </button>
+      )}
+    </div>
+  );
+
   return (
     <div
+      className="terminal-pane"
+      data-active={active ? "true" : undefined}
+      data-exited={exited ? "true" : undefined}
       style={{
         flex: 1,
         minWidth: 0,
@@ -257,10 +302,12 @@ function TerminalPane({
         onCwdChange={onCwdChange}
         onStarted={onStarted}
         onStatusChange={onStatusChange}
+        onExit={onExit}
         fallbackCwd={fallbackCwd}
         onClosed={() => {}}
         onCloseError={() => {}}
         showExtraKeys={active}
+        actions={actions}
       />
     </div>
   );
@@ -270,22 +317,32 @@ function TerminalNodeView({
   node,
   tab,
   activePaneId,
+  paneStatuses,
   onActivatePane,
   onExpiredPane,
   onCwdChangePane,
   onStartedPane,
   onStatusChangePane,
+  onExitPane,
+  onRestartPane,
+  onClosePane,
+  canClosePane,
   fallbackCwd,
   onResizeSplit,
 }: {
   node: TerminalTreeNode;
   tab: TerminalWorkspaceTab;
   activePaneId: string | null;
+  paneStatuses: Record<string, TerminalStatus>;
   onActivatePane: (paneId: string) => void;
   onExpiredPane: (paneId: string) => void;
   onCwdChangePane: (paneId: string, cwd: string) => void;
   onStartedPane: (paneId: string) => void;
   onStatusChangePane: (paneId: string, status: TerminalStatus) => void;
+  onExitPane: (paneId: string, exitCode: number) => void;
+  onRestartPane: (paneId: string) => void;
+  onClosePane: (paneId: string) => void;
+  canClosePane: boolean;
   fallbackCwd: string | null;
   onResizeSplit: (splitId: string, sizes: number[]) => void;
 }) {
@@ -296,11 +353,16 @@ function TerminalNodeView({
       <TerminalPane
         pane={node}
         active={node.id === activePaneId}
+        exited={paneStatuses[node.id] === "exited" || paneStatuses[node.id] === "error"}
         onActivate={() => onActivatePane(node.id)}
         onExpired={() => onExpiredPane(node.id)}
         onCwdChange={(cwd) => onCwdChangePane(node.id, cwd)}
         onStarted={() => onStartedPane(node.id)}
         onStatusChange={(status) => onStatusChangePane(node.id, status)}
+        onExit={(exitCode) => onExitPane(node.id, exitCode)}
+        onRestart={() => onRestartPane(node.id)}
+        onClose={() => onClosePane(node.id)}
+        canClose={canClosePane}
         fallbackCwd={fallbackCwd}
       />
     );
@@ -334,11 +396,16 @@ function TerminalNodeView({
               node={child}
               tab={tab}
               activePaneId={activePaneId}
+              paneStatuses={paneStatuses}
               onActivatePane={onActivatePane}
               onExpiredPane={onExpiredPane}
               onCwdChangePane={onCwdChangePane}
               onStartedPane={onStartedPane}
               onStatusChangePane={onStatusChangePane}
+              onExitPane={onExitPane}
+              onRestartPane={onRestartPane}
+              onClosePane={onClosePane}
+              canClosePane={canClosePane}
               fallbackCwd={fallbackCwd}
               onResizeSplit={onResizeSplit}
             />
@@ -364,33 +431,46 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
   const terminalTheme = useTerminalTheme();
   const autoCreatedForRef = useRef<Set<string>>(new Set());
   const [closingTabId, setClosingTabId] = useState<string | null>(null);
-  const [recoveryNotice, setRecoveryNotice] = useState<string | null>(null);
   const [paneStatuses, setPaneStatuses] = useState<Record<string, TerminalStatus>>({});
   const closeDialogRef = useRef<HTMLDivElement>(null);
   const workspace = state ?? emptyTerminalWorkspace(projectRoot ?? "");
   const activeTab = workspace.tabs.find((tab) => tab.id === workspace.activeTabId) ?? null;
+  // Two panes can recover from a lost PTY in the same tick. Each callback used
+  // to close over the same workspace snapshot, so the later `onChange` wrote
+  // back the earlier pane's dead terminal id: one pane recovered, the other
+  // stayed blank. Mutations now read and advance this ref, so they stack.
+  const workspaceRef = useRef(workspace);
+  workspaceRef.current = workspace;
+
+  const commit = useCallback((next: TerminalWorkspaceState) => {
+    workspaceRef.current = next;
+    onChange(next);
+  }, [onChange]);
 
   const updateTab = useCallback((tabId: string, update: (tab: TerminalWorkspaceTab) => TerminalWorkspaceTab | null) => {
-    const tabs = workspace.tabs.flatMap((tab) => {
+    const current = workspaceRef.current;
+    const tabs = current.tabs.flatMap((tab) => {
       if (tab.id !== tabId) return [tab];
       const next = update(tab);
       return next ? [next] : [];
     });
-    const activeTabId = tabs.some((tab) => tab.id === workspace.activeTabId)
-      ? workspace.activeTabId
+    const activeTabId = tabs.some((tab) => tab.id === current.activeTabId)
+      ? current.activeTabId
       : tabs[0]?.id ?? null;
-    onChange({ ...workspace, tabs, activeTabId });
-  }, [onChange, workspace]);
+    commit({ ...current, tabs, activeTabId });
+  }, [commit]);
 
   const openTab = useCallback(() => {
-    if (!defaultCwd || workspace.tabs.length >= maxTerminalTabs()) return;
-    const activePane = activeTab?.activePaneId
-      ? findTerminalPane(activeTab.root, activeTab.activePaneId)
+    const current = workspaceRef.current;
+    if (!defaultCwd || current.tabs.length >= maxTerminalTabs()) return;
+    const currentTab = current.tabs.find((tab) => tab.id === current.activeTabId) ?? null;
+    const activePane = currentTab?.activePaneId
+      ? findTerminalPane(currentTab.root, currentTab.activePaneId)
       : null;
-    const cwd = activePane?.cwd ?? activeTab?.cwd ?? defaultCwd;
+    const cwd = activePane?.cwd ?? currentTab?.cwd ?? defaultCwd;
     const tab = newTerminalWorkspaceTab(cwd);
-    onChange({ ...workspace, tabs: [...workspace.tabs, tab], activeTabId: tab.id });
-  }, [activeTab, defaultCwd, onChange, workspace]);
+    commit({ ...current, tabs: [...current.tabs, tab], activeTabId: tab.id });
+  }, [commit, defaultCwd]);
 
   // Opening the Terminal view for the first time should show a shell, but a
   // deliberately emptied workspace stays empty until the user asks for one.
@@ -403,26 +483,21 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
     if (workspace.tabs.length === 0) openTab();
   }, [active, defaultCwd, openTab, projectRoot, workspace.tabs.length]);
 
-  useEffect(() => {
-    if (!recoveryNotice) return;
-    const timer = setTimeout(() => setRecoveryNotice(null), 8000);
-    return () => clearTimeout(timer);
-  }, [recoveryNotice]);
-
   const selectTab = (tabId: string) => {
-    onChange({ ...workspace, activeTabId: tabId });
+    commit({ ...workspaceRef.current, activeTabId: tabId });
   };
 
   const closeTab = (tabId: string) => {
-    const tab = workspace.tabs.find((item) => item.id === tabId);
+    const current = workspaceRef.current;
+    const tab = current.tabs.find((item) => item.id === tabId);
     if (!tab) return;
     for (const id of collectTerminalIds(tab.root)) killTerminal(id);
-    const index = workspace.tabs.findIndex((item) => item.id === tabId);
-    const tabs = workspace.tabs.filter((item) => item.id !== tabId);
-    const nextActive = workspace.activeTabId === tabId
+    const index = current.tabs.findIndex((item) => item.id === tabId);
+    const tabs = current.tabs.filter((item) => item.id !== tabId);
+    const nextActive = current.activeTabId === tabId
       ? tabs[Math.min(index, tabs.length - 1)]?.id ?? null
-      : workspace.activeTabId;
-    onChange({ ...workspace, tabs, activeTabId: nextActive });
+      : current.activeTabId;
+    commit({ ...current, tabs, activeTabId: nextActive });
     setClosingTabId(null);
   };
 
@@ -450,21 +525,9 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
 
   const closePane = (paneId: string) => {
     if (!activeTab) return;
-    const pane = activeTab.root.kind === "pane" ? activeTab.root : null;
-    // The pane can be nested; find it through the same helper the tree uses.
-    const nested = (function find(node: TerminalTreeNode): TerminalPaneState | null {
-      if (node.kind === "pane") return node.id === paneId ? node : null;
-      for (const child of node.children) {
-        const found = find(child);
-        if (found) return found;
-      }
-      return null;
-    })(activeTab.root);
-    if (nested) killTerminal(nested.terminalId);
+    const pane = findTerminalPane(activeTab.root, paneId);
+    if (pane) killTerminal(pane.terminalId);
     updateTab(activeTab.id, (tab) => closeTerminalPane(tab, paneId));
-    if (pane && pane.id === paneId) {
-      // The update above removed the whole tab when its last pane closed.
-    }
   };
 
   const restartPane = (paneId: string) => {
@@ -474,14 +537,18 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
     updateTab(activeTab.id, (tab) => replaceTerminalPaneId(tab, paneId));
   };
 
+  // Typing `exit` ends the shell: close that pane, the same way a terminal
+  // window does. A non-zero exit is kept on screen for inspection, with the
+  // pane actions offering a restart.
+  const handlePaneExit = (paneId: string, exitCode: number) => {
+    if (exitCode === 0) closePane(paneId);
+  };
+
   // The server lost this PTY (usually an app restart). Keep the pane and its
   // layout, but create a fresh shell in the last known directory instead of
   // painting a dead "Terminal expired or closed" error.
   const recoverPane = (paneId: string) => {
     if (!activeTab) return;
-    const pane = findTerminalPane(activeTab.root, paneId);
-    const cwd = pane?.cwd ?? activeTab.cwd ?? defaultCwd ?? projectRoot ?? "";
-    setRecoveryNotice(t("terminal.recovered", { cwd }));
     updateTab(activeTab.id, (tab) => replaceTerminalPaneId(tab, paneId));
   };
 
@@ -633,29 +700,8 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
           <IconButton label={t("terminal.splitDown")} onClick={() => splitPane("column")} disabled={!canSplit}>
             <SplitIcon direction="column" />
           </IconButton>
-          <IconButton label={t("terminal.restart")} onClick={() => activeTab?.activePaneId && restartPane(activeTab.activePaneId)} disabled={!activeTab?.activePaneId}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-              <path d="M20 11a8 8 0 1 0-2.34 5.66" /><polyline points="20 4 20 11 13 11" />
-            </svg>
-          </IconButton>
-          <IconButton label={t("terminal.closePane")} onClick={() => activeTab?.activePaneId && closePane(activeTab.activePaneId)} disabled={!canClosePane}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
-              <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
-            </svg>
-          </IconButton>
         </div>
       </div>
-
-      {recoveryNotice && (
-        <div className="terminal-recovery-notice" role="status">
-          <span>{recoveryNotice}</span>
-          <button type="button" onClick={() => setRecoveryNotice(null)} aria-label={t("i18n.close")}>
-            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
-              <line x1="2" y1="2" x2="8" y2="8" /><line x1="8" y1="2" x2="2" y2="8" />
-            </svg>
-          </button>
-        </div>
-      )}
 
       {!hasProject ? (
         <EmptyTerminal hasProject={false} onOpen={openTab} t={t} />
@@ -667,11 +713,16 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
             node={activeTab.root}
             tab={activeTab}
             activePaneId={activeTab.activePaneId}
+            paneStatuses={paneStatuses}
             onActivatePane={activatePane}
             onExpiredPane={recoverPane}
             onCwdChangePane={changePaneCwd}
             onStartedPane={markPaneStarted}
             onStatusChangePane={changePaneStatus}
+            onExitPane={handlePaneExit}
+            onRestartPane={restartPane}
+            onClosePane={closePane}
+            canClosePane={canClosePane}
             fallbackCwd={defaultCwd ?? projectRoot}
             onResizeSplit={resizeSplit}
           />

@@ -974,6 +974,7 @@ html.dark .web-login-error {
   --terminal-scrollbar: 156, 163, 175;
   display: grid;
   grid-template-rows: auto minmax(0, 1fr) auto;
+  position: relative;
   width: 100%;
   height: 100%;
   min-width: 0;
@@ -1022,38 +1023,61 @@ html.dark .web-login-error {
   font-size: 11px;
 }
 
-.terminal-recovery-notice {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: none;
-  padding: 7px 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-panel);
-  color: var(--text-muted);
+.terminal-panel-exit {
+  padding: 7px 12px;
+  border-bottom: 1px solid var(--terminal-border);
+  background: var(--terminal-header-bg);
+  color: var(--terminal-muted);
+  font-family: var(--font-mono);
   font-size: 11px;
-  line-height: 1.5;
 }
-.terminal-recovery-notice span {
-  flex: 1;
-  min-width: 0;
+
+/* Restart and close follow the pane they act on. Hidden until the pointer or
+   keyboard focus is inside the pane; an exited shell keeps them on screen. */
+.terminal-pane-actions {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 2;
+  display: flex;
+  gap: 1px;
+  padding: 1px;
+  border: 1px solid var(--terminal-border);
+  border-radius: 4px;
+  background: var(--terminal-header-bg);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease;
 }
-.terminal-recovery-notice button {
+.terminal-pane:hover .terminal-pane-actions,
+.terminal-pane:focus-within .terminal-pane-actions,
+.terminal-pane[data-exited="true"] .terminal-pane-actions {
+  opacity: 1;
+  pointer-events: auto;
+}
+/* Touch screens have no hover: keep the active pane's actions reachable. */
+@media (hover: none) {
+  .terminal-pane[data-active="true"] .terminal-pane-actions {
+    opacity: 1;
+    pointer-events: auto;
+  }
+}
+.terminal-pane-action {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 20px;
-  height: 20px;
+  width: 22px;
+  height: 22px;
   padding: 0;
   border: 0;
   border-radius: 3px;
   background: transparent;
-  color: var(--text-dim);
+  color: var(--terminal-muted);
   cursor: pointer;
 }
-.terminal-recovery-notice button:hover {
-  background: var(--bg-hover);
-  color: var(--text);
+.terminal-pane-action:hover {
+  background: var(--terminal-hover-bg);
+  color: var(--terminal-strong);
 }
 
 .terminal-xterm {

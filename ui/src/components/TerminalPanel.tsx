@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { terminalFontSize, useChatAppearance } from "@/hooks/useChatAppearance";
@@ -42,8 +42,12 @@ interface Props {
   onActivate?: () => void;
   /** The connection state, for the dot on the tab that owns this pane. */
   onStatusChange?: (status: TerminalStatus) => void;
+  /** The shell process ended; 0 is a deliberate `exit`. */
+  onExit?: (exitCode: number) => void;
   /** Extra mobile keys belong to the active pane only. */
   showExtraKeys?: boolean;
+  /** Per-pane controls drawn over the terminal, in its own theme. */
+  actions?: ReactNode;
 }
 
 export function TerminalPanel({
@@ -57,7 +61,9 @@ export function TerminalPanel({
   onStarted,
   onActivate,
   onStatusChange,
+  onExit,
   showExtraKeys: extraKeysEnabled = true,
+  actions,
 }: Props) {
   const { t } = useI18n();
   const { id, cwd, restored } = tab;
@@ -67,8 +73,8 @@ export function TerminalPanel({
   const writerRef = useRef<ReturnType<typeof createTerminalWriter> | null>(null);
   const cwdRef = useRef(cwd);
   cwdRef.current = cwd;
-  const callbacksRef = useRef({ onClosed, onCloseError, onExpired, onCwdChange, onStarted, onStatusChange });
-  callbacksRef.current = { onClosed, onCloseError, onExpired, onCwdChange, onStarted, onStatusChange };
+  const callbacksRef = useRef({ onClosed, onCloseError, onExpired, onCwdChange, onStarted, onStatusChange, onExit });
+  callbacksRef.current = { onClosed, onCloseError, onExpired, onCwdChange, onStarted, onStatusChange, onExit };
   const [status, setStatus] = useState<TerminalStatus>("connecting");
   const [error, setError] = useState<string | null>(null);
   const [exitCode, setExitCode] = useState<number | null>(null);
@@ -261,6 +267,7 @@ export function TerminalPanel({
           events?.close();
           setExitCode(event.type === "exit" ? event.exitCode : null);
           setStatus("exited");
+          if (event.type === "exit") callbacksRef.current.onExit?.(event.exitCode);
         }
       };
       events.onopen = () => {
@@ -403,6 +410,7 @@ export function TerminalPanel({
       </div>
       <div className="terminal-xterm"><div ref={containerRef} className="terminal-xterm-host" /></div>
       {showExtraKeys && <TerminalExtraKeys modifiers={modifiers} onKey={sendExtraKey} onToggleModifier={toggleModifier} />}
+      {actions}
     </section>
   );
 }
