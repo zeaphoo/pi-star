@@ -5,6 +5,7 @@ import test from "node:test";
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
 const contextSource = await readFile(new URL("./SessionContextSettings.tsx", import.meta.url), "utf8");
+const terminalSource = await readFile(new URL("./TerminalSettings.tsx", import.meta.url), "utf8");
 const loginSource = await readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8");
 
 test("the trust dialog Settings › MCP opens stacks above Settings", () => {
@@ -34,10 +35,22 @@ test("Session context lives in Settings, not on the toolbar", () => {
   assert.doesNotMatch(panelSource, /requiresProject: true/);
 });
 
-test("General is a split view too: Appearance and Chat", () => {
-  assert.match(panelSource, /const \[generalView, setGeneralView\] = useState<"appearance" \| "chat">\("appearance"\)/);
+test("Terminal sits under General › Appearance in the sidebar", () => {
+  assert.doesNotMatch(panelSource, /\{ id: "terminal", label:/);
+  assert.match(panelSource, /const \[generalView, setGeneralView\] = useState<"appearance" \| "terminal" \| "chat">\("appearance"\)/);
+  assert.match(panelSource, /generalView === "terminal" \? <TerminalSettings \/>/);
+  assert.match(panelSource, /setGeneralView\("terminal"\)/);
+  assert.match(panelSource, /active=\{generalView === "terminal"\}/);
+  assert.match(terminalSource, /<TerminalThemePicker \/>/);
+  assert.match(terminalSource, /<TerminalTypographySettings \/>/);
+  assert.doesNotMatch(terminalSource, /settings\.typography/);
+});
+
+test("General is a split view too: Appearance, Terminal and Chat", () => {
   assert.match(panelSource, /<ConfigSplitView>/);
-  assert.match(panelSource, /generalView === "appearance" \? <>\{appearance\}\{account\}<\/> : conversation/);
+  assert.match(panelSource, /<TerminalSettings \/>/);
+  assert.match(panelSource, /generalView === "appearance"/);
+  assert.match(panelSource, /generalView === "terminal"/);
 
   const appearance = panelSource.slice(panelSource.indexOf("const appearance = ("), panelSource.indexOf("const conversation = ("));
   const conversation = panelSource.slice(panelSource.indexOf("const conversation = ("), panelSource.indexOf("const account = ("));

@@ -1,13 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { terminalFontSize, useChatAppearance } from "@/hooks/useChatAppearance";
 import { useI18n } from "@/hooks/useI18n";
+import { useFontPreferences } from "@/hooks/useFontPreferences";
+import { useTerminalAppearance } from "@/hooks/useTerminalAppearance";
 import { useTerminalTheme } from "@/hooks/useTerminalTheme";
-import { subscribeFontPreferences } from "@/hooks/useFontPreferences";
-import { readFontWeight } from "@/lib/font-preferences";
+import {
+  resolveTerminalFontSize,
+  resolveTerminalFontWeight,
+  terminalFontStack,
+} from "@/lib/terminal-appearance";
 import { createTerminalWriter, TerminalRequestError, terminalRequest } from "@/lib/terminal-client";
 import { pageId, trackEventSource } from "@/lib/page-debug";
 import {
@@ -19,7 +24,6 @@ import {
   type TerminalModifiers,
 } from "@/lib/terminal-extra-keys";
 import type { TerminalEvent } from "@/lib/terminal-manager";
-import { TERMINAL_XTERM_THEMES } from "@/lib/terminal-theme";
 import { TerminalExtraKeys, useTerminalExtraKeysVisible } from "./TerminalExtraKeys";
 import type { TerminalTab } from "./terminal-tab-state";
 
@@ -85,12 +89,23 @@ export function TerminalPanel({
   // render, never whether this component calls a hook.
   const extraKeysVisible = useTerminalExtraKeysVisible();
   const showExtraKeys = extraKeysEnabled && extraKeysVisible;
-  const theme = useTerminalTheme();
-  const themeRef = useRef(theme);
-  themeRef.current = theme;
-  const fontSize = terminalFontSize(useChatAppearance().fontSize);
+  const preset = useTerminalTheme();
+  const appearance = useTerminalAppearance();
+  const fontPreferences = useFontPreferences();
+  const chatFontSize = useChatAppearance().fontSize;
+  const fontSize = resolveTerminalFontSize(appearance.fontSize, terminalFontSize(chatFontSize));
+  const fontWeight = resolveTerminalFontWeight(appearance.fontWeight, fontPreferences.monoWeight);
+  const fontFamily = terminalFontStack(appearance.font, appearance.customFont);
+  const appearanceRef = useRef(appearance);
+  appearanceRef.current = appearance;
+  const presetRef = useRef(preset);
+  presetRef.current = preset;
   const fontSizeRef = useRef(fontSize);
   fontSizeRef.current = fontSize;
+  const fontWeightRef = useRef(fontWeight);
+  fontWeightRef.current = fontWeight;
+  const fontFamilyRef = useRef(fontFamily);
+  fontFamilyRef.current = fontFamily;
   const refitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
@@ -132,21 +147,25 @@ export function TerminalPanel({
 
     const readTerminalFont = () => {
       const style = getComputedStyle(container);
+      const inherited = style.getPropertyValue("--font-mono").trim();
       return {
-        fontFamily: style.getPropertyValue("--font-mono").trim() || "monospace",
-        // Base weights stop at 600, so xterm's default bold (700) stays heavier.
-        fontWeight: readFontWeight(style.getPropertyValue("--font-mono-weight")),
+        fontFamily: fontFamilyRef.current ?? (inherited || "monospace"),
+        fontWeight: fontWeightRef.current,
       };
     };
+    const settings = appearanceRef.current;
     const terminal = new Terminal({
-      cursorBlink: true,
+      cursorBlink: settings.cursorBlink,
       ...readTerminalFont(),
       fontSize: fontSizeRef.current,
-      lineHeight: 1.25,
-      scrollback: 8000,
+      lineHeight: settings.lineHeight,
+      letterSpacing: settings.letterSpacing,
+      cursorStyle: settings.cursorStyle,
+      minimumContrastRatio: settings.minimumContrastRatio,
+      scrollback: settings.scrollback,
       screenReaderMode: true,
       disableStdin: true,
-      theme: TERMINAL_XTERM_THEMES[themeRef.current],
+      theme: presetRef.current.xterm,
     });
     terminalRef.current = terminal;
     const fit = new FitAddon();
@@ -155,8 +174,10 @@ export function TerminalPanel({
     // xterm measures its cell grid from the font it can see. A bundled webfont
     // may still be arriving, and setting an option re-measures, so re-apply the
     // family through a throwaway one once the file is in.
-    if (document.fonts && !document.fonts.check('16px "JetBrains Mono"')) {
-      void document.fonts.load('16px "JetBrains Mono"').then(() => {
+    const primaryFamily = (fontFamilyRef.current ?? getComputedStyle(container).getPropertyValue("--font-mono"))
+      .split(",")[0]?.trim().replace(/^['"]|['"]$/g, "");
+    if (primaryFamily && document.fonts && !document.fonts.check(`16px "${primaryFamily}"`)) {
+      void document.fonts.load(`16px "${primaryFamily}"`).then(() => {
         if (disposed) return;
         const font = readTerminalFont();
         terminal.options.fontFamily = "monospace";
@@ -210,14 +231,6 @@ export function TerminalPanel({
     refitRef.current = fitAndResize;
     const resizeObserver = new ResizeObserver(fitAndResize);
     resizeObserver.observe(container);
-    const updateFont = () => {
-      if (disposed) return;
-      const font = readTerminalFont();
-      terminal.options.fontFamily = font.fontFamily;
-      terminal.options.fontWeight = font.fontWeight;
-      fitAndResize();
-    };
-    const unsubscribeFonts = subscribeFontPreferences(updateFont);
 
     let verifying = false;
     let verifyTimer: ReturnType<typeof setTimeout> | null = null;
@@ -349,7 +362,6 @@ export function TerminalPanel({
       osc7.dispose();
       void writer.stop();
       resizeObserver.disconnect();
-      unsubscribeFonts();
       onData.dispose();
       onResize.dispose();
       window.removeEventListener("pagehide", pageHide);
@@ -363,16 +375,37 @@ export function TerminalPanel({
   }, [id, reconnectKey, consumeModifiers]);
 
   useEffect(() => {
-    if (terminalRef.current) terminalRef.current.options.theme = TERMINAL_XTERM_THEMES[theme];
-  }, [theme]);
-
-  useEffect(() => {
     const terminal = terminalRef.current;
-    if (!terminal || terminal.options.fontSize === fontSize) return;
-    // A refit sends the new cols/rows to the shell through onResize, as a font change does.
+    if (!terminal) return;
+    const container = containerRef.current;
+    const inherited = container ? getComputedStyle(container).getPropertyValue("--font-mono").trim() : "";
+    const resolvedFamily = fontFamily ?? (inherited || "monospace");
+    terminal.options.fontFamily = resolvedFamily;
+    terminal.options.fontWeight = fontWeight;
     terminal.options.fontSize = fontSize;
+    terminal.options.lineHeight = appearance.lineHeight;
+    terminal.options.letterSpacing = appearance.letterSpacing;
+    terminal.options.cursorStyle = appearance.cursorStyle;
+    terminal.options.cursorBlink = appearance.cursorBlink;
+    terminal.options.minimumContrastRatio = appearance.minimumContrastRatio;
+    terminal.options.scrollback = appearance.scrollback;
+    terminal.options.theme = preset.xterm;
+    // Font metrics changed; a refit sends the new cols/rows to the shell.
     refitRef.current();
-  }, [fontSize]);
+    // A face chosen while the panel is open may still be downloading. Measure
+    // again once it arrives, or xterm keeps the fallback's cell grid.
+    const primary = resolvedFamily.split(",")[0]?.trim().replace(/^['"]|['"]$/g, "");
+    if (primary && document.fonts && !document.fonts.check(`16px "${primary}"`)) {
+      void document.fonts.load(`16px "${primary}"`).then(() => {
+        if (terminalRef.current !== terminal) return;
+        terminal.options.fontFamily = "monospace";
+        terminal.options.fontFamily = resolvedFamily;
+        refitRef.current();
+      }).catch(() => {
+        // The fallback stack stays; it is what xterm already measured.
+      });
+    }
+  }, [appearance, preset, fontFamily, fontWeight, fontSize, fontPreferences.mono, fontPreferences.monoWeight]);
 
   useEffect(() => {
     if (active) terminalRef.current?.focus();
@@ -396,11 +429,30 @@ export function TerminalPanel({
     return () => { cancelled = true; };
   }, [id, tab.closing]);
 
+  const themeStyle = {
+    "--terminal-bg": preset.chrome.background,
+    "--terminal-header-bg": preset.chrome.panel,
+    "--terminal-border": preset.chrome.border,
+    "--terminal-button-border": preset.chrome.border,
+    "--terminal-hover-bg": preset.chrome.hover,
+    "--terminal-muted": preset.chrome.muted,
+    "--terminal-strong": preset.chrome.strong,
+    "--terminal-key": preset.chrome.key,
+    "--terminal-accent": preset.chrome.accent,
+    "--terminal-error-border": preset.chrome.errorBorder,
+    "--terminal-error-bg": preset.chrome.errorBackground,
+    "--terminal-error-text": preset.chrome.errorText,
+    "--terminal-scrollbar": preset.chrome.scrollbar,
+    colorScheme: preset.kind,
+  } as CSSProperties;
+
   return (
     <section
       className="terminal-panel"
-      data-terminal-theme={theme}
+      data-terminal-theme={preset.kind}
+      data-terminal-preset={preset.id}
       data-status={status}
+      style={themeStyle}
       aria-label={t("terminal.title")}
       onPointerDown={() => onActivate?.()}
     >

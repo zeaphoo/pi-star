@@ -19,7 +19,7 @@ import {
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
 import { useFileIconStyle } from "@/hooks/useFileIconStyle";
 import { useFileIconTheme } from "@/hooks/useFileIconTheme";
-import { useTerminalThemePreference } from "@/hooks/useTerminalTheme";
+import { TerminalSettings } from "./TerminalSettings";
 import { ICON_THEMES } from "@/lib/icon-themes";
 import { FileIcon, FolderIcon } from "./FileIcons";
 import { sendAgentCommand } from "@/lib/agent-client";
@@ -111,7 +111,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const { width: chatContentWidth, setWidth: setChatContentWidth, fontSize, setFontSize } = useChatAppearance();
   const { colorful: colorfulFileIcons, setColorful: setColorfulFileIcons } = useFileIconStyle();
   const { theme: fileIconTheme, setTheme: setFileIconTheme } = useFileIconTheme();
-  const { preference: terminalTheme, setPreference: setTerminalTheme } = useTerminalThemePreference();
   const enterSendMode = useEnterSendMode();
   const [shellSettings, setShellSettings] = useState<ToolSettingsResponse | null>(null);
   const [shellSaving, setShellSaving] = useState(false);
@@ -222,7 +221,7 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
 
   // General's two halves: how the app looks, and how a conversation behaves.
-  const [generalView, setGeneralView] = useState<"appearance" | "chat">("appearance");
+  const [generalView, setGeneralView] = useState<"appearance" | "terminal" | "chat">("appearance");
 
   const appearance = (
     <>
@@ -348,36 +347,6 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               describedBy="settings-colorful-file-icons-description"
               onChange={setColorfulFileIcons}
             />
-          </div>
-        </div>
-      </section>
-
-      <section className="settings-general-section" aria-label={t("settings.terminal")}>
-        <h3 className="settings-general-heading">{t("settings.terminal")}</h3>
-        <p id="settings-terminal-theme-description" className="settings-general-description">
-          {t("settings.terminalThemeDescription")}
-        </p>
-        <div className="settings-chat-options">
-          <div className="settings-chat-option">
-            <label htmlFor="settings-terminal-theme">{t("settings.terminalTheme")}</label>
-            <select
-              id="settings-terminal-theme"
-              value={terminalTheme}
-              aria-describedby="settings-terminal-theme-description"
-              onChange={(event) => setTerminalTheme(event.target.value as typeof terminalTheme)}
-              style={{
-                padding: "4px 8px",
-                border: "1px solid var(--border)",
-                borderRadius: 5,
-                background: "var(--bg)",
-                color: "var(--text)",
-                fontSize: 12,
-              }}
-            >
-              <option value="auto">{t("settings.terminalThemeAuto")}</option>
-              <option value="dark">{t("settings.terminalThemeDark")}</option>
-              <option value="light">{t("settings.terminalThemeLight")}</option>
-            </select>
           </div>
         </div>
       </section>
@@ -596,6 +565,12 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               <ConfigSidebarText className="is-grow">{t("settings.appearance")}</ConfigSidebarText>
             </ConfigSidebarItem>
             <ConfigSidebarItem
+              active={generalView === "terminal"}
+              onClick={() => setGeneralView("terminal")}
+            >
+              <ConfigSidebarText className="is-grow">{t("settings.terminal")}</ConfigSidebarText>
+            </ConfigSidebarItem>
+            <ConfigSidebarItem
               active={generalView === "chat"}
               onClick={() => setGeneralView("chat")}
             >
@@ -607,12 +582,16 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
           <ConfigDetailHeader style={{ padding: "20px 20px 0" }}>
             <ConfigDetailHeaderInfo>
               <ConfigDetailTitle>
-                {generalView === "appearance" ? t("settings.appearance") : t("settings.chat")}
+                {generalView === "appearance"
+                  ? t("settings.appearance")
+                  : generalView === "terminal" ? t("settings.terminal") : t("settings.chat")}
               </ConfigDetailTitle>
             </ConfigDetailHeaderInfo>
           </ConfigDetailHeader>
           <div className="settings-general">
-            {generalView === "appearance" ? <>{appearance}{account}</> : conversation}
+            {generalView === "appearance"
+              ? <>{appearance}{account}</>
+              : generalView === "terminal" ? <TerminalSettings /> : conversation}
           </div>
         </ConfigDetail>
       </ConfigSplitView>

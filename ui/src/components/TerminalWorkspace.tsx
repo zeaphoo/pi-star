@@ -84,13 +84,13 @@ function IconButton({
         border: "none",
         borderRadius: 4,
         background: "transparent",
-        color: disabled ? "var(--text-dim)" : "var(--text-muted)",
+        color: "var(--terminal-icon, var(--text-muted))",
         cursor: disabled ? "not-allowed" : "pointer",
         opacity: disabled ? 0.45 : 1,
         flexShrink: 0,
       }}
-      onMouseEnter={(event) => { if (!disabled) event.currentTarget.style.color = "var(--text)"; }}
-      onMouseLeave={(event) => { event.currentTarget.style.color = disabled ? "var(--text-dim)" : "var(--text-muted)"; }}
+      onMouseEnter={(event) => { if (!disabled) event.currentTarget.style.color = "var(--terminal-icon-hover, var(--text))"; }}
+      onMouseLeave={(event) => { event.currentTarget.style.color = "var(--terminal-icon, var(--text-muted))"; }}
     >
       {children}
     </button>
@@ -113,19 +113,19 @@ function SplitIcon({ direction }: { direction: TerminalSplitDirection }) {
 
 function EmptyTerminal({ hasProject, onOpen, t }: { hasProject: boolean; onOpen: () => void; t: ReturnType<typeof useI18n>["t"] }) {
   return (
-    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, color: "var(--text-muted)", textAlign: "center" }}>
+    <div style={{ height: "100%", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 10, padding: 24, color: "var(--terminal-muted, var(--text-muted))", textAlign: "center" }}>
       <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={{ opacity: 0.6 }} aria-hidden="true">
         <rect x="3" y="4" width="18" height="16" rx="2" />
         <polyline points="7 9 10 12 7 15" />
         <line x1="13" y1="15" x2="17" y2="15" />
       </svg>
-      <div style={{ fontSize: 14, color: "var(--text)" }}>{hasProject ? t("terminal.emptyTitle") : t("terminal.selectProject")}</div>
+      <div style={{ fontSize: 14, color: "var(--terminal-strong, var(--text))" }}>{hasProject ? t("terminal.emptyTitle") : t("terminal.selectProject")}</div>
       <div style={{ fontSize: 12, maxWidth: 420 }}>{hasProject ? t("terminal.emptyHint") : t("terminal.selectProjectHint")}</div>
       {hasProject && (
         <button
           type="button"
           onClick={onOpen}
-          style={{ marginTop: 4, padding: "6px 12px", border: "1px solid var(--border)", borderRadius: 5, background: "var(--bg-panel)", color: "var(--text)", cursor: "pointer", fontSize: 12 }}
+          style={{ marginTop: 4, padding: "6px 12px", border: "1px solid var(--terminal-border, var(--border))", borderRadius: 5, background: "var(--terminal-header-bg, var(--bg-panel))", color: "var(--terminal-strong, var(--text))", cursor: "pointer", fontSize: 12 }}
         >
           {t("terminal.open")}
         </button>
@@ -585,9 +585,7 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
   const pendingCloseTab = closingTabId
     ? workspace.tabs.find((tab) => tab.id === closingTabId) ?? null
     : null;
-  const chrome = terminalTheme === "dark"
-    ? { bg: "#111318", border: "#2f3540", active: "#60a5fa" }
-    : { bg: "#fbfbfc", border: "#e5e7eb", active: "#2563eb" };
+  const chrome = terminalTheme.chrome;
 
   return (
     <div
@@ -600,9 +598,15 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
         display: "flex",
         flexDirection: "column",
         background: "var(--terminal-split-bg)",
-        "--terminal-split-bg": chrome.bg,
+        "--terminal-split-bg": chrome.background,
         "--terminal-split-border": chrome.border,
-        "--terminal-split-active": chrome.active,
+        "--terminal-split-active": chrome.accent,
+        "--terminal-icon": chrome.muted,
+        "--terminal-icon-hover": chrome.strong,
+        "--terminal-muted": chrome.muted,
+        "--terminal-strong": chrome.strong,
+        "--terminal-border": chrome.border,
+        "--terminal-header-bg": chrome.panel,
       } as React.CSSProperties}
     >
       <div
@@ -613,8 +617,8 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
           height: TOOLBAR_HEIGHT,
           minWidth: 0,
           flexShrink: 0,
-          borderBottom: "1px solid var(--border)",
-          background: "var(--bg-panel)",
+          borderBottom: `1px solid ${chrome.border}`,
+          background: chrome.panel,
         }}
       >
         <div
@@ -648,9 +652,9 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
                   minWidth: 96,
                   maxWidth: 180,
                   padding: "0 6px 0 10px",
-                  borderRight: "1px solid var(--border)",
-                  background: selected ? "var(--bg)" : "var(--bg-panel)",
-                  color: selected ? "var(--text)" : "var(--text-muted)",
+                  borderRight: `1px solid ${chrome.border}`,
+                  background: selected ? chrome.background : chrome.panel,
+                  color: selected ? chrome.strong : chrome.muted,
                   cursor: "pointer",
                   fontSize: 11,
                   whiteSpace: "nowrap",
@@ -671,7 +675,7 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
                   onClick={(event) => { event.stopPropagation(); requestCloseTab(tab.id); }}
                   title={t("terminal.closeTab")}
                   aria-label={t("terminal.closeTab")}
-                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, padding: 0, border: "none", borderRadius: 3, background: "transparent", color: "var(--text-dim)", cursor: "pointer", flexShrink: 0 }}
+                  style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 20, height: 20, padding: 0, border: "none", borderRadius: 3, background: "transparent", color: chrome.muted, cursor: "pointer", flexShrink: 0 }}
                 >
                   <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" aria-hidden="true">
                     <line x1="2" y1="2" x2="8" y2="8" /><line x1="8" y1="2" x2="2" y2="8" />
@@ -686,7 +690,7 @@ export function TerminalWorkspace({ projectRoot, defaultCwd, state, active, isMo
             disabled={!hasProject || workspace.tabs.length >= maxTerminalTabs()}
             title={t("terminal.newTab")}
             aria-label={t("terminal.newTab")}
-            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, minWidth: 30, border: "none", borderRight: "1px solid var(--border)", background: "transparent", color: hasProject && workspace.tabs.length < maxTerminalTabs() ? "var(--text-muted)" : "var(--text-dim)", cursor: hasProject && workspace.tabs.length < maxTerminalTabs() ? "pointer" : "not-allowed", flexShrink: 0 }}
+            style={{ display: "flex", alignItems: "center", justifyContent: "center", width: 30, minWidth: 30, border: "none", borderRight: `1px solid ${chrome.border}`, background: "transparent", color: chrome.muted, cursor: hasProject && workspace.tabs.length < maxTerminalTabs() ? "pointer" : "not-allowed", opacity: hasProject && workspace.tabs.length < maxTerminalTabs() ? 1 : 0.45, flexShrink: 0 }}
           >
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" aria-hidden="true">
               <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />

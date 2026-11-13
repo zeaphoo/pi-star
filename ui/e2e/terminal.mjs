@@ -83,15 +83,14 @@ try {
       await page.getByRole("button", { name: "Settings", exact: true }).click();
       const settings = page.getByRole("dialog", { name: "Settings", exact: true });
       await settings.waitFor();
-      // A phone opens General as a list of sections; the select lives in its
-      // Appearance detail.
-      const select = settings.locator("#settings-terminal-theme");
-      if (!(await select.isVisible())) {
-        const appearance = settings.getByRole("button", { name: "Appearance", exact: true }).first();
-        if (await appearance.count()) await appearance.click();
-        await select.waitFor();
-      }
-      return select;
+      // Terminal is a view of General, in the sidebar below Appearance.
+      const general = settings.getByRole("button", { name: "General", exact: true }).first();
+      if (await general.count()) await general.click();
+      const picker = settings.locator(".terminal-theme-picker");
+      const terminalView = settings.getByRole("button", { name: "Terminal", exact: true }).first();
+      if (await terminalView.count()) await terminalView.click();
+      await picker.waitFor();
+      return settings;
     };
     const closeSettings = async () => {
       const settings = page.getByRole("dialog", { name: "Settings", exact: true });
@@ -236,16 +235,33 @@ try {
       // by the appearance suite; the desktop pass checks the terminal wiring.
       if (viewport.width >= 640) {
         const terminalBackground = () => page.locator(".terminal-panel:visible .xterm-viewport").evaluate((el) => getComputedStyle(el).backgroundColor);
-        const terminalTheme = await openSettings();
-        await terminalTheme.selectOption("light");
+        const shellsBeforeTheme = created.size;
+        const settings = await openSettings();
+        await settings.locator('[data-terminal-preset="pi-light"]').click();
         await closeSettings();
-        await page.locator('.terminal-panel:visible[data-terminal-theme="light"]').waitFor();
+        await page.locator('.terminal-panel:visible[data-terminal-theme="light"][data-terminal-preset="pi-light"]').waitFor();
         assert.equal(await terminalBackground(), "rgb(251, 251, 252)");
-        const terminalThemeAgain = await openSettings();
-        await terminalThemeAgain.selectOption("dark");
+        assert.equal(created.size, shellsBeforeTheme, "changing the theme must not recreate the shell");
+        const settingsAgain = await openSettings();
+        await settingsAgain.locator('[data-terminal-preset="pi-dark"]').click();
         await closeSettings();
-        await page.locator('.terminal-panel:visible[data-terminal-theme="dark"]').waitFor();
+        await page.locator('.terminal-panel:visible[data-terminal-theme="dark"][data-terminal-preset="pi-dark"]').waitFor();
         assert.equal(await terminalBackground(), "rgb(17, 19, 24)");
+        assert.equal(created.size, shellsBeforeTheme, "changing the theme must not recreate the shell");
+
+        // Typography is applied to the existing xterm, not by remounting it.
+        const shellsBeforeTypography = created.size;
+        const typographySettings = await openSettings();
+        await typographySettings.locator("#settings-terminal-font").selectOption("hack-nerd");
+        await typographySettings.getByRole("switch", { name: "Match chat size", exact: true }).click();
+        await typographySettings.locator("#settings-terminal-font-size").focus();
+        await page.keyboard.press("ArrowRight");
+        await closeSettings();
+        await page.waitForFunction(() => {
+          const raw = JSON.parse(localStorage.getItem("pi-star:terminal-appearance:v1") || "{}");
+          return raw.font === "hack-nerd" && raw.fontSize === 14;
+        });
+        assert.equal(created.size, shellsBeforeTypography, "changing terminal typography must not recreate the shell");
       }
 
       // Closing the last tab asks first, then ends its shell.

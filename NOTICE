@@ -29,5 +29,32 @@ Source: https://github.com/JetBrains/JetBrainsMono, v2.304
 The bundled WOFF2 is the upstream variable font (weights 100-800) in a WOFF2
 container, served from ui/public/fonts and used as the default monospace face.
 
+Noto Sans Mono / Noto Sans Mono CJK SC
+Copyright 2015-2024 Google LLC
+License: SIL Open Font License 1.1 (ui/public/fonts/OFL.txt)
+Sources: https://github.com/notofonts/noto-fonts
+         https://github.com/notofonts/noto-cjk
+The bundled Noto Sans Mono is a WOFF2 conversion of the variable upstream font,
+subset to Latin, Greek, Cyrillic, punctuation and terminal symbols. The CJK face
+is the full Simplified Chinese mono font, served as WOFF2 and gated by a CJK
+unicode-range so it is only fetched when a CJK glyph is needed.
+
+JetBrainsMono Nerd Font
+Copyright 2020 The JetBrains Mono Project Authors
+Patched by the Nerd Fonts project (https://github.com/ryanoasis/nerd-fonts)
+License: SIL Open Font License 1.1 (ui/public/fonts/OFL.txt);
+         Nerd Fonts patching scripts are MIT (ui/public/fonts/NERD-FONTS-LICENSE.txt)
+Source: https://github.com/ryanoasis/nerd-fonts, v3.5.1
+The bundled WOFF2 files are the Regular and Bold patched faces.
+
+Hack Nerd Font
+Copyright 2018 Source Foundry Authors
+Patched by the Nerd Fonts project (https://github.com/ryanoasis/nerd-fonts)
+License: MIT (ui/public/fonts/HACK-LICENSE.txt);
+         Nerd Fonts patching scripts are MIT (ui/public/fonts/NERD-FONTS-LICENSE.txt)
+Sources: https://github.com/source-foundry/Hack
+         https://github.com/ryanoasis/nerd-fonts, v3.5.1
+The bundled WOFF2 files are the Regular and Bold patched faces.
+
 pi-star also reads files produced by the pi coding agent. pi itself is not
 bundled with pi-star.

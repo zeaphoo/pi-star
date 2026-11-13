@@ -1,12 +1,12 @@
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { useTheme } from "@/hooks/useTheme";
 import {
   parseTerminalThemePreference,
   resolveTerminalTheme,
   TERMINAL_THEME_DEFAULT,
   TERMINAL_THEME_STORAGE_KEY,
-  type TerminalTheme,
   type TerminalThemePreference,
+  type TerminalThemePreset,
 } from "@/lib/terminal-theme";
 
 function readStoredTheme(): TerminalThemePreference {
@@ -63,15 +63,15 @@ export function setTerminalThemePreference(next: TerminalThemePreference): void 
   notify();
 }
 
-/** The stored preference, for the Settings selector. */
+/** The stored preference, for the Settings picker. */
 export function useTerminalThemePreference() {
   const snapshot = useSyncExternalStore(subscribe, getSnapshot, () => TERMINAL_THEME_DEFAULT);
   return { preference: snapshot, setPreference: setTerminalThemePreference };
 }
 
-/** Every open terminal shares one choice; `auto` follows the app's light/dark. */
-export function useTerminalTheme(): TerminalTheme {
+/** Every open terminal shares one preset; `auto` follows the app's light/dark. */
+export function useTerminalTheme(): TerminalThemePreset {
   const { preference: stored } = useTerminalThemePreference();
   const { isDark } = useTheme();
-  return resolveTerminalTheme(stored, isDark);
+  return useMemo(() => resolveTerminalTheme(stored, isDark), [stored, isDark]);
 }

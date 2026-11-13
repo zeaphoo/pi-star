@@ -31,6 +31,64 @@
   font-display: swap;
 }
 
+/* Terminal faces. The browser only fetches a face when a glyph needs it, so a
+   Latin-only session never downloads the CJK file and a shell without icons
+   never downloads the Nerd faces. */
+@font-face {
+  font-family: "Noto Sans Mono";
+  src: url("/fonts/noto-sans-mono-var.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* CJK is a fallback, not a replacement for the chosen Latin face: the
+   unicode-range keeps Latin, Greek and Cyrillic on Noto Sans Mono/JetBrains. */
+@font-face {
+  font-family: "Noto Sans Mono CJK SC";
+  src: url("/fonts/noto-sans-mono-cjk-sc-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+2E80-2EFF, U+3000-303F, U+3040-30FF, U+3100-312F, U+31C0-31EF,
+    U+3200-32FF, U+3300-33FF, U+3400-4DBF, U+4E00-9FFF, U+F900-FAFF,
+    U+FE30-FE4F, U+FF00-FFEF, U+1100-11FF, U+3130-318F, U+AC00-D7AF,
+    U+20000-2A6DF, U+2A700-2EBEF, U+2F800-2FA1F, U+30000-323AF;
+}
+
+/* Nerd Font builds carry the icon and Powerline glyphs used by shell prompts.
+   Their text glyphs match JetBrains Mono and Hack, so the same family can be
+   chosen outright or used only as the icon fallback behind the variable face. */
+@font-face {
+  font-family: "JetBrainsMono Nerd Font";
+  src: url("/fonts/jetbrains-mono-nerd-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrainsMono Nerd Font";
+  src: url("/fonts/jetbrains-mono-nerd-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hack Nerd Font";
+  src: url("/fonts/hack-nerd-regular.woff2") format("woff2");
+  font-weight: 400;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Hack Nerd Font";
+  src: url("/fonts/hack-nerd-bold.woff2") format("woff2");
+  font-weight: 700;
+  font-style: normal;
+  font-display: swap;
+}
+
 /* Code colours are roles (lib/code-roles.ts), not a Prism theme: the highlighter
    writes var(--code-*) and a theme only supplies the values. The defaults derive
    from the appearance theme, so every palette is code-complete without restating
@@ -983,23 +1041,6 @@ html.dark .web-login-error {
   color-scheme: dark;
 }
 
-.terminal-panel[data-terminal-theme="light"] {
-  --terminal-bg: #fbfbfc;
-  --terminal-header-bg: #f3f4f6;
-  --terminal-border: #e5e7eb;
-  --terminal-button-border: #d1d5db;
-  --terminal-hover-bg: #e5e7eb;
-  --terminal-muted: #6b7280;
-  --terminal-strong: #111827;
-  --terminal-key: #1f2937;
-  --terminal-accent: #2563eb;
-  --terminal-error-border: #fecaca;
-  --terminal-error-bg: #fef2f2;
-  --terminal-error-text: #b91c1c;
-  --terminal-scrollbar: 107, 114, 128;
-  color-scheme: light;
-}
-
 /* The connection state belongs to the tab, next to its name, not to a bar
    over the terminal: a ready shell is a quiet green dot, a connecting or dead
    one is louder. */
@@ -1542,7 +1583,7 @@ button.extension-widget-trigger:focus-visible {
 
 :root {
   --font-ui-default: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono-default: 'JetBrains Mono', 'Noto Sans Mono', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
+  --font-mono-default: 'JetBrains Mono', 'JetBrainsMono Nerd Font', 'Noto Sans Mono', 'Noto Sans Mono CJK SC', 'Fira Code', 'Consolas', ui-monospace, 'PingFang SC', 'Microsoft YaHei', monospace;
   --font-ui: var(--font-ui-default);
   --font-mono: var(--font-mono-default);
   --font-ui-weight: 400;
