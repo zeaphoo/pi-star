@@ -534,6 +534,243 @@ pub async fn context(
     }))
 }
 
+// ---------------------------------------------------------------------------
+// Trace view: the raw entry log
+// ---------------------------------------------------------------------------
+
+/// Entries per `/entries` page. Big enough that a long session is a handful of
+/// requests, small enough that the payload stays under a megabyte after
+/// previews.
+const DEFAULT_ENTRIES_LIMIT: usize = 400;
+const MAX_ENTRIES_LIMIT: usize = 2000;
+/// Characters kept per text block in a list page. The rows show one truncated
+/// line each; 160 covers the widest column before the CSS clamps it anyway.
+const DEFAULT_PREVIEW_CHARS: usize = 160;
+const MAX_PREVIEW_CHARS: usize = 4000;
+
+#[derive(Debug, Deserialize, Default)]
+pub struct EntriesQuery {
+    /// Exclusive cursor: return the entries appended after this entry id.
+    after: Option<String>,
+    limit: Option<usize>,
+    /// Characters kept per text block. `0` sends entries untouched.
+    #[serde(rename = "previewChars")]
+    preview_chars: Option<usize>,
+}
+
+/// `GET /sessions/{id}/entries` — the session's entry log in append order.
+///
+/// `/context` projects entries into model-visible messages and drops everything
+/// that is not one: model changes, thinking-level changes, labels, tool
+/// selection, context edits, empty branch summaries. The trace view exists to
+/// inspect exactly those events, so it reads the log itself — no projection, no
+/// reordering, `parentId` intact.
+///
+/// `previewChars` caps every text block so a 20 MB tool result never crosses
+/// the wire for a list row; the detail panel re-reads one entry uncapped.
+pub async fn entries(
+    State(state): State<Arc<AppState>>,
+    AxumPath(id): AxumPath<String>,
+    Query(query): Query<EntriesQuery>,
+) -> Response {
+    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+        return not_found("Session not found");
+    };
+    let Ok(session) = read_session(&path) else {
+        return not_found("Session not found");
+    };
+    let limit = query
+        .limit
+        .filter(|value| *value > 0)
+        .unwrap_or(DEFAULT_ENTRIES_LIMIT)
+        .clamp(1, MAX_ENTRIES_LIMIT);
+    let preview = match query.preview_chars {
+        Some(0) => None,
+        Some(value) => Some(value.clamp(1, MAX_PREVIEW_CHARS)),
+        None => Some(DEFAULT_PREVIEW_CHARS),
+    };
+    // The cursor is exclusive. An unknown one would silently restart at the
+    // first entry and duplicate the whole list, so reject it instead.
+    let start = match query.after.as_deref() {
+        Some(after) => match session
+            .entries
+            .iter()
+            .position(|entry| entry_id(entry).as_deref() == Some(after))
+        {
+            Some(index) => index + 1,
+            None => return bad_request("Unknown entry cursor"),
+        },
+        None => 0,
+    };
+    let end = start.saturating_add(limit).min(session.entries.len());
+    let page: Vec<Value> = session.entries[start..end]
+        .iter()
+        .map(|entry| match preview {
+            Some(chars) => preview_entry(entry, chars),
+            None => entry.clone(),
+        })
+        .collect();
+    no_store(json!({
+        "sessionId": id,
+        "leafId": session.leaf_id(),
+        "entries": page,
+        "total": session.entries.len(),
+        "hasMore": end < session.entries.len(),
+        "nextAfter": page.last().and_then(entry_id),
+    }))
+}
+
+/// `GET /sessions/{id}/entries/{entry_id}` — one raw entry, no preview cap.
+/// The trace detail panel asks for this when a block arrived truncated.
+pub async fn entry(
+    State(state): State<Arc<AppState>>,
+    AxumPath((id, entry_id)): AxumPath<(String, String)>,
+) -> Response {
+    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+        return not_found("Session not found");
+    };
+    let Ok(session) = read_session(&path) else {
+        return not_found("Session not found");
+    };
+    match session
+        .entries
+        .iter()
+        .find(|entry| session::entry_id(entry).as_deref() == Some(entry_id.as_str()))
+    {
+        Some(entry) => no_store(json!({ "entry": entry })),
+        None => not_found("Entry not found"),
+    }
+}
+
+/// Shrink an entry for a list row. Only content is capped: every other field is
+/// small metadata (ids, timestamps, model names, tool names) the row needs in
+/// full. Both content shapes pi writes are handled — the `message.content` of a
+/// message, and the flat `content` of a `custom_message`.
+fn preview_entry(entry: &Value, chars: usize) -> Value {
+    let mut entry = entry.clone();
+    if !preview_content_at(&mut entry, "/message/content", chars) {
+        preview_content_at(&mut entry, "/content", chars);
+    }
+    // Tool `details` keeps its own copies of output — a bash truncation record
+    // holds the whole tail — so it is capped the same way. The client re-reads
+    // the entry when it needs the original.
+    if let Some(details) = entry.pointer_mut("/message/details")
+        && truncate_strings(details, chars, 4)
+        && let Some(object) = details.as_object_mut()
+    {
+        object.insert("previewTruncated".into(), Value::Bool(true));
+    }
+    entry
+}
+
+/// Cap every long string inside `value`, `depth` levels deep. Returns whether
+/// anything was cut.
+fn truncate_strings(value: &mut Value, chars: usize, depth: usize) -> bool {
+    if depth == 0 {
+        return false;
+    }
+    match value {
+        Value::String(text) => {
+            let total = text.chars().count();
+            if total <= chars {
+                return false;
+            }
+            *text = text.chars().take(chars).collect();
+            true
+        }
+        // `any` short-circuits, which would stop capping after the first cut.
+        Value::Array(items) => {
+            let mut cut = false;
+            for item in items.iter_mut() {
+                cut |= truncate_strings(item, chars, depth - 1);
+            }
+            cut
+        }
+        Value::Object(map) => {
+            let mut cut = false;
+            for item in map.values_mut() {
+                cut |= truncate_strings(item, chars, depth - 1);
+            }
+            cut
+        }
+        _ => false,
+    }
+}
+
+/// Cap one content value: a bare string, or an array of blocks. Returns whether
+/// there was anything to cap, so the caller can try the other location.
+fn preview_content_at(entry: &mut Value, pointer: &str, chars: usize) -> bool {
+    let Some(content) = entry.pointer_mut(pointer) else {
+        return false;
+    };
+    if let Some(text) = content.as_str() {
+        let total = text.chars().count();
+        if total <= chars {
+            return true;
+        }
+        // Keep the block-array shape the client already reads rather than
+        // inventing a third one: a bare string becomes one capped text block.
+        *content = json!([{
+            "type": "text",
+            "text": text.chars().take(chars).collect::<String>(),
+            "truncated": true,
+            "fullLength": total,
+        }]);
+        return true;
+    }
+    let Some(blocks) = content.as_array_mut() else {
+        return false;
+    };
+    for block in blocks.iter_mut() {
+        let Some(kind) = block
+            .get("type")
+            .and_then(Value::as_str)
+            .map(str::to_owned)
+        else {
+            continue;
+        };
+        match kind.as_str() {
+            "text" => truncate_string_field(block, "text", chars),
+            "thinking" => {
+                truncate_string_field(block, "thinking", chars);
+                // The detail panel loads the rest through the existing
+                // `/entries/{id}/thinking` route, the same contract `/context`
+                // uses for deferred reasoning.
+                block["deferred"] = Value::Bool(true);
+            }
+            "image" => {
+                // Base64 never rides along with a list page; the image route
+                // already serves it by block index. pi stores two shapes:
+                // `{data, mimeType}` and `{source: {data, media_type}}`.
+                if let Some(source) = block.get_mut("source").and_then(Value::as_object_mut) {
+                    source.remove("data");
+                }
+                if let Some(object) = block.as_object_mut() {
+                    if object.contains_key("data") {
+                        object.remove("data");
+                    }
+                }
+                block["deferred"] = Value::Bool(true);
+            }
+            _ => {}
+        }
+    }
+    true
+}
+
+fn truncate_string_field(block: &mut Value, field: &str, chars: usize) {
+    let Some(text) = block.get(field).and_then(Value::as_str).map(str::to_owned) else {
+        return;
+    };
+    let total = text.chars().count();
+    if total <= chars {
+        return;
+    }
+    block[field] = Value::String(text.chars().take(chars).collect());
+    block["truncated"] = Value::Bool(true);
+    block["fullLength"] = Value::from(total);
+}
+
 pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
     let backend = state.route_backend(&id);
     if let Some(session) = state.pi_rpc.get(&id) {

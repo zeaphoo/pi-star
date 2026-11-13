@@ -9,6 +9,7 @@ import { NewSessionContextBar, type NewSessionContextControl } from "./NewSessio
 import type { ChatScrollPosition } from "@/lib/chat-scroll-position";
 import type { Tab } from "./TabBar";
 import { MainViewTabs } from "./MainViewTabs";
+import { TraceView } from "./TraceView";
 import { CodeWorkspace } from "./CodeWorkspace";
 import { GitWorkspace } from "./GitWorkspace";
 import { TerminalWorkspace } from "./TerminalWorkspace";
@@ -205,8 +206,10 @@ export function AppShell() {
   const [codeMounted, setCodeMounted] = useState(() => loadMainView() === "code");
   const [gitMounted, setGitMounted] = useState(() => loadMainView() === "git");
   const [terminalMounted, setTerminalMounted] = useState(() => loadMainView() === "terminal");
+  const [traceMounted, setTraceMounted] = useState(() => loadMainView() === "trace");
   const handleMainViewChange = useCallback((next: MainView) => {
     setMainView(next);
+    if (next === "trace") setTraceMounted(true);
     if (next === "code") setCodeMounted(true);
     if (next === "git") setGitMounted(true);
     if (next === "terminal") setTerminalMounted(true);
@@ -3155,6 +3158,17 @@ export function AppShell() {
             )
           ) : null}
           </div>
+          {traceMounted && (
+            <div style={{ display: mainView === "trace" ? "flex" : "none", height: "100%", minHeight: 0, minWidth: 0 }}>
+              <TraceView
+                sessionId={selectedSession?.id ?? null}
+                running={Boolean(selectedSession && runningSessionIds.has(selectedSession.id))}
+                tools={systemTools}
+                isMobile={isMobile}
+                active={mainView === "trace"}
+              />
+            </div>
+          )}
           {codeMounted && (
             <div style={{ display: mainView === "code" ? "flex" : "none", height: "100%", minHeight: 0 }}>
               <CodeWorkspace

@@ -215,6 +215,145 @@ async fn sessions_list_read_and_pagination() {
 }
 
 #[tokio::test]
+async fn session_entries_serves_the_raw_log_for_the_trace_view() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    // The header line is not an entry: read_session strips it, so the trace
+    // never has to skip a pseudo-event.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{}/entries", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let entries = body["entries"].as_array().unwrap();
+    assert_eq!(entries.len(), 4);
+    assert_eq!(body["total"], 4);
+    assert_eq!(body["hasMore"], false);
+    assert_eq!(body["nextAfter"], "s1");
+    // Unprojected: `/context` would drop `session_info` and keep only messages,
+    // which is exactly what a trace must not do.
+    assert_eq!(entries[0]["type"], "message");
+    assert_eq!(entries[0]["parentId"], Value::Null);
+    assert_eq!(entries[3]["type"], "session_info");
+    assert_eq!(entries[3]["name"], "Fixture session");
+
+    // previewChars caps a block and reports what it cut; the list page never
+    // carries a 20 MB tool result.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries?previewChars=4",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let reply = &body["entries"][1]["message"]["content"][0];
+    assert_eq!(reply["text"], "fixt");
+    assert_eq!(reply["truncated"], true);
+    assert_eq!(reply["fullLength"], 13);
+
+    // previewChars=0 sends the stored entry through untouched.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries?previewChars=0",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let reply = &body["entries"][1]["message"]["content"][0];
+    assert_eq!(reply["text"], "fixture reply");
+    assert!(reply.get("truncated").is_none());
+
+    // The cursor is exclusive, so paging never repeats the entry it starts at.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries?after=a1&limit=1",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["entries"][0]["id"], "t1");
+    assert_eq!(body["hasMore"], true);
+    assert_eq!(body["nextAfter"], "t1");
+
+    // A cursor from another session restarts silently, which would duplicate
+    // the whole list; it is an error instead.
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries?after=not-an-entry",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+
+    // limit=0 falls back to the default page rather than returning nothing.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{}/entries?limit=0", fixture.session_id))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 4);
+
+    // The detail panel re-reads one entry uncapped.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries/a1",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["entry"]["id"], "a1");
+    assert_eq!(body["entry"]["message"]["content"][0]["text"], "fixture reply");
+
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .uri(format!(
+                "/api/sessions/{}/entries/nope",
+                fixture.session_id
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}
+
+#[tokio::test]
 async fn session_ui_state_round_trip() {
     let fixture = write_fixture();
     let app = router(&fixture).await;

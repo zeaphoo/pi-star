@@ -51,11 +51,29 @@ function TerminalIcon() {
   );
 }
 
+/** The trace view's switch icon: three log entries on a spine, the shape of
+ *  the lane rail it opens next to. */
+function TraceIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <circle cx="6" cy="5" r="2" />
+      <circle cx="6" cy="12" r="2" />
+      <circle cx="6" cy="19" r="2" />
+      <path d="M11 5h3.5A3.5 3.5 0 0 1 18 8.5v0" />
+      <path d="M11 12h7" />
+      <path d="M11 19h3.5A3.5 3.5 0 0 0 18 15.5v0" />
+    </svg>
+  );
+}
+
 /** The chat/code switch that sits in the centre of the chat toolbar. */
 export function MainViewTabs({ value, onChange, compact = false }: Props) {
   const { t } = useI18n();
   const tabs: Array<{ id: MainView; label: string; icon: ReactNode }> = [
     { id: "chat", label: t("mainView.chat"), icon: <ChatIcon /> },
+    // The trace is bound to the session, so it sits next to the conversation it
+    // inspects rather than with the project-scoped panes on the right.
+    { id: "trace", label: t("mainView.trace"), icon: <TraceIcon /> },
     { id: "code", label: t("mainView.code"), icon: <CodeIcon /> },
     { id: "git", label: t("mainView.diff"), icon: <DiffIcon /> },
     { id: "terminal", label: t("mainView.terminal"), icon: <TerminalIcon /> },

@@ -10,7 +10,13 @@ import { openFileTab } from "@/components/file-tab-state";
  * projects restores that project's previous workspace.
  */
 
-export type MainView = "chat" | "code" | "git" | "terminal";
+export type MainView = "chat" | "trace" | "code" | "git" | "terminal";
+
+const MAIN_VIEWS: readonly MainView[] = ["chat", "trace", "code", "git", "terminal"];
+
+function isMainView(value: unknown): value is MainView {
+  return typeof value === "string" && (MAIN_VIEWS as readonly string[]).includes(value);
+}
 
 export interface CodeWorkspaceState {
   projectKey: string;
@@ -43,20 +49,21 @@ function storage(): Storage | null {
 }
 
 /**
- * The main-view preference, with `?view=code` taking precedence over the last
+ * The main-view preference, with `?view=trace` taking precedence over the last
  * choice remembered in this browser.
  */
 export function loadMainView(): MainView {
   if (typeof window !== "undefined") {
     try {
       const view = new URL(window.location.href).searchParams.get("view");
-      if (view === "code" || view === "chat" || view === "git" || view === "terminal") return view;
+      if (isMainView(view)) return view;
     } catch {
       // Fall through to the remembered value.
     }
   }
   try {
-    return storage()?.getItem(MAIN_VIEW_KEY) === "code" ? "code" : "chat";
+    const stored = storage()?.getItem(MAIN_VIEW_KEY);
+    return isMainView(stored) ? stored : "chat";
   } catch {
     return "chat";
   }

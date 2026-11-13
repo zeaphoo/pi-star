@@ -41,6 +41,14 @@ pub fn router(state: Arc<AppState>) -> Router {
             post(routes::sessions::auto_name),
         )
         .route(
+            "/sessions/{id}/entries",
+            get(routes::sessions::entries),
+        )
+        .route(
+            "/sessions/{id}/entries/{entry_id}",
+            get(routes::sessions::entry),
+        )
+        .route(
             "/sessions/{id}/entries/{entry_id}/tool-result-image",
             get(routes::sessions::tool_result_image),
         )

@@ -22,9 +22,17 @@ test("the workspace's Git tab is a Diff tab with the file-diff icon", () => {
   // Lucide's file-diff (a file with plus and minus), not a Git branch: the
   // view will hold diffs from more than Git (revisions, comparisons).
   assert.match(html, /M6 22a2 2 0 0 1-2-2V4/);
-  assert.doesNotMatch(html, /<circle/);
   // The view id stays "git": saved state and ?view= links keep working.
   assert.match(html, /<button[^>]*role="tab"[^>]*aria-selected="true"/);
   const selected = html.match(/<button[^>]*aria-selected="true"[^>]*>[\s\S]*?<\/button>/)?.[0] ?? "";
   assert.match(selected, />Diff</);
+  // Scoped to this tab: the trace tab next to it is a log with circles.
+  assert.doesNotMatch(selected, /<circle/);
+});
+
+test("the trace tab sits next to the chat tab and is bound to the session", () => {
+  const html = render();
+  assert.match(html, />Trace</);
+  const labels = [...html.matchAll(/<span>([^<]+)<\/span>/g)].map((match) => match[1]);
+  assert.deepEqual(labels, ["Chat", "Trace", "Code", "Diff", "Terminal"]);
 });

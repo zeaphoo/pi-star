@@ -8,6 +8,7 @@ import "@/app/globals.css";
 import "@/app/settings.css";
 import "@/app/sidebar.css";
 import "@/app/sidebar-menu.css";
+import "@/app/trace.css";
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");
