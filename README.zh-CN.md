@@ -8,6 +8,8 @@ pi-star 把一次编码回合需要的几件事放进同一个跨平台桌面应
 同一窗口里打开文件、查看 Git diff、运行和调试。它沿用 [pi coding agent](https://github.com/earendil-works/pi)
 的会话与工具生态，并继续使用 `~/.pi/agent` 下的数据——和 pi CLI、pi-web 可以读取同一批会话。
 
+![Pi Star：Agent、工具调用与它改动的代码都在同一个窗口](docs/images/pi-star-chat.zh-CN.png)
+
 ## 特性
 
 ### 1. 一体化：Agent、代码、diff、终端都在同一个窗口

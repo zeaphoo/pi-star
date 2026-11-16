@@ -10,6 +10,8 @@ code, you open files, review the Git diff, run tests, and debug in the same wind
 session and tooling ecosystem of [pi coding agent](https://github.com/earendil-works/pi) and keeps
 using the data under `~/.pi/agent`, so it shares sessions with the pi CLI and pi-web.
 
+![Pi Star: the agent, its tool calls, and the code it changed in one window](docs/images/pi-star-chat.png)
+
 ## Features
 
 ### 1. One app for the agent, the code, the diff, and the terminal
