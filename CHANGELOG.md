@@ -8,6 +8,16 @@
 
 ## [Unreleased]
 
+### Changed
+
+- **许可证改为 Apache-2.0**：项目整体以 Apache License 2.0 发布；从 pi-web 与 pi-rust 复制的代码
+  继续保持 MIT，上游署名与 MIT 全文保留在 `NOTICE`。
+- **README 重新定位**：突出跨平台桌面一体化（Agent / 代码浏览器 / Git diff / 终端）与两个
+  Agent 引擎（原生 PI、Rust PI Agent）。
+- **README 与开发文档拆分**：README 只保留产品特性与下载安装，并提供
+  [`README.en.md`](README.en.md) 英文版；架构、构建、开发测试、桌面打包与安全模型移到
+  [`docs/development.md`](docs/development.md)。
+
 ## [0.1.0-rc.3] - 2026-11-13
 
 第三个预发布版本：终端外观与内置字体、设置分区，以及终端恢复和交互细节。

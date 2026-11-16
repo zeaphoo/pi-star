@@ -2,7 +2,7 @@
 name = "pi-star-app"
 version = "0.1.0-rc.3"
 edition = "2021"
-license = "MIT"
+license = "Apache-2.0"
 description = "Pi Star desktop shell: launches and supervises pi-star, then opens its console"
 
 # 独立于仓库根的 crates workspace（根 workspace 已 exclude = ["app"]）

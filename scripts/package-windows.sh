@@ -96,6 +96,8 @@ const resources = {
   [source(runtime, "pi-runtime.json")]: "pi-runtime/pi-runtime.json",
   [source(runtime, "NODE-LICENSE")]: "pi-runtime/NODE-LICENSE",
   [source(runtime, "PI-NOTICE")]: "pi-runtime/PI-NOTICE",
+  [source(root, "LICENSE")]: "LICENSE",
+  [source(root, "NOTICE")]: "NOTICE",
 }
 for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
   const candidate = source(runtime, extra)

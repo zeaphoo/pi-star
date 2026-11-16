@@ -69,6 +69,8 @@ const resources = {
   [`${runtime}/pi-runtime.json`]: "pi-runtime/pi-runtime.json",
   [`${runtime}/NODE-LICENSE`]: "pi-runtime/NODE-LICENSE",
   [`${runtime}/PI-NOTICE`]: "pi-runtime/PI-NOTICE",
+  [`${root}/LICENSE`]: "LICENSE",
+  [`${root}/NOTICE`]: "NOTICE",
 }
 for (const extra of ["git", "GIT-LICENSE.txt", "GIT-NOTICE.txt"]) {
   if (fsExists(`${runtime}/${extra}`)) resources[`${runtime}/${extra}`] = `pi-runtime/${extra}`

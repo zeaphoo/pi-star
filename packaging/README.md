@@ -63,7 +63,9 @@ node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform darwin --arc
 它从 nodejs.org 下载固定版本 Node，`npm pack` 固定版本 pi，`npm install --omit=dev`
 安装生产依赖，复制 `agent-extension/`；Windows 上还会解压 MinGit。已准备且元数据一致时
 自动跳过。MinGit 采用 GPL-2.0，安装包内附带 `GIT-LICENSE.txt`/`GIT-NOTICE.txt`，源码地址
-为 <https://github.com/git-for-windows/git>。
+为 <https://github.com/git-for-windows/git>。安装包同时带上项目的 `LICENSE`（Apache-2.0）与
+`NOTICE`（含 pi-web、pi-rust 的 MIT 署名和字体许可），落在资源目录（Linux
+`/usr/lib/PiStar/`、macOS `Contents/Resources/`、Windows 与主程序同目录）。
 
 ## 产物命名
 
@@ -101,9 +103,10 @@ Linux/Windows/macOS 做桌面壳编译检查。
 - ...
 ```
 
-### macOS 签名与公证（可选）
+### macOS 签名与公证
 
-未配置 secrets 时构建**未签名** dmg。配置以下 secrets 后自动签名、公证并钉票：
+官方 Release 的 macOS 包已签名、公证并钉票，用户首次启动无需额外操作。本地构建未配置
+secrets 时产出**未签名** dmg。签名与公证由以下 secrets 驱动：
 
 | secret | 说明 |
 | --- | --- |
