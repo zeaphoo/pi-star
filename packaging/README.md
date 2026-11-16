@@ -1,22 +1,26 @@
-# 桌面打包
+# Desktop packaging
 
-Pi Star 只发布**桌面应用**，不再提供单独的 Linux 服务包。每个安装包都包含：
+**English** · [简体中文](README.zh-CN.md)
 
-| 内容 | 位置 |
+Pi Star only ships the **desktop app**; there is no separate Linux server package anymore. Every
+installer contains:
+
+| Content | Location |
 | --- | --- |
-| 桌面壳 | `PiStarApp` / `PiStarApp.exe` / `PiStar.app` |
-| pi-star 服务 | 资源目录下的 `pi-star`（Windows 与壳同目录） |
-| Node 运行时 | `pi-runtime/node`（Windows `node.exe`） |
-| pi CLI | `pi-runtime/pi/`（`@earendil-works/pi-coding-agent` + 生产依赖） |
-| pi-star 扩展 | `pi-runtime/agent-extension/`（`index.js`、`subagent.js`、`package.json`） |
-| MinGit（仅 Windows） | `pi-runtime/git/`（Git Bash、git、coreutils） |
+| Desktop shell | `PiStarApp` / `PiStarApp.exe` / `PiStar.app` |
+| pi-star server | `pi-star` under the resources directory (same directory as the shell on Windows) |
+| Node runtime | `pi-runtime/node` (`node.exe` on Windows) |
+| pi CLI | `pi-runtime/pi/` (`@earendil-works/pi-coding-agent` + production dependencies) |
+| pi-star extension | `pi-runtime/agent-extension/` (`index.js`, `subagent.js`, `package.json`) |
+| MinGit (Windows only) | `pi-runtime/git/` (Git Bash, git, coreutils) |
 
-Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Windows 为安装目录。
-`pi-star` 启动时会在自身同目录查找 `pi-runtime/`，因此安装后无需单独安装 Node 或 pi。
+Linux installs to `/usr/lib/PiStar/`, macOS to `Contents/Resources/`, and Windows to the install
+directory. `pi-star` looks for `pi-runtime/` next to itself, so no separate Node or pi installation is
+needed after installing.
 
-## 版本
+## Versions
 
-`packaging/pi-runtime.json` 固定内置运行时：
+`packaging/pi-runtime.json` pins the bundled runtime:
 
 ```json
 {
@@ -27,32 +31,33 @@ Linux 安装位置为 `/usr/lib/PiStar/`，macOS 为 `Contents/Resources/`，Win
 }
 ```
 
-升级 pi/Node/MinGit 时同时更新此文件并重新打包。Windows 目标机器不需要预装 Git for
-Windows；`pi-star` 会使用 `pi-runtime/git/bin/bash.exe`，并把 `git`/`cmd`/`usr/bin` 等目录
-加入子进程 PATH。`scripts/check-desktop-version.sh` 校验
-`app/Cargo.toml`、`app/tauri.conf.json` 与 workspace 版本；发布 tag 必须是 `v<version>`。
+Update this file and re-package when upgrading pi/Node/MinGit. Windows targets do not need Git for
+Windows preinstalled; `pi-star` uses `pi-runtime/git/bin/bash.exe` and adds `git`/`cmd`/`usr/bin` and
+similar directories to the child process PATH. `scripts/check-desktop-version.sh` verifies
+`app/Cargo.toml`, `app/tauri.conf.json`, and the workspace version; release tags must be
+`v<version>`.
 
-## 本机构建
+## Local builds
 
 ```bash
 ./scripts/check-desktop-version.sh
-./scripts/package-desktop.sh              # 当前平台
-# 或分别执行：
+./scripts/package-desktop.sh              # current platform
+# or individually:
 ./scripts/package-linux-app.sh            # deb + AppImage
-./scripts/package-windows.sh              # NSIS + MSI + portable zip（Git Bash）
+./scripts/package-windows.sh              # NSIS + MSI + portable zip (Git Bash)
 ./scripts/package-mac.sh                  # .app + dmg
 ```
 
-常用环境变量：
+Common environment variables:
 
-- `SKIP_UI_BUILD=1`：复用已有 `ui/dist`。
-- `SKIP_PI_RUNTIME=1`：复用 `app/pi-runtime`（必须与当前平台/架构匹配）。
-- `PI_RUNTIME_DIR=...`：自定义运行时 staging 目录。
-- `TAURI_BUNDLES=deb` / `nsis`：只出部分安装包。
-- `DIST_DIR=...`：自定义输出目录。
-- `MAC_SIGN_IDENTITY=...`：macOS 签名身份。
+- `SKIP_UI_BUILD=1`: reuse an existing `ui/dist`.
+- `SKIP_PI_RUNTIME=1`: reuse `app/pi-runtime` (must match the current platform/architecture).
+- `PI_RUNTIME_DIR=...`: custom runtime staging directory.
+- `TAURI_BUNDLES=deb` / `nsis`: build only some installers.
+- `DIST_DIR=...`: custom output directory.
+- `MAC_SIGN_IDENTITY=...`: macOS signing identity.
 
-运行时准备脚本也可以单独执行：
+The runtime preparation script can also be run on its own:
 
 ```bash
 node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform linux --arch x64
@@ -60,42 +65,46 @@ node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform win32 --arch
 node scripts/prepare-pi-runtime.mjs --out app/pi-runtime --platform darwin --arch arm64
 ```
 
-它从 nodejs.org 下载固定版本 Node，`npm pack` 固定版本 pi，`npm install --omit=dev`
-安装生产依赖，复制 `agent-extension/`；Windows 上还会解压 MinGit。已准备且元数据一致时
-自动跳过。MinGit 采用 GPL-2.0，安装包内附带 `GIT-LICENSE.txt`/`GIT-NOTICE.txt`，源码地址
-为 <https://github.com/git-for-windows/git>。安装包同时带上项目的 `LICENSE`（Apache-2.0）与
-`NOTICE`（含 pi-web、pi-rust 的 MIT 署名和字体许可），落在资源目录（Linux
-`/usr/lib/PiStar/`、macOS `Contents/Resources/`、Windows 与主程序同目录）。
+It downloads the pinned Node version from nodejs.org, runs `npm pack` for the pinned pi version,
+installs production dependencies with `npm install --omit=dev`, and copies `agent-extension/`; on
+Windows it also extracts MinGit. It skips automatically when the staging directory is already
+prepared with matching metadata. MinGit is GPL-2.0; installers include
+`GIT-LICENSE.txt`/`GIT-NOTICE.txt` and the source URL <https://github.com/git-for-windows/git>.
+Installers also carry the project `LICENSE` (Apache-2.0) and `NOTICE` (with the pi-web/pi-rust MIT
+attributions and font licenses) in the resources directory (Linux `/usr/lib/PiStar/`, macOS
+`Contents/Resources/`, Windows next to the main executable).
 
-## 产物命名
+## Artifact names
 
-| 平台 | 产物 |
+| Platform | Artifacts |
 | --- | --- |
-| Linux | `pi-star-app_<ver>_linux_<arch>.deb`、`.AppImage` |
-| Windows | `pi-star-app_<ver>_windows_<arch>-setup.exe`、`..._<locale>.msi`、`..._portable.zip` |
+| Linux | `pi-star-app_<ver>_linux_<arch>.deb`, `.AppImage` |
+| Windows | `pi-star-app_<ver>_windows_<arch>-setup.exe`, `..._<locale>.msi`, `..._portable.zip` |
 | macOS | `pi-star-app_<ver>_macos_<arch>.dmg` |
 
-Windows 主程序是 `PiStarApp.exe`，与 `pi-star.exe` 在忽略大小写后仍不同。便携 zip 内两个 exe
-与 `pi-runtime/` 同目录。`pi/node_modules` 路径较深，Windows 构建机建议启用 long paths
-（`git config --global core.longpaths true` 与注册表 `LongPathsEnabled=1`）；CI 已自动开启。
-Windows 的 `PI_RUNTIME_DIR` 必须与仓库位于同一盘符：Tauri 规范化资源路径时会丢掉盘符，
-跨盘路径会在构建时被解析到错误位置。打包脚本会提前校验并报错。
+The Windows main executable is `PiStarApp.exe`, which remains distinct from `pi-star.exe` even
+case-insensitively. The portable zip keeps both executables and `pi-runtime/` in the same directory.
+`pi/node_modules` paths are deep, so Windows build machines should enable long paths
+(`git config --global core.longpaths true` and the registry `LongPathsEnabled=1`); CI enables this
+automatically. `PI_RUNTIME_DIR` on Windows must be on the same drive as the repository: Tauri strips
+the drive prefix when normalizing resource paths, and cross-drive paths resolve to the wrong location
+at build time. The packaging scripts validate this early and fail with an error.
 
 ## CI / Release
 
-`.github/workflows/ci.yml` 在 Linux 跑 Rust workspace + 桌面壳测试、UI 测试/构建，并在
-Linux/Windows/macOS 做桌面壳编译检查。
+`.github/workflows/ci.yml` runs the Rust workspace + desktop shell tests and UI tests/build on Linux,
+and desktop shell compile checks on Linux/Windows/macOS.
 
-`.github/workflows/release.yml` 由 `v*` 标签触发（也可手动触发）：
+`.github/workflows/release.yml` is triggered by `v*` tags (or manually):
 
-1. 校验 tag、版本清单，以及 `CHANGELOG.md` 中存在 `## [<version>]` 段落；
-2. Linux 产出 deb + AppImage；
-3. Windows 产出 NSIS、MSI 与 portable zip；
-4. macOS 分别在 Intel/Apple Silicon runner 产出 dmg；
-5. 用 `scripts/release-notes.sh` 抽取 CHANGELOG 段落作为正文，汇总并创建 GitHub Release
-   （手动触发时 `publish=false` 只上传 artifacts）。
+1. verify the tag, the version manifest, and that `## [<version>]` exists in `CHANGELOG.md`;
+2. Linux produces deb + AppImage;
+3. Windows produces NSIS, MSI, and portable zip;
+4. macOS produces dmg on Intel/Apple Silicon runners;
+5. `scripts/release-notes.sh` extracts the CHANGELOG section as the body, aggregates the artifacts,
+   and creates the GitHub Release (a manual run with `publish=false` only uploads artifacts).
 
-发布前先更新 `CHANGELOG.md`：
+Update `CHANGELOG.md` before releasing:
 
 ```markdown
 ## [0.1.0] - 2026-10-31
@@ -103,37 +112,39 @@ Linux/Windows/macOS 做桌面壳编译检查。
 - ...
 ```
 
-### macOS 签名与公证
+### macOS signing and notarization
 
-官方 Release 的 macOS 包已签名、公证并钉票，用户首次启动无需额外操作。本地构建未配置
-secrets 时产出**未签名** dmg。签名与公证由以下 secrets 驱动：
+Official Release macOS builds are signed, notarized, and stapled, so users need no extra steps on
+first launch. Local builds without the secrets below produce an **unsigned** dmg. Signing and
+notarization are driven by these secrets:
 
-| secret | 说明 |
+| secret | Purpose |
 | --- | --- |
-| `MAC_CERT_P12_BASE64` | Developer ID Application 证书 + 完整链 |
-| `MAC_CERT_PASSWORD` | p12 口令 |
-| `MAC_SIGN_IDENTITY` | 签名身份全名 |
+| `MAC_CERT_P12_BASE64` | Developer ID Application certificate + full chain |
+| `MAC_CERT_PASSWORD` | p12 password |
+| `MAC_SIGN_IDENTITY` | Full signing identity name |
 | `MAC_NOTARY_API_KEY_ID` | App Store Connect API key id |
 | `MAC_NOTARY_API_ISSUER_ID` | issuer id |
-| `MAC_NOTARY_API_KEY_P8_BASE64` | .p8 私钥（base64） |
+| `MAC_NOTARY_API_KEY_P8_BASE64` | .p8 private key (base64) |
 
-签名时会给内置 Node 加 JIT/unsigned-memory entitlements（见
-`packaging/macos/entitlements.plist`），并对 `pi-runtime` 下所有 Mach-O 先签名，再签外层
-`.app`；公证脚本会公证 app、钉票、重建 dmg、再公证 dmg。`stapler` 从 Apple CloudKit 取票时
-可能遇到瞬时网络错误（Error 65/68、NSURLError -1005）；脚本默认重试 4 次、间隔 20 秒，可用
-`STAPLER_RETRIES` / `STAPLER_RETRY_DELAY` 调整。
+Signing adds JIT/unsigned-memory entitlements to the bundled Node (see
+`packaging/macos/entitlements.plist`), signs every Mach-O under `pi-runtime`, then signs the outer
+`.app`; the notarization script notarizes the app, staples the ticket, rebuilds the dmg, and
+notarizes the dmg. `stapler` may hit transient network errors when fetching the ticket from Apple
+CloudKit (Error 65/68, NSURLError -1005); the script retries 4 times with a 20 second delay by
+default, adjustable with `STAPLER_RETRIES` / `STAPLER_RETRY_DELAY`.
 
-## Windows 的 bash
+## Windows bash
 
-Agent 的 `bash` 工具在 Windows 上优先使用安装包内置的 MinGit，不会回退到 `cmd.exe`，
-也不会使用 WSL 的 `System32\bash.exe`。探测顺序：
+On Windows, the agent's `bash` tool prefers the MinGit bundled in the installer; it never falls back
+to `cmd.exe` and never uses WSL's `System32\bash.exe`. Probe order:
 
-1. 内置 `pi-runtime/git/bin/bash.exe`（或 `PI_STAR_GIT_HOME`）；
-2. `PI_STAR_BASH`，兼容 `PI_DESKTOP_BASH`；
-3. 从 PATH 上的 `git.exe` 推导 `Git\bin\bash.exe` / `Git\usr\bin\bash.exe`；
-4. `ProgramFiles`、`ProgramFiles(x86)`、`ProgramW6432`、`LocalAppData\Programs` 下的
-   `Git\bin\bash.exe`；
-5. `where bash.exe`，排除 `System32` 的 WSL 启动器。
+1. bundled `pi-runtime/git/bin/bash.exe` (or `PI_STAR_GIT_HOME`);
+2. `PI_STAR_BASH`, also accepting `PI_DESKTOP_BASH`;
+3. derive `Git\bin\bash.exe` / `Git\usr\bin\bash.exe` from `git.exe` on PATH;
+4. `Git\bin\bash.exe` under `ProgramFiles`, `ProgramFiles(x86)`, `ProgramW6432`,
+   `LocalAppData\Programs`;
+5. `where bash.exe`, excluding the WSL launcher in `System32`.
 
-找到后使用 `bash --noprofile --norc -c`，并以 `CREATE_NO_WINDOW` 启动。终端面板仍默认使用
-PowerShell（可用 `SHELL` 覆盖）。
+Once found it runs `bash --noprofile --norc -c` with `CREATE_NO_WINDOW`. The terminal panel still
+defaults to PowerShell (override with `SHELL`).

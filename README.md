@@ -1,121 +1,136 @@
-# Pi Star（pi-star）
+# Pi Star (pi-star)
 
-[English](README.en.md) · **简体中文**
+**English** · [简体中文](README.zh-CN.md)
 
-**基于 code agent 的一体化编码桌面应用。** 指挥 Agent、读代码、审 diff、跑终端，全程不用离开窗口。
+**An all-in-one coding desktop app built around a code agent.** Direct the agent, read code, review
+diffs, and run your terminal without ever leaving the window.
 
-pi-star 把一次编码回合需要的几件事放进同一个跨平台桌面应用：一边让 Agent 改代码，一边在
-同一窗口里打开文件、查看 Git diff、运行和调试。它沿用 [pi coding agent](https://github.com/earendil-works/pi)
-的会话与工具生态，并继续使用 `~/.pi/agent` 下的数据——和 pi CLI、pi-web 可以读取同一批会话。
+pi-star brings the pieces of a coding loop into one cross-platform desktop app: while the agent edits
+code, you open files, review the Git diff, run tests, and debug in the same window. It builds on the
+session and tooling ecosystem of [pi coding agent](https://github.com/earendil-works/pi) and keeps
+using the data under `~/.pi/agent`, so it shares sessions with the pi CLI and pi-web.
 
-## 特性
+## Features
 
-### 1. 一体化：Agent、代码、diff、终端都在同一个窗口
+### 1. One app for the agent, the code, the diff, and the terminal
 
-pi-star 不是把几个工具并排放在一起，而是把一次完整的编码回合收进一个应用：
+pi-star is not a set of tools placed side by side; it puts a complete coding loop in one window:
 
-| 能力 | 在 pi-star 里 |
+| Capability | What pi-star gives you |
 | --- | --- |
-| 指挥 Agent | 会话与分支树、队列/打断/重试、子代理、工具调用与思考过程、会话压缩；输入区直接切换模型、思考等级、工具与后端 |
-| 代码浏览器 | 项目文件树、多标签文件视图、语法高亮、@ 文件索引、搜索；Agent 刚改过的文件可以当场打开对照 |
-| Git diff 查看器 | 工作区与暂存改动分开查看、逐文件 diff、行内高亮与增删统计；review Agent 产出和提交前自查都在这里 |
-| 终端 | 内置 PTY 终端，运行、测试、调试都在应用内；主题/字体/字号/回滚可调，与 Agent 共享 cwd 和进程环境 |
-| 轨迹视图 | 把整条会话压成可筛选的事件时间线，长会话也能快速看清 Agent 做过什么 |
+| Directing the agent | Session tree and branches, queue/interrupt/retry, subagents, tool calls and thinking, compaction; switch model, thinking level, tools, and engine right from the composer |
+| Code browser | Project tree, tabbed file viewer, syntax highlighting, `@` file index, and search; open a file the agent just changed and compare it on the spot |
+| Git diff viewer | Staged and working-tree changes side by side, per-file diffs, inline highlighting, and line counts; review the agent's work and self-check before committing in one place |
+| Terminal | Built-in PTY terminal for running, testing, and debugging, with configurable theme, font, size, and scrollback; shares the cwd and process environment with the agent |
+| Trace view | Compresses an entire session into a filterable event timeline, so long sessions stay easy to follow |
 
-所以不需要在编辑器、终端、浏览器和 git 客户端之间来回切换，也不需要把 Agent 的输出复制到别处
-再看——这是 pi-star 与「agent + 外部编辑器」组合最本质的区别。
+No more switching between editor, terminal, browser, and git client, and no more copying the agent's
+output somewhere else to read it. That is the essential difference between pi-star and an
+"agent plus external editor" setup.
 
-### 2. 两个 Agent 引擎：原生 PI 与 Rust PI Agent
+### 2. Two agent engines: native PI and Rust PI Agent
 
-| 引擎 | 实现 | 说明 |
+| Engine | Implementation | Notes |
 | --- | --- | --- |
-| **原生 PI（Node.js）** | `pi --mode rpc` 子进程，与 pi CLI 同源 | 默认；兼容 TypeScript 扩展、MCP、subagent 等完整生态 |
-| **Rust PI Agent（QuickPI）** | pi 的 Rust 实现（源码融合自 [pi-rust](https://github.com/bigfish1913/pi-rust)），在进程内运行 | 无需 Node，启动快、占用低；内置工具、MCP、subagent 与 skill 加载 |
+| **Native PI (Node.js)** | `pi --mode rpc` subprocess, same codebase as the pi CLI | Default; full compatibility with TypeScript extensions, MCP, subagents, and the pi ecosystem |
+| **Rust PI Agent (QuickPI)** | Rust implementation of pi (merged from [pi-rust](https://github.com/bigfish1913/pi-rust)) running in-process | No Node required; fast startup and low overhead; built-in tools, MCP, subagents, and skill loading |
 
-后端按会话记录在会话文件的 custom entry 中，空闲时可切换、运行中锁定；两个引擎共享同一批会话
-文件与配置。
+The engine is recorded per session in a custom entry, can be switched while the session is idle, and
+is locked while it runs. Both engines share the same session files and configuration.
 
-### 3. 界面：向 pi-web 学习，为桌面重新设计
+### 3. UI: learned from pi-web, redesigned for the desktop
 
-UI 参考并学习了 [pi-web](https://github.com/agegr/pi-web)（MIT），但按桌面应用的使用场景重新
-设计：更简洁的层级、更少的视觉干扰，把注意力留给代码和对话。
+The UI references and learns from [pi-web](https://github.com/agegr/pi-web) (MIT) but was redesigned
+for desktop use: a flatter hierarchy and less visual noise, keeping the attention on code and
+conversation.
 
-## 下载
+## Download
 
-安装包发布在 [GitHub Releases](https://github.com/zeaphoo/pi-star/releases)。只发布桌面应用，
-每个安装包都自带 Node、pi CLI 和（Windows）MinGit，无需预装 Node、pi 或 Git。
+Installers are published on [GitHub Releases](https://github.com/zeaphoo/pi-star/releases). Only the
+desktop app is published; every package bundles Node, the pi CLI, and (on Windows) MinGit. You do not
+need to install Node, pi, or Git first.
 
-| 平台 | 安装包 |
+| Platform | Package |
 | --- | --- |
-| Linux | `pi-star-app_<版本>_linux_<arch>.deb`（Debian/Ubuntu）、`....AppImage` |
-| Windows | `pi-star-app_<版本>_windows_x64-setup.exe`（NSIS，推荐）、`....msi`、`..._portable.zip` |
-| macOS | `pi-star-app_<版本>_macos_<arch>.dmg`（Intel `x86_64` / Apple Silicon `arm64`） |
+| Linux | `pi-star-app_<version>_linux_<arch>.deb` (Debian/Ubuntu), `..._linux_<arch>.AppImage` |
+| Windows | `pi-star-app_<version>_windows_x64-setup.exe` (NSIS, recommended), `..._windows_x64_<locale>.msi`, `..._windows_x64_portable.zip` |
+| macOS | `pi-star-app_<version>_macos_<arch>.dmg` (Intel `x86_64` / Apple Silicon `arm64`) |
 
-系统要求：
+System requirements:
 
-- **Linux**：x86_64 或 arm64，需要 WebKitGTK 4.1（Ubuntu 22.04+、Debian 12+ 等提供；deb 会
-  自动拉取依赖）。
-- **Windows**：Windows 10 / 11（x64），需要 WebView2 运行时（通常随 Edge 已安装；缺失时安装程序会自动下载，也可以使用便携版）。
-- **macOS**：macOS 11+，Intel 或 Apple Silicon，使用系统自带的 WebKit。
+- **Linux**: x86_64 or arm64 with WebKitGTK 4.1 (available on Ubuntu 22.04+, Debian 12+, and
+  similar; the deb pulls in its dependencies).
+- **Windows**: Windows 10 / 11 (x64) with the WebView2 runtime (normally installed with Edge; the
+  installer downloads it automatically when missing, or use the portable build).
+- **macOS**: macOS 11+ on Intel or Apple Silicon, using the system WebKit.
 
-## 安装
+## Install
 
 ### Linux
 
-deb（推荐，自动处理依赖和桌面图标）：
+deb (recommended; handles dependencies and desktop integration):
 
 ```bash
-sudo apt install ./pi-star-app_<版本>_linux_amd64.deb
+sudo apt install ./pi-star-app_<version>_linux_amd64.deb
 ```
 
-AppImage（免安装）：
+AppImage (no installation):
 
 ```bash
-chmod +x pi-star-app_<版本>_linux_amd64.AppImage
-./pi-star-app_<版本>_linux_amd64.AppImage
+chmod +x pi-star-app_<version>_linux_amd64.AppImage
+./pi-star-app_<version>_linux_amd64.AppImage
 ```
 
-安装后从应用菜单启动 **PiStar**；AppImage 双击运行即可。
+After installing, launch **PiStar** from the application menu; an AppImage just needs a
+double-click.
 
 ### Windows
 
-- **安装版**：运行 `pi-star-app_<版本>_windows_x64-setup.exe`，按向导完成安装（默认安装到
-  Program Files，需要管理员权限）。也可以使用 `.msi`（适合企业分发/静默安装）。
-- **便携版**：解压 `..._portable.zip`，保持 `PiStarApp.exe`、`pi-star.exe` 与 `pi-runtime/`
-  在同一目录，双击 `PiStarApp.exe`；无需安装、无需管理员权限。
-- 内置 MinGit 已提供 Git 和 bash，不需要另外安装 Git for Windows。
-- 安装包目前未做代码签名，SmartScreen 可能提示「未知发布者」：点「更多信息」→「仍要运行」。
+- **Installer**: run `pi-star-app_<version>_windows_x64-setup.exe` and follow the wizard (it installs
+  to Program Files and needs administrator rights). The `.msi` is also available for managed or
+  silent deployment.
+- **Portable**: unzip `..._portable.zip` and keep `PiStarApp.exe`, `pi-star.exe`, and `pi-runtime/`
+  in the same directory, then double-click `PiStarApp.exe`. No installation or admin rights needed.
+- MinGit is bundled, so a separate Git for Windows installation is not required.
+- The installers are currently unsigned, so SmartScreen may warn about an unknown publisher:
+  choose **More info** → **Run anyway**.
 
 ### macOS
 
-打开 `pi-star-app_<版本>_macos_<arch>.dmg`，把 **PiStar** 拖进「应用程序」。
+Open `pi-star-app_<version>_macos_<arch>.dmg` and drag **PiStar** into Applications.
 
-官方安装包已用 Apple 开发者证书签名并完成公证，首次启动无需任何额外设置。
+The official build is signed with an Apple Developer certificate and notarized, so the first launch
+needs no extra steps.
 
-## 首次启动
+## First launch
 
-- 桌面壳会启动内置的本地服务并加载界面，端口固定为 `127.0.0.1:30151`（只监听本机）。
-- 刚从命令行/其他工具迁移时，选择已有项目目录即可看到原来的 `~/.pi/agent` 会话。
-- 关闭窗口默认收进托盘；托盘菜单可以退出、开机自启动和「关闭时最小化到托盘」。
-- 启动后会在后台检查 GitHub Releases，有新版本时在界面里提示并链接到发布页，不会自动安装。
-  升级时直接覆盖安装新版本即可。
-- Linux 桌面数据（偏好、日志）在 `~/.local/share/net.quadhub.pi-star/`，macOS 在
-  `~/Library/Application Support/net.quadhub.pi-star/`，Windows 在
-  `%APPDATA%\net.quadhub.pi-star`；会话与凭据仍在 `~/.pi/agent`（`PI_CODING_AGENT_DIR`
-  可覆盖）。
+- The desktop shell starts the bundled local service and loads the UI on a fixed
+  `127.0.0.1:30151` (loopback only).
+- To pick up existing work, open a project directory; sessions already in `~/.pi/agent` show up
+  immediately.
+- Closing the window keeps the app in the tray by default. The tray menu can quit, toggle launch at
+  login, and toggle "close to tray".
+- A background check looks at GitHub Releases and shows a link when a newer version exists; it never
+  installs automatically. To upgrade, install the new package over the old one.
+- Desktop preferences and logs live in `~/.local/share/net.quadhub.pi-star/` on Linux,
+  `~/Library/Application Support/net.quadhub.pi-star/` on macOS, and
+  `%APPDATA%\net.quadhub.pi-star` on Windows. Sessions and credentials stay in `~/.pi/agent`
+  (override with `PI_CODING_AGENT_DIR`).
 
-卸载应用不会删除 `~/.pi/agent` 和桌面偏好；需要彻底清理时手动删除上述目录。
+Uninstalling the app does not remove `~/.pi/agent` or the desktop preferences; delete those
+directories manually for a full cleanup.
 
-## 更多文档
+## More documentation
 
-| 文档 | 内容 |
+| Document | Contents |
 | --- | --- |
-| [`docs/development.md`](docs/development.md) | 架构、从源码构建与运行、开发/测试、桌面打包、安全模型 |
-| [`docs/status.md`](docs/status.md) | 实现状态与运行时边界 |
-| [`CHANGELOG.md`](CHANGELOG.md) | 版本变更 |
-| [`packaging/README.md`](packaging/README.md) | 安装包内容、运行时版本与打包细节 |
+| [`docs/development.md`](docs/development.md) | Architecture, building from source, development/testing, desktop packaging, security model ([中文](docs/development.zh-CN.md)) |
+| [`docs/status.md`](docs/status.md) | Implementation status and runtime boundaries ([中文](docs/status.zh-CN.md)) |
+| [`CHANGELOG.md`](CHANGELOG.md) | Release notes |
+| [`packaging/README.md`](packaging/README.md) | Bundle contents, runtime versions, packaging details ([中文](packaging/README.zh-CN.md)) |
 
-## 许可
+## License
 
-pi-star 以 **Apache License 2.0** 发布，全文见 [`LICENSE`](LICENSE)。从 pi-web 与 pi-rust
-复制的代码继续按 MIT 分发，上游署名、MIT 全文与字体许可见 [`NOTICE`](NOTICE)。
+pi-star is released under the **Apache License 2.0**; see [`LICENSE`](LICENSE). Code copied from
+pi-web and pi-rust remains under MIT; upstream attributions, the full MIT text, and font licenses are
+in [`NOTICE`](NOTICE).

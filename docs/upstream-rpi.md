@@ -1,50 +1,57 @@
-# 内核代码来源：pi-rust（rpi）
+# Kernel source: pi-rust (rpi)
 
-pi-star 的 Agent 内核来自 [pi-rust](https://github.com/bigfish1913/pi-rust)（命令名 `rpi`）的
-源码复制。**这是一次性源码融合，不是依赖，也不保留上游同步关系**：融合后的代码由 pi-star
-自行维护，rpi 后续的修复不会自动进入本仓库。
+**English** · [简体中文](upstream-rpi.zh-CN.md)
 
-## 来源
+pi-star's agent kernel is a source copy of [pi-rust](https://github.com/bigfish1913/pi-rust)
+(command name `rpi`). **This was a one-time source merge, not a dependency, and no upstream sync
+relationship is maintained**: the merged code is maintained by pi-star itself, and later rpi fixes do
+not automatically land in this repository.
 
-| 项 | 值 |
+## Origin
+
+| Item | Value |
 | --- | --- |
-| 上游 | `https://github.com/bigfish1913/pi-rust` |
-| 版本 | `0.14.0` |
+| Upstream | `https://github.com/bigfish1913/pi-rust` |
+| Version | `0.14.0` |
 | `commit.id` | `534bcbffb7e1e7551d9ee3572dfeb278e203e493` |
-| 复制时 HEAD | `0a3593b` |
-| 许可 | MIT（含对 pi / Mario Zechner 的署名） |
-| 上游来源 | rpi 本身是 [`earendil-works/pi`](https://github.com/earendil-works/pi) 的 Rust 移植 |
+| HEAD at copy time | `0a3593b` |
+| License | MIT (including attribution to pi / Mario Zechner) |
+| Upstream origin | rpi itself is a Rust port of [`earendil-works/pi`](https://github.com/earendil-works/pi) |
 
-## 映射
+## Mapping
 
-| 本仓库 | 上游 |
+| This repository | Upstream |
 | --- | --- |
 | `crates/pi-star-ai` | `crates/rpi-ai` |
 | `crates/pi-star-agent` | `crates/rpi-agent` |
 | `crates/pi-star-tools` | `crates/rpi-tools` |
 | `crates/pi-star-harness` | `crates/rpi-harness` |
 
-未复制的上游 crate：`rpi-cli`、`rpi-tui`、`rpi-runtime`、`rpi-plugin-sdk`、`rpi-extensions`、
-`rpi-telemetry`。pi-star 保留自己的配置/凭据/模型目录、终端、HTTP 路由和扩展边界。
+Upstream crates that were not copied: `rpi-cli`, `rpi-tui`, `rpi-runtime`, `rpi-plugin-sdk`,
+`rpi-extensions`, `rpi-telemetry`. pi-star keeps its own config/credentials/model catalog, terminal,
+HTTP routes, and extension boundary.
 
-## 已做的修改
+## Local changes
 
-- crate 名与 Rust 标识符 `rpi_*` → `pi_star_*`，包名改为 `pi-star-*`。
-- 去掉 `rpi-telemetry`（上游四个 crate 中无实际引用）。
-- `pi-star-tools` 不再依赖 `rpi-plugin-sdk`：`SESSION_ID_ENV` / `SUBAGENT_PARENT_ENV`
-  改为本地常量。
-- WebP 输出改用 `image 0.25` 的 lossless encoder（上游的 lossy API 在当前依赖版本中不存在）。
-- 压缩 entry 改为 pi v3 形状：`firstKeptEntryId` / `systemMessage` / `fromHook`，删除
-  上游重复存储的 `retainedTail`；上下文按 pi 的 `buildContextEntries` 选取。
-- 新增 `Entry::Raw` 透传本运行时未建模的 pi entry 类型（`usage`、`context_edit`、
-  `label`、`session_info`、`custom_message`、`system` message），加载 pi 会话时不再
-  因未知类型报错或丢行。
-- 删除上游的 `session/jsonl/**` 与 `session/sqlite.rs`（v4 存储）。持久化改由
-  `pi-star-core::agent::session_store` 实现，直接读写 pi v3 JSONL；harness 只保留内存
-  后端与状态机。
+- Crate names and Rust identifiers `rpi_*` → `pi_star_*`; package names become `pi-star-*`.
+- Dropped `rpi-telemetry` (none of the four upstream crates actually referenced it).
+- `pi-star-tools` no longer depends on `rpi-plugin-sdk`: `SESSION_ID_ENV` / `SUBAGENT_PARENT_ENV`
+  became local constants.
+- WebP output uses the lossless encoder from `image 0.25` (the upstream lossy API does not exist in
+  the current dependency version).
+- Compaction entries now use the pi v3 shape: `firstKeptEntryId` / `systemMessage` / `fromHook`,
+  dropping upstream's duplicate `retainedTail`; context is selected with pi's
+  `buildContextEntries`.
+- Added `Entry::Raw` to pass through pi entry types this runtime does not model (`usage`,
+  `context_edit`, `label`, `session_info`, `custom_message`, `system` messages), so loading pi
+  sessions no longer fails or drops lines on unknown types.
+- Removed upstream's `session/jsonl/**` and `session/sqlite.rs` (v4 storage). Persistence is now
+  implemented by `pi-star-core::agent::session_store`, which reads/writes pi v3 JSONL directly; the
+  harness keeps only the in-memory backend and state machine.
 
-## 维护策略
+## Maintenance strategy
 
-- 不跟踪上游分支、不做 rebase。需要比对时可 checkout 上表的 commit 后手工 diff。
-- 本仓库的修改直接改在复制后的代码里，不设补丁目录。
-- 上游的 MIT 署名保留在根目录 `NOTICE`；新增文件不改变这一归属。
+- Upstream branches are not tracked and there is no rebase. To compare, check out the commit above
+  and diff manually.
+- Local changes are made directly in the copied code; there is no patch directory.
+- Upstream's MIT attribution is kept in the root `NOTICE`; new files do not change that ownership.
