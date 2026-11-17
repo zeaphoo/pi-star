@@ -189,6 +189,9 @@ pub async fn get_state(
 ) -> Response {
     let backend = state.route_backend(&id);
     if let Some(session) = state.pi_rpc.get(&id) {
+        // pi's RPC get_state has no context usage; the host extension reads it
+        // from the live session, so status polls carry the current percentage.
+        session.refresh_context_usage().await;
         return no_store(json!({
             "running": true,
             "backend": backend.id(),

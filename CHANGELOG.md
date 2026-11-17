@@ -8,6 +8,12 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **原生 PI 引擎显示上下文占用**：`pi --mode rpc` 的 `get_state` 不返回 context usage，
+  顶栏因此缺少上下文百分比与窗口大小。新增 `get_context_usage` 宿主扩展命令，状态查询与
+  切换模型时刷新，原生 PI 和 QuickPI 一样显示当前会话的上下文比例（与 pi-web 一致）。
+
 ### Changed
 
 - **许可证改为 Apache-2.0**：项目整体以 Apache License 2.0 发布；从 pi-web 与 pi-rust 复制的代码

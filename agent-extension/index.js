@@ -124,6 +124,11 @@ export default function piStarHost(pi) {
                     case "get_system_prompt":
                         data = { systemPrompt: String(ctx.getSystemPrompt?.() ?? "") };
                         break;
+                    case "get_context_usage":
+                        // pi's RPC get_state omits this (pi-web reads it from the
+                        // in-process SDK), so the session toolbar asks here.
+                        data = { contextUsage: ctx.getContextUsage?.() ?? null };
+                        break;
                     case "set_tools":
                         pi.setActiveTools(Array.isArray(params.toolNames) ? params.toolNames : []);
                         data = toolList(pi);

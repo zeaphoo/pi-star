@@ -148,6 +148,9 @@ pub struct PiRpcSession {
     aborted: AtomicBool,
     events: broadcast::Sender<Value>,
     state: Mutex<PiState>,
+    /// Serializes host reads of `contextUsage` so a slow reply can never
+    /// overwrite a newer one.
+    context_usage_refresh: tokio::sync::Mutex<()>,
     last_activity: Mutex<Instant>,
     control: Arc<PiControl>,
     extension_available: bool,
@@ -185,6 +188,7 @@ impl PiRpcSession {
                 state: json!({}),
                 pending_ui: HashSet::new(),
             }),
+            context_usage_refresh: tokio::sync::Mutex::new(()),
             last_activity: Mutex::new(Instant::now()),
             control,
             extension_available,
@@ -403,6 +407,34 @@ impl PiRpcSession {
         self.identity.lock().path.clone()
     }
 
+    /// pi's RPC `get_state` omits the context usage pi-web reads from the
+    /// in-process SDK; the host extension exposes the same reading.
+    async fn host_context_usage(&self) -> Option<Value> {
+        self.host_command("get_context_usage", json!({}))
+            .await
+            .ok()
+            .and_then(|data| data.get("contextUsage").cloned())
+    }
+
+    /// Re-read the live context usage (tokens and window) and cache it in the
+    /// session state, so status reads and the toolbar can show it while idle.
+    pub async fn refresh_context_usage(&self) {
+        if !self.extension_available {
+            return;
+        }
+        // A status read must never wait behind a slow host command: it returns
+        // the cached value instead, and the next read refreshes it.
+        let Ok(_guard) = self.context_usage_refresh.try_lock() else {
+            return;
+        };
+        let Some(usage) = self.host_context_usage().await else {
+            return;
+        };
+        if let Some(object) = self.state.lock().state.as_object_mut() {
+            object.insert("contextUsage".into(), usage);
+        }
+    }
+
     /// Read `get_state` from pi and fill in the fields its RPC response does
     /// not carry (notably `systemPrompt`, which pi-web's wrapper computes).
     async fn refresh_state(&self) {
@@ -431,8 +463,12 @@ impl PiRpcSession {
             });
             pi_star_core::prompt::build_system_prompt(&self.config, &self.cwd, &tools)
         });
+        let context_usage = self.host_context_usage().await;
         if let Some(object) = state.as_object_mut() {
             object.insert("systemPrompt".into(), Value::String(prompt));
+            if let Some(usage) = context_usage {
+                object.insert("contextUsage".into(), usage);
+            }
         }
         self.set_state(state);
     }
@@ -583,6 +619,14 @@ impl PiRpcSession {
                     }
                     // The prompt's tools/rules sections change with the loadout.
                     self.refresh_state().await;
+                }
+                result
+            }
+            "set_model" => {
+                let result = self.request(command.clone(), REQUEST_TIMEOUT).await;
+                if result.is_ok() {
+                    // The window this percentage divides by changed with the model.
+                    self.refresh_context_usage().await;
                 }
                 result
             }

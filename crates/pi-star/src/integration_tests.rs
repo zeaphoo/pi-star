@@ -2617,7 +2617,10 @@ def control_response(request):
     host, _, port = address.rpartition(":")
     sock = socket.create_connection((host, int(port)))
     sock.sendall((json.dumps({"type": "hello", "token": token}) + "\n").encode())
-    data = [{"name": "read", "label": "Read", "description": "Read a file", "parameters": {"type": "object"}, "active": True}]
+    if request["method"] == "get_context_usage":
+        data = {"contextUsage": {"tokens": 84000, "contextWindow": 200000, "percent": 42.0}}
+    else:
+        data = [{"name": "read", "label": "Read", "description": "Read a file", "parameters": {"type": "object"}, "active": True}]
     sock.sendall((json.dumps({"type": "response", "id": request["id"], "success": True, "data": data}) + "\n").encode())
     sock.close()
 forked = False
@@ -2686,6 +2689,11 @@ for line in sys.stdin:
             .and_then(Value::as_str)
             .is_some_and(|prompt| !prompt.is_empty())
     );
+    // pi's RPC get_state omits context usage too; the host extension supplies it.
+    let usage = session.state_json()["contextUsage"].clone();
+    assert_eq!(usage["tokens"], json!(84000));
+    assert_eq!(usage["contextWindow"], json!(200000));
+    assert_eq!(usage["percent"], json!(42.0));
     let mut events = session.subscribe();
     let response = session
         .send(&json!({"type": "prompt", "message": "hi"}))
@@ -2901,6 +2909,18 @@ async fn pi_rpc_backend_full_e2e_with_fake_model() {
     assert!(saw_tool_start, "the fake model's bash call must run");
     assert!(saw_tool_end, "bash must finish");
     assert_eq!(final_text, "E2E final answer");
+
+    // The toolbar's context percentage: pi's RPC state has no usage, so the
+    // host extension reads it from the live session after the run.
+    let state = session.send(&json!({"type": "get_state"})).await.unwrap();
+    assert_eq!(state["contextUsage"]["contextWindow"], json!(128000));
+    assert!(
+        state["contextUsage"]["tokens"]
+            .as_u64()
+            .is_some_and(|tokens| tokens > 0),
+        "expected a measured context size, got {:?}",
+        state["contextUsage"]
+    );
 
     // Extension UI: the wrapper command asks a question; the RPC client answers it.
     // The prompt response is held until the command handler returns, so send it
