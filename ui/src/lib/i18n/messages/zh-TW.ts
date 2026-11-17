@@ -330,6 +330,8 @@ export const zhTWLocale: LocalePlugin = {
     "artifacts.empty": "此工作階段還沒有產出檔案",
     "artifacts.emptyHint": "Agent 寫入或修改檔案後，會出現在這裡。",
     "artifacts.scanning": "正在掃描歷史…",
+    "artifacts.deleted": "已刪除",
+    "artifacts.deletedHint": "檔案已不存在。",
     "artifacts.openInCode": "在程式碼檢視中開啟",
     "artifacts.copyPath": "複製路徑",
     "artifacts.copied": "已複製",

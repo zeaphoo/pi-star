@@ -330,6 +330,8 @@ export const zhCNLocale: LocalePlugin = {
     "artifacts.empty": "此会话还没有产出文件",
     "artifacts.emptyHint": "Agent 写入或修改文件后，会出现在这里。",
     "artifacts.scanning": "正在扫描历史…",
+    "artifacts.deleted": "已删除",
+    "artifacts.deletedHint": "文件已不存在。",
     "artifacts.openInCode": "在代码视图中打开",
     "artifacts.copyPath": "复制路径",
     "artifacts.copied": "已复制",

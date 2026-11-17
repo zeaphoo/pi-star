@@ -3975,3 +3975,27 @@ span.token.table {
     display: none !important;
   }
 }
+
+/* A written file that no longer exists stays in the history, but must not
+   look openable: it is marked and its open actions are disabled. */
+.artifacts-row-main:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+.artifacts-row.is-deleted:hover {
+  background: transparent;
+}
+.artifacts-row-deleted {
+  flex: none;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-dim);
+  font-size: 10px;
+  line-height: 1.4;
+}
+.artifacts-row-action:disabled,
+.artifacts-row:hover .artifacts-row-action:disabled {
+  opacity: 0.3;
+  cursor: default;
+}

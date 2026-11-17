@@ -114,7 +114,7 @@ import { PRESET_READ_ONLY, type ToolEntry } from "@/lib/tool-presets";
 import { getAgentsBadge, getSessionFamily, isHiddenRelation } from "@/lib/session-family";
 import { getLastSettingsSection, settingsSectionRequiresProject, type SettingsSection } from "@/lib/settings-navigation";
 import { focusIfLost } from "@/lib/stacked-dialog";
-import { loadSessionArtifacts, mergeSessionArtifacts, type SessionArtifact } from "@/lib/session-artifacts";
+import { findMissingArtifacts, loadSessionArtifacts, mergeSessionArtifacts, type SessionArtifact } from "@/lib/session-artifacts";
 
 type SessionCopyField = "file" | "id" | "projectDir" | "gitBranch" | "gitWorktree";
 type AutoNameStatus =
@@ -396,6 +396,7 @@ export function AppShell() {
   const [artifactPanes, setArtifactPanes] = useState<Record<string, ArtifactPaneState>>({});
   const [liveArtifacts, setLiveArtifacts] = useState<SessionArtifact[]>([]);
   const [historyArtifacts, setHistoryArtifacts] = useState<SessionArtifact[]>([]);
+  const [missingArtifactPaths, setMissingArtifactPaths] = useState<ReadonlySet<string>>(() => new Set());
   const [artifactsScanning, setArtifactsScanning] = useState(false);
   const artifactScanCacheRef = useRef(new Map<string, SessionArtifact[]>());
   const [mobileToolbarMoreOpen, setMobileToolbarMoreOpen] = useState(false);
@@ -1511,6 +1512,26 @@ export function AppShell() {
     [historyArtifacts, liveArtifacts],
   );
   const artifactsCwd = selectedSession?.cwd ?? effectiveNewSessionCwd ?? null;
+
+  // Writes are history: a file written and later deleted still gets a row and a
+  // written-file pill in the chat. Check once for the session and share the
+  // answer with both, so neither offers a tab that can only say Not found.
+  useEffect(() => {
+    if (!selectedSession || mainView !== "chat" || sessionArtifacts.length === 0) {
+      setMissingArtifactPaths((current) => current.size === 0 ? current : new Set());
+      return;
+    }
+    const controller = new AbortController();
+    void findMissingArtifacts(sessionArtifacts, {
+      sessionId: selectedSession.id,
+      signal: controller.signal,
+    }).then((missing) => {
+      if (!controller.signal.aborted) setMissingArtifactPaths(missing);
+    }).catch(() => {
+      // Aborted because the session or view changed.
+    });
+    return () => controller.abort();
+  }, [mainView, selectedSession?.id, sessionArtifacts]);
 
   const updateArtifactPane = useCallback((change: (current: ArtifactPaneState) => ArtifactPaneState) => {
     const key = artifactPaneKey;
@@ -3008,6 +3029,7 @@ export function AppShell() {
               onOpenSettings={openSettingsSection}
               onContextUsageChange={handleContextUsageChange}
                   onOpenFile={handleOpenArtifactFile}
+                  missingWrittenPaths={missingArtifactPaths}
                   onArtifactsChange={handleArtifactsChange}
                   onFilesUploaded={handleExplorerRefresh}
               onOpenSubagent={handleOpenSubagentTab}
@@ -3038,6 +3060,7 @@ export function AppShell() {
                     sessionId={selectedSession?.id ?? null}
                     cwd={artifactsCwd}
                     artifacts={sessionArtifacts}
+                    missingPaths={missingArtifactPaths}
                     scanning={artifactsScanning}
                     pane={artifactPane}
                     overlay={artifactsOverlay}

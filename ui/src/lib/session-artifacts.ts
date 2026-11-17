@@ -1,4 +1,4 @@
-import { getRelativeFilePath } from "./file-paths";
+import { encodeFilePathForApi, getRelativeFilePath } from "./file-paths";
 import { extractWrittenFileEvents } from "./turn-written-files";
 import type { AgentMessage, ToolResultMessage } from "./types";
 
@@ -96,6 +96,53 @@ export function mergeSessionArtifacts(
     (b.lastWriteAt ?? 0) - (a.lastWriteAt ?? 0)
     || a.relativePath.localeCompare(b.relativePath)
   ));
+}
+
+/**
+ * Which artifacts no longer exist on disk. Writes are history, not a directory
+ * listing: a file written and later deleted or renamed stays in the session.
+ * Metadata is checked in the browser with a small worker pool; a file the server
+ * cannot reach (a transient error, a forbidden root) is left as openable and
+ * the viewer reports the actual error.
+ */
+export async function findMissingArtifacts(
+  artifacts: readonly SessionArtifact[],
+  {
+    sessionId,
+    signal,
+    concurrency = 6,
+    fetchImpl = fetch,
+  }: {
+    sessionId?: string | null;
+    signal?: AbortSignal;
+    concurrency?: number;
+    fetchImpl?: typeof fetch;
+  } = {},
+): Promise<Set<string>> {
+  const paths = [...new Set(artifacts.map((artifact) => artifact.filePath))];
+  const missing = new Set<string>();
+  let next = 0;
+
+  const worker = async () => {
+    while (next < paths.length) {
+      const filePath = paths[next++];
+      try {
+        const params = new URLSearchParams({ type: "meta" });
+        if (sessionId) params.set("sessionId", sessionId);
+        const response = await fetchImpl(
+          `/api/files/${encodeFilePathForApi(filePath)}?${params.toString()}`,
+          { signal },
+        );
+        if (response.status === 404) missing.add(filePath);
+      } catch (error) {
+        if (signal?.aborted) throw error;
+        // A transient failure must not pretend the artifact was deleted.
+      }
+    }
+  };
+
+  await Promise.all(Array.from({ length: Math.min(concurrency, paths.length) }, worker));
+  return missing;
 }
 
 interface ArtifactContextPage {

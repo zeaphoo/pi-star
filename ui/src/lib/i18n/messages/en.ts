@@ -330,6 +330,8 @@ export const enLocale: LocalePlugin = {
     "artifacts.empty": "No artifacts in this session",
     "artifacts.emptyHint": "Files the agent writes or edits appear here.",
     "artifacts.scanning": "Scanning history…",
+    "artifacts.deleted": "Deleted",
+    "artifacts.deletedHint": "This file no longer exists.",
     "artifacts.openInCode": "Open in Code",
     "artifacts.copyPath": "Copy path",
     "artifacts.copied": "Copied",

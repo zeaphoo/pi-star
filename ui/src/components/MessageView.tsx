@@ -198,6 +198,7 @@ interface Props {
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
+  missingWrittenPaths?: ReadonlySet<string>;
   onOpenSubagent?: (sessionId: string, label: string) => void;
   entryId?: string;
   searchBlock?: AssistantContentBlock;
@@ -288,12 +289,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, missingWrittenPaths, onOpenSubagent, entryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
     return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} missingWrittenPaths={missingWrittenPaths} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -316,6 +317,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.modelNames === next.modelNames
     && prev.cwd === next.cwd
     && prev.onOpenFile === next.onOpenFile
+    && prev.missingWrittenPaths === next.missingWrittenPaths
     && prev.onOpenSubagent === next.onOpenSubagent
     && prev.entryId === next.entryId
     && prev.searchBlock === next.searchBlock
@@ -681,6 +683,7 @@ function AssistantMessageView({
   modelNames,
   cwd,
   onOpenFile,
+  missingWrittenPaths,
   onOpenSubagent,
   showTimestamp,
   prevTimestamp,
@@ -699,6 +702,7 @@ function AssistantMessageView({
   modelNames?: Record<string, string>;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
+  missingWrittenPaths?: ReadonlySet<string>;
   onOpenSubagent?: (sessionId: string, label: string) => void;
   showTimestamp?: boolean;
   prevTimestamp?: number;
@@ -939,7 +943,7 @@ function AssistantMessageView({
       )}
 
       {writtenFiles && writtenFiles.length > 0 && (
-        <TurnWrittenFiles files={writtenFiles} onOpenFile={onOpenFile} />
+        <TurnWrittenFiles files={writtenFiles} missingPaths={missingWrittenPaths} onOpenFile={onOpenFile} />
       )}
 
       <div style={{

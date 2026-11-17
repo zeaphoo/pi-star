@@ -32,3 +32,14 @@ test("renders a button per file showing the basename and full path", () => {
 test("renders nothing when no files were written", () => {
   assert.equal(render({ files: [], onOpenFile() {} }), "");
 });
+
+test("a written file that no longer exists is marked deleted and disabled", () => {
+  const html = render({
+    files: [{ filePath: "/abs/out/report.html" }],
+    missingPaths: new Set(["/abs/out/report.html"]),
+    onOpenFile() {},
+  });
+  assert.match(html, /disabled=""/);
+  assert.match(html, /Deleted/);
+  assert.match(html, /line-through/);
+});

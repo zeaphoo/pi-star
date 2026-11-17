@@ -24,6 +24,8 @@ interface Props {
   sessionId: string | null;
   cwd: string | null;
   artifacts: readonly SessionArtifact[];
+  /** Artifacts the session wrote whose file no longer exists. */
+  missingPaths?: ReadonlySet<string>;
   /** A full-history scan is running; the live list may still be short. */
   scanning: boolean;
   pane: ArtifactPaneState;
@@ -111,6 +113,7 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
   sessionId,
   cwd,
   artifacts,
+  missingPaths,
   scanning,
   pane,
   onChange,
@@ -217,20 +220,26 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
                   {t("artifacts.openCodeView")}
                 </button>
               </div>
-            ) : artifacts.map((artifact) => (
-              <div key={artifact.filePath} className="artifacts-row" role="listitem">
+            ) : artifacts.map((artifact) => {
+              const deleted = missingPaths?.has(artifact.filePath) ?? false;
+              return (
+              <div key={artifact.filePath} className={`artifacts-row${deleted ? " is-deleted" : ""}`} role="listitem">
                 <button
                   type="button"
                   className="artifacts-row-main"
-                  onClick={() => onOpenFile(artifact.filePath)}
-                  title={artifact.filePath}
+                  onClick={() => { if (!deleted) onOpenFile(artifact.filePath); }}
+                  disabled={deleted}
+                  aria-disabled={deleted || undefined}
+                  title={deleted ? t("artifacts.deletedHint") : artifact.filePath}
                 >
                   <span className="artifacts-row-icon"><FileIcon name={getFileName(artifact.filePath)} size={15} /></span>
                   <span className="artifacts-row-text">
                     <span className="artifacts-row-name">{getFileName(artifact.filePath)}</span>
                     <span className="artifacts-row-path">{artifact.relativePath}</span>
                   </span>
-                  {artifact.lastWriteAt !== undefined && (
+                  {deleted ? (
+                    <span className="artifacts-row-deleted">{t("artifacts.deleted")}</span>
+                  ) : artifact.lastWriteAt !== undefined && (
                     <span className="artifacts-row-time">
                       {formatShortRelativeTime(new Date(artifact.lastWriteAt), locale, now)}
                     </span>
@@ -240,7 +249,8 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
                   type="button"
                   className="artifacts-row-action"
                   onClick={() => onOpenInCode(artifact.filePath)}
-                  title={t("artifacts.openInCode")}
+                  disabled={deleted}
+                  title={deleted ? t("artifacts.deletedHint") : t("artifacts.openInCode")}
                   aria-label={`${t("artifacts.openInCode")}: ${artifact.relativePath}`}
                 >
                   <CodeIcon />
@@ -255,7 +265,8 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
                   {copiedPath === artifact.filePath ? <CheckIcon /> : <CopyIcon />}
                 </button>
               </div>
-            ))}
+              );
+            })}
           </div>
         ) : activeAgentSessionId ? (
           <SubagentViewer

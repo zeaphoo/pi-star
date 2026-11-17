@@ -66,3 +66,13 @@ test("the open file tab replaces the list and can go back to it", () => {
   assert.match(html, /role="tab"/);
   assert.match(html, />a\.ts</);
 });
+
+test("a missing artifact is marked deleted and cannot be opened", () => {
+  const html = render({
+    artifacts: [{ filePath: "/work/app/gone.ts", relativePath: "gone.ts", writes: 1 }],
+    missingPaths: new Set(["/work/app/gone.ts"]),
+  });
+  assert.match(html, /class="artifacts-row is-deleted"/);
+  assert.match(html, /Deleted/);
+  assert.match(html, /disabled=""/);
+});

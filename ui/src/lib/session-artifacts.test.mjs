@@ -5,6 +5,7 @@ import { createJiti } from "jiti";
 const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 const {
   collectSessionArtifacts,
+  findMissingArtifacts,
   loadSessionArtifacts,
   mergeSessionArtifacts,
   summarizeArtifactEvents,
@@ -149,5 +150,27 @@ test("the scan stops at the page cap without throwing away what it read", async 
     assert.deepEqual(artifacts.map((artifact) => artifact.relativePath), ["a.ts"]);
   } finally {
     globalThis.fetch = realFetch;
+  }
+});
+
+test("missing artifacts are detected by metadata; transient failures are not deletions", async () => {
+  const calls = [];
+  const missing = await findMissingArtifacts([
+    { filePath: "/work/app/a.ts", relativePath: "a.ts", writes: 1 },
+    { filePath: "/work/app/gone.ts", relativePath: "gone.ts", writes: 1 },
+    { filePath: "/work/app/flaky.ts", relativePath: "flaky.ts", writes: 1 },
+  ], {
+    sessionId: "s1",
+    fetchImpl: async (url) => {
+      calls.push(url);
+      if (url.includes("gone.ts")) return { status: 404 };
+      if (url.includes("flaky.ts")) throw new Error("network");
+      return { status: 200 };
+    },
+  });
+  assert.deepEqual([...missing], ["/work/app/gone.ts"]);
+  assert.equal(calls.length, 3);
+  for (const url of calls) {
+    assert.match(url, /\?type=meta&sessionId=s1$/);
   }
 });
