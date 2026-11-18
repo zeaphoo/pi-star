@@ -99,6 +99,32 @@ pub fn is_anthropic(model: &ModelDef) -> bool {
     model.api.contains("anthropic") || model.base_url.contains("anthropic")
 }
 
+fn is_opencode(model: &ModelDef) -> bool {
+    let provider = model.provider.trim().to_ascii_lowercase();
+    if provider == "opencode" || provider == "opencode-go" {
+        return true;
+    }
+    reqwest::Url::parse(&model.base_url)
+        .ok()
+        .and_then(|url| url.host_str().map(str::to_ascii_lowercase))
+        .is_some_and(|host| host == "opencode.ai" || host.ends_with(".opencode.ai"))
+}
+
+/// OpenCode Go/Zen rejects LLM requests that omit `x-opencode-session` with a
+/// `MissingSessionID` 400. The live agent layer sends the conversation id; a
+/// one-shot request like title generation only needs a per-call routing id, so
+/// synthesize one here instead of inheriting the agent's header plumbing.
+fn request_headers(model: &ModelDef) -> BTreeMap<String, String> {
+    if is_opencode(model) {
+        BTreeMap::from([(
+            "x-opencode-session".to_string(),
+            uuid::Uuid::new_v4().to_string(),
+        )])
+    } else {
+        BTreeMap::new()
+    }
+}
+
 pub fn stream_chat(
     client: reqwest::Client,
     model: ModelDef,
@@ -107,10 +133,11 @@ pub fn stream_chat(
     tools: Vec<ToolSchema>,
     max_tokens: u64,
 ) -> DeltaStream {
+    let headers = request_headers(&model);
     if is_anthropic(&model) {
-        anthropic_stream(client, model, system, messages, tools, max_tokens)
+        anthropic_stream(client, model, system, messages, tools, max_tokens, headers)
     } else {
-        openai_stream(client, model, system, messages, tools, max_tokens)
+        openai_stream(client, model, system, messages, tools, max_tokens, headers)
     }
 }
 
@@ -205,6 +232,7 @@ fn openai_stream(
     messages: Vec<ProviderMessage>,
     tools: Vec<ToolSchema>,
     max_tokens: u64,
+    headers: BTreeMap<String, String>,
 ) -> DeltaStream {
     Box::pin(stream! {
         let base = model.base_url.trim_end_matches('/');
@@ -238,6 +266,9 @@ fn openai_stream(
         let mut request = client.post(&url).json(&body);
         if let Some(key) = &model.api_key {
             request = request.bearer_auth(key);
+        }
+        for (name, value) in &headers {
+            request = request.header(name, value);
         }
         let response = match request.send().await {
             Ok(response) => response,
@@ -441,6 +472,7 @@ fn anthropic_stream(
     messages: Vec<ProviderMessage>,
     tools: Vec<ToolSchema>,
     max_tokens: u64,
+    headers: BTreeMap<String, String>,
 ) -> DeltaStream {
     Box::pin(stream! {
         let base = model.base_url.trim_end_matches('/');
@@ -452,13 +484,18 @@ fn anthropic_stream(
             format!("{base}/v1/messages")
         };
         let (system, messages) = anthropic_messages(&system, &messages);
+        let output_tokens = if max_tokens > 0 { max_tokens } else { 8192 };
         let mut body = json!({
             "model": model.id,
-            "max_tokens": if max_tokens > 0 { max_tokens } else { 8192 },
+            "max_tokens": output_tokens,
             "messages": messages,
             "stream": true,
-            "thinking": {"type": "enabled", "budget_tokens": 4096},
         });
+        // Anthropic rejects `thinking.budget_tokens >= max_tokens`, which made
+        // short one-shots such as title generation fail before they started.
+        if output_tokens > 4096 {
+            body["thinking"] = json!({"type": "enabled", "budget_tokens": 4096});
+        }
         if !system.is_empty() {
             body["system"] = Value::String(system);
         }
@@ -475,6 +512,9 @@ fn anthropic_stream(
             .json(&body);
         if let Some(key) = &model.api_key {
             request = request.header("x-api-key", key);
+        }
+        for (name, value) in &headers {
+            request = request.header(name, value);
         }
         let response = match request.send().await {
             Ok(response) => response,
@@ -624,4 +664,39 @@ pub fn parse_arguments(text: &str) -> Result<Value> {
         return Ok(json!({}));
     }
     serde_json::from_str(text).map_err(|error| anyhow!("invalid tool arguments: {error}"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn model(provider: &str, base_url: &str) -> ModelDef {
+        ModelDef {
+            provider: provider.to_string(),
+            base_url: base_url.to_string(),
+            ..ModelDef::default()
+        }
+    }
+
+    #[test]
+    fn opencode_requests_get_a_session_routing_header() {
+        for model in [
+            model("opencode-go", "https://opencode.ai/inference/go/openai/v1"),
+            model("opencode", "https://example.test/v1"),
+            model("custom", "https://opencode.ai/inference/go/anthropic"),
+        ] {
+            let headers = request_headers(&model);
+            assert!(
+                headers
+                    .get("x-opencode-session")
+                    .is_some_and(|value| !value.is_empty())
+            );
+        }
+    }
+
+    #[test]
+    fn other_providers_do_not_get_opencode_headers() {
+        let headers = request_headers(&model("deepseek", "https://api.deepseek.com"));
+        assert!(headers.is_empty());
+    }
 }
