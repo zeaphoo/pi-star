@@ -454,15 +454,27 @@ impl PiRpcSession {
                     .map(str::to_owned)
             })
             .filter(|prompt| !prompt.is_empty());
-        let prompt = host_prompt.unwrap_or_else(|| {
-            // Without the host extension pi's RPC state has no prompt at all;
-            // render the same sections QuickPI uses instead of showing an
-            // empty System panel.
-            let tools = persisted_tool_selection(&self.path()).unwrap_or_else(|| {
-                pi_star_core::prompt::default_tool_names(&self.config, &self.cwd)
-            });
-            pi_star_core::prompt::build_system_prompt(&self.config, &self.cwd, &tools)
-        });
+        let prompt = match host_prompt {
+            Some(prompt) => prompt,
+            None => {
+                // Without the host extension pi's RPC state has no prompt at
+                // all; render the same sections QuickPI uses instead of showing
+                // an empty System panel. Reading the session and context files
+                // is blocking, so it runs on the blocking pool.
+                let config = self.config.clone();
+                let cwd = self.cwd.clone();
+                match crate::routes::blocking(move || {
+                    let tools = persisted_tool_selection(&cwd)
+                        .unwrap_or_else(|| pi_star_core::prompt::default_tool_names(&config, &cwd));
+                    pi_star_core::prompt::build_system_prompt(&config, &cwd, &tools)
+                })
+                .await
+                {
+                    Ok(prompt) => prompt,
+                    Err(_) => String::new(),
+                }
+            }
+        };
         let context_usage = self.host_context_usage().await;
         if let Some(object) = state.as_object_mut() {
             object.insert("systemPrompt".into(), Value::String(prompt));
@@ -471,34 +483,6 @@ impl PiRpcSession {
             }
         }
         self.set_state(state);
-    }
-
-    /// Persist the active tool selection in the same `pi-star:tool-selection`
-    /// custom entry pi-web uses. `None` records a cleared selection so a later
-    /// reopen follows settings.json `defaultTools` again.
-    pub fn append_tool_selection(&self, tools: Option<&[String]>) {
-        let path = self.path();
-        let Ok(session) = read_session(&path) else {
-            return;
-        };
-        let data = match tools {
-            Some(tools) => json!({"version": 1, "tools": tools}),
-            None => json!({"version": 1, "cleared": true}),
-        };
-        let entry = new_entry(
-            "custom",
-            session.leaf_id().as_deref(),
-            [
-                (
-                    "customType".to_string(),
-                    Value::String("pi-star:tool-selection".into()),
-                ),
-                ("data".to_string(), data),
-            ]
-            .into_iter()
-            .collect(),
-        );
-        let _ = append_lines(&path, &[entry]);
     }
 
     pub fn set_rekey(&self, callback: Arc<dyn Fn(&str, &str, &Path) + Send + Sync>) {
@@ -606,17 +590,27 @@ impl PiRpcSession {
                     // No selection means "back to settings.json defaults", not
                     // "turn every tool off": resolve the same default loadout
                     // pi does and record a cleared marker for future opens.
-                    None => pi_star_core::prompt::default_tool_names(&self.config, &self.cwd),
+                    None => {
+                        let config = self.config.clone();
+                        let cwd = self.cwd.clone();
+                        crate::routes::blocking(move || {
+                            pi_star_core::prompt::default_tool_names(&config, &cwd)
+                        })
+                        .await
+                        .unwrap_or_default()
+                    }
                 };
                 let result = self
                     .host_command("set_tools", json!({"toolNames": names}))
                     .await;
                 if result.is_ok() {
-                    if requested.is_some() {
-                        self.append_tool_selection(Some(&names));
-                    } else {
-                        self.append_tool_selection(None);
-                    }
+                    let path = self.path();
+                    let selection = requested.map(|_| names.clone());
+                    let _ = crate::routes::blocking_result(move || {
+                        append_tool_selection_at(&path, selection.as_deref());
+                        Ok::<_, anyhow::Error>(())
+                    })
+                    .await;
                     // The prompt's tools/rules sections change with the loadout.
                     self.refresh_state().await;
                 }
@@ -751,6 +745,31 @@ fn agent_extension_path() -> Option<PathBuf> {
         }
     }
     candidates.into_iter().find(|path| path.exists())
+}
+
+/// Persist a tool-selection entry without borrowing the live session.
+fn append_tool_selection_at(path: &Path, tools: Option<&[String]>) {
+    let Ok(session) = read_session(path) else {
+        return;
+    };
+    let data = match tools {
+        Some(tools) => json!({"version": 1, "tools": tools}),
+        None => json!({"version": 1, "cleared": true}),
+    };
+    let entry = new_entry(
+        "custom",
+        session.leaf_id().as_deref(),
+        [
+            (
+                "customType".to_string(),
+                Value::String("pi-star:tool-selection".into()),
+            ),
+            ("data".to_string(), data),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let _ = append_lines(path, &[entry]);
 }
 
 /// The newest valid `pi-star:tool-selection` entry, or `None` when the session
@@ -951,13 +970,20 @@ impl PiRpcRegistry {
 
     #[allow(dead_code)] // used by the RPC integration tests
     pub async fn create(&self, cwd: &Path, options: PiSpawnOptions) -> Result<Arc<PiRpcSession>> {
-        let path = create_session_file(&self.config, cwd)?;
+        let config = self.config.clone();
+        let cwd = cwd.to_path_buf();
+        let path =
+            crate::routes::blocking_result(move || create_session_file(&config, &cwd)).await?;
         self.open_path(&path, options).await
     }
 
     pub async fn open(&self, id: &str, options: PiSpawnOptions) -> Result<Arc<PiRpcSession>> {
-        let path =
-            resolve_session_path(&self.config, id).ok_or_else(|| anyhow!("Session not found"))?;
+        let config = self.config.clone();
+        let id = id.to_string();
+        let path = crate::routes::blocking_result(move || {
+            resolve_session_path(&config, &id).ok_or_else(|| anyhow!("Session not found"))
+        })
+        .await?;
         self.open_path(&path, options).await
     }
 
@@ -975,7 +1001,8 @@ impl PiRpcRegistry {
     ) -> Result<Arc<PiRpcSession>> {
         let requested_tools = options.tool_names.clone();
         self.make_room()?;
-        let session = read_session(path)?;
+        let read_path = path.to_path_buf();
+        let session = crate::routes::blocking_result(move || read_session(&read_path)).await?;
         let id = session.id().to_string();
         let lock = self
             .config
@@ -1084,13 +1111,26 @@ impl PiRpcRegistry {
         }));
         session.refresh_state().await;
         if let Some(tools) = requested_tools {
-            session.append_tool_selection(Some(&tools));
-        } else if let Some(selection) = persisted_tool_selection(path) {
-            // Apply the pi-web custom entry to the live loadout. The entry may
-            // be an empty list, which pi-web stores for a Chat-only session.
-            let _ = session
-                .host_command("set_tools", json!({"toolNames": selection}))
-                .await;
+            let tools_path = path.to_path_buf();
+            let _ = crate::routes::blocking_result(move || {
+                append_tool_selection_at(&tools_path, Some(&tools));
+                Ok::<_, anyhow::Error>(())
+            })
+            .await;
+        } else {
+            let tools_path = path.to_path_buf();
+            let selection = crate::routes::blocking(move || persisted_tool_selection(&tools_path))
+                .await
+                .ok()
+                .flatten();
+            if let Some(selection) = selection {
+                // Apply the pi-web custom entry to the live loadout. The entry
+                // may be an empty list, which pi-web stores for a Chat-only
+                // session.
+                let _ = session
+                    .host_command("set_tools", json!({"toolNames": selection}))
+                    .await;
+            }
         }
         let id = session.id();
         self.sessions.lock().insert(id, session.clone());

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::routes::{bad_request, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, internal, no_store, not_found};
 use crate::state::AppState;
 
 const FLOW_TTL: Duration = Duration::from_secs(600);
@@ -100,7 +100,8 @@ pub async fn start(State(state): State<Arc<AppState>>, Json(body): Json<StartBod
     } else {
         state.config.agent_dir.join("mcp.json")
     };
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(text)) = blocking(move || std::fs::read_to_string(&read_path)).await else {
         return not_found("MCP server not found");
     };
     let Ok(config) = serde_json::from_str::<Value>(&text) else {

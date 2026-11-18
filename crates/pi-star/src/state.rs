@@ -204,6 +204,18 @@ impl AppState {
             .unwrap_or_else(|| self.backend_for(id))
     }
 
+    /// Async form of [`Self::route_backend`] for HTTP handlers: resolving the
+    /// persisted backend reads the session file, so it belongs on the blocking
+    /// pool rather than an async worker thread.
+    pub async fn route_backend_async(self: &Arc<Self>, id: &str) -> BackendKind {
+        let state = self.clone();
+        let id = id.to_string();
+        match crate::routes::blocking(move || state.route_backend(&id)).await {
+            Ok(kind) => kind,
+            Err(_) => BackendKind::default(),
+        }
+    }
+
     /// Whether either registry has work under way for this session.
     pub fn session_running(&self, id: &str) -> bool {
         self.agents

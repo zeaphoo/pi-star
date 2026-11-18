@@ -13,7 +13,7 @@ use pi_star_core::agent::backend::BackendKind;
 use pi_star_core::models::{self, model_defs, read_json, strip_json_comments};
 use pi_star_core::settings;
 
-use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Default)]
@@ -32,10 +32,19 @@ pub async fn models(State(state): State<Arc<AppState>>, Query(query): Query<CwdQ
             return forbidden("Access denied");
         }
     }
-    let data = if query.scope.as_deref() == Some("all") {
-        state.models_all()
-    } else {
-        state.models()
+    let all = query.scope.as_deref() == Some("all");
+    let state_for_models = state.clone();
+    let data = match blocking(move || {
+        if all {
+            state_for_models.models_all()
+        } else {
+            state_for_models.models()
+        }
+    })
+    .await
+    {
+        Ok(data) => data,
+        Err(response) => return response,
     };
     match data {
         Ok(data) => no_store(data),
@@ -57,6 +66,14 @@ pub async fn set_default_model(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DefaultModelBody>,
 ) -> Response {
+    let state_for = state.clone();
+    match blocking(move || set_default_model_sync(&state_for, body)).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+fn set_default_model_sync(state: &AppState, body: DefaultModelBody) -> Response {
     if let (Some(provider), Some(model_id)) = (body.provider.as_ref(), body.model_id.as_ref()) {
         if models::find_model(&state.config, provider, model_id)
             .ok()
@@ -89,9 +106,11 @@ pub async fn enabled_models(
     Query(query): Query<CwdQuery>,
 ) -> Response {
     let _ = query;
-    match enabled_models_view(&state) {
-        Ok(view) => no_store(view),
-        Err(error) => internal(error),
+    let state_for_view = state.clone();
+    match blocking(move || enabled_models_view(&state_for_view)).await {
+        Ok(Ok(view)) => no_store(view),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -218,10 +237,17 @@ pub async fn set_enabled_models(
     State(state): State<Arc<AppState>>,
     Json(body): Json<EnabledModelsBody>,
 ) -> Response {
-    let mut patterns = enabled_patterns(&state);
-    let data = match state.models_all() {
-        Ok(data) => data,
-        Err(error) => return internal(error),
+    let state_for = state.clone();
+    let (mut patterns, data) = match blocking(move || -> anyhow::Result<_> {
+        let patterns = enabled_patterns(&state_for);
+        let data = state_for.models_all()?;
+        Ok((patterns, data))
+    })
+    .await
+    {
+        Ok(Ok(values)) => values,
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     };
     let refs = data
         .model_list
@@ -295,13 +321,18 @@ pub async fn set_enabled_models(
         }
         _ => return bad_request("Invalid op"),
     }
-    if let Err(error) = settings::set_enabled_models(&state.config, patterns) {
-        return internal(error);
+    let config = state.config.clone();
+    match blocking(move || settings::set_enabled_models(&config, patterns)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     }
     state.invalidate_models();
-    match enabled_models_view(&state) {
-        Ok(view) => no_store(view),
-        Err(error) => internal(error),
+    let state_for = state.clone();
+    match blocking(move || enabled_models_view(&state_for)).await {
+        Ok(Ok(view)) => no_store(view),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -375,14 +406,22 @@ pub async fn refresh_models(
         }
     };
     let path = state.config.agent_dir.join("models-store.json");
-    let mut store = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&strip_json_comments(&text)).ok())
-        .unwrap_or_else(|| json!({}));
+    let read_path = path.clone();
+    let mut store = match blocking(move || std::fs::read_to_string(&read_path)).await {
+        Ok(Ok(text)) => {
+            serde_json::from_str::<Value>(&strip_json_comments(&text)).unwrap_or_else(|_| json!({}))
+        }
+        Ok(Err(_)) => json!({}),
+        Err(response) => return response,
+    };
     let changed =
         pi_star_core::models::apply_catalog_to_store(&mut store, &entries, provider.as_deref());
-    if let Err(error) = settings::write_json_atomic(&path, &store, 0o600) {
-        return internal(error);
+    let write_path = path.clone();
+    let write_store = store.clone();
+    match blocking(move || settings::write_json_atomic(&write_path, &write_store, 0o600)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     }
     state.invalidate_models();
     no_store(json!({
@@ -392,18 +431,20 @@ pub async fn refresh_models(
 }
 
 pub async fn models_config(State(state): State<Arc<AppState>>) -> Response {
-    match std::fs::read_to_string(state.config.models_path()) {
-        Ok(text) => match serde_json::from_str::<Value>(&strip_json_comments(&text)) {
+    let models_path = state.config.models_path();
+    match blocking(move || std::fs::read_to_string(&models_path)).await {
+        Ok(Ok(text)) => match serde_json::from_str::<Value>(&strip_json_comments(&text)) {
             Ok(value) => no_store(value),
             Err(error) => crate::routes::json_error(
                 axum::http::StatusCode::UNPROCESSABLE_ENTITY,
                 error.to_string(),
             ),
         },
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
             no_store(json!({"providers": {}}))
         }
-        Err(error) => internal(error),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -426,12 +467,15 @@ pub async fn set_models_config(
             }
         }
     }
-    match settings::write_json_atomic(&state.config.models_path(), &body, 0o600) {
-        Ok(()) => {
+    let models_path = state.config.models_path();
+    let write_body = body.clone();
+    match blocking(move || settings::write_json_atomic(&models_path, &write_body, 0o600)).await {
+        Ok(Ok(())) => {
             state.invalidate_models();
             no_store(json!({"success": true}))
         }
-        Err(error) => internal(error),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -654,15 +698,24 @@ pub async fn test_model(
 }
 
 pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
-    let defs = model_defs(&state.config).unwrap_or_default();
-    let auth = read_json(&state.config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
-    let models_config = read_json(&state.config.models_path()).unwrap_or(Value::Null);
+    let config = state.config.clone();
+    let (defs, auth, models_config, custom_names) = match blocking(move || {
+        let defs = model_defs(&config).unwrap_or_default();
+        let auth = read_json(&config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
+        let models_config = read_json(&config.models_path()).unwrap_or(Value::Null);
+        let custom_names = models::custom_provider_names(&config);
+        (defs, auth, models_config, custom_names)
+    })
+    .await
+    {
+        Ok(values) => values,
+        Err(response) => return response,
+    };
     let models_entries = models_config.get("providers").and_then(Value::as_object);
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for model in defs.values() {
         *counts.entry(model.provider.clone()).or_default() += 1;
     }
-    let custom_names = models::custom_provider_names(&state.config);
 
     // Every runtime provider gets a display name, including ones with no chat
     // model (TypeSafe is classifier-only) and models.json providers.
@@ -789,13 +842,19 @@ pub async fn logout(
     AxumPath(provider): AxumPath<String>,
 ) -> Response {
     let path = state.config.agent_dir.join("auth.json");
-    let mut auth = read_json(&path).unwrap_or_else(|| json!({}));
+    let read_path = path.clone();
+    let mut auth = match blocking(move || read_json(&read_path)).await {
+        Ok(auth) => auth.unwrap_or_else(|| json!({})),
+        Err(response) => return response,
+    };
     if let Some(object) = auth.as_object_mut() {
         object.remove(&provider);
     }
-    match settings::write_json_atomic(&path, &auth, 0o600) {
-        Ok(()) => no_store(json!({"ok": true})),
-        Err(error) => internal(error),
+    let write_path = path.clone();
+    match blocking(move || settings::write_json_atomic(&write_path, &auth, 0o600)).await {
+        Ok(Ok(())) => no_store(json!({"ok": true})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -819,14 +878,20 @@ pub async fn set_api_key(
         return bad_request("apiKey is required");
     };
     let path = state.config.agent_dir.join("auth.json");
-    let mut auth = read_json(&path).unwrap_or_else(|| json!({}));
+    let read_path = path.clone();
+    let mut auth = match blocking(move || read_json(&read_path)).await {
+        Ok(auth) => auth.unwrap_or_else(|| json!({})),
+        Err(response) => return response,
+    };
     let Some(object) = auth.as_object_mut() else {
         return internal("auth.json is not an object");
     };
     object.insert(provider, json!({"type": "api_key", "key": key}));
-    match settings::write_json_atomic(&path, &auth, 0o600) {
-        Ok(()) => no_store(json!({"ok": true})),
-        Err(error) => internal(error),
+    let write_path = path.clone();
+    match blocking(move || settings::write_json_atomic(&write_path, &auth, 0o600)).await {
+        Ok(Ok(())) => no_store(json!({"ok": true})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -835,29 +900,45 @@ pub async fn delete_api_key(
     AxumPath(provider): AxumPath<String>,
 ) -> Response {
     let path = state.config.agent_dir.join("auth.json");
-    let mut auth = read_json(&path).unwrap_or_else(|| json!({}));
+    let read_path = path.clone();
+    let mut auth = match blocking(move || read_json(&read_path)).await {
+        Ok(auth) => auth.unwrap_or_else(|| json!({})),
+        Err(response) => return response,
+    };
     if let Some(object) = auth.as_object_mut() {
         object.remove(&provider);
     }
-    match settings::write_json_atomic(&path, &auth, 0o600) {
-        Ok(()) => no_store(json!({"ok": true})),
-        Err(error) => internal(error),
+    let write_path = path.clone();
+    match blocking(move || settings::write_json_atomic(&write_path, &auth, 0o600)).await {
+        Ok(Ok(())) => no_store(json!({"ok": true})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
 pub async fn tools(State(state): State<Arc<AppState>>) -> Response {
-    no_store(settings::tools_settings(&state.config))
+    let config = state.config.clone();
+    match blocking(move || settings::tools_settings(&config)).await {
+        Ok(tools) => no_store(tools),
+        Err(response) => response,
+    }
 }
 
 pub async fn set_tools(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
-    match settings::update_tools_settings(&state.config, &body) {
-        Ok(settings) => no_store(settings),
-        Err(error) => internal(error),
+    let config = state.config.clone();
+    match blocking(move || settings::update_tools_settings(&config, &body)).await {
+        Ok(Ok(settings)) => no_store(settings),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
 pub async fn cache_miss(State(state): State<Arc<AppState>>) -> Response {
-    no_store(json!({"showCacheMissNotices": settings::cache_miss_notices(&state.config)}))
+    let config = state.config.clone();
+    match blocking(move || settings::cache_miss_notices(&config)).await {
+        Ok(value) => no_store(json!({"showCacheMissNotices": value})),
+        Err(response) => response,
+    }
 }
 
 pub async fn set_cache_miss(
@@ -868,14 +949,20 @@ pub async fn set_cache_miss(
         .get("showCacheMissNotices")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    match settings::set_cache_miss_notices(&state.config, enabled) {
-        Ok(value) => no_store(json!({"showCacheMissNotices": value})),
-        Err(error) => internal(error),
+    let config = state.config.clone();
+    match blocking(move || settings::set_cache_miss_notices(&config, enabled)).await {
+        Ok(Ok(value)) => no_store(json!({"showCacheMissNotices": value})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
 pub async fn subagent_settings(State(state): State<Arc<AppState>>) -> Response {
-    let settings = settings::subagent_settings(&state.config);
+    let config = state.config.clone();
+    let settings = match blocking(move || settings::subagent_settings(&config)).await {
+        Ok(settings) => settings,
+        Err(response) => return response,
+    };
     no_store(json!({
         "enabled": settings.built_in_enabled,
         "maxConcurrent": settings.max_concurrent,
@@ -895,16 +982,25 @@ pub async fn set_subagent_settings(
         return bad_request("enabled or maxConcurrent is required");
     }
     if let Some(enabled) = enabled {
-        if let Err(error) = pi_star_core::subagents::set_builtin_enabled(&state.config, enabled) {
-            return internal(error);
+        let config = state.config.clone();
+        match blocking(move || pi_star_core::subagents::set_builtin_enabled(&config, enabled)).await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return internal(error),
+            Err(response) => return response,
         }
     }
     if let Some(max) = max_concurrent {
         if !(1..=32).contains(&max) {
             return bad_request("maxConcurrent must be an integer between 1 and 32");
         }
-        if let Err(error) = pi_star_core::subagents::set_max_concurrent(&state.config, max as u32) {
-            return internal(error);
+        let config = state.config.clone();
+        match blocking(move || pi_star_core::subagents::set_max_concurrent(&config, max as u32))
+            .await
+        {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return internal(error),
+            Err(response) => return response,
         }
         state.agents.set_max_subagents(max as usize);
     }
@@ -939,8 +1035,18 @@ pub async fn subagent_profiles(
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
+    let config = state.config.clone();
+    let profiles_cwd = cwd.clone();
+    let profiles = match blocking(move || {
+        pi_star_core::subagents::list_profiles(&config, &profiles_cwd)
+    })
+    .await
+    {
+        Ok(profiles) => profiles,
+        Err(response) => return response,
+    };
     no_store(json!({
-        "profiles": pi_star_core::subagents::list_profiles(&state.config, &cwd),
+        "profiles": profiles,
     }))
 }
 
@@ -961,9 +1067,15 @@ pub async fn save_subagent_profile(
     let Some(profile) = body.get("profile") else {
         return bad_request("profile required");
     };
-    match pi_star_core::subagents::save_profile(&state.config, &cwd, scope, profile) {
-        Ok(profile) => no_store(json!({ "profile": profile })),
-        Err(error) => bad_request(error.to_string()),
+    let config = state.config.clone();
+    let profile = profile.clone();
+    let scope = scope.to_string();
+    match blocking(move || pi_star_core::subagents::save_profile(&config, &cwd, &scope, &profile))
+        .await
+    {
+        Ok(Ok(profile)) => no_store(json!({ "profile": profile })),
+        Ok(Err(error)) => bad_request(error.to_string()),
+        Err(response) => response,
     }
 }
 
@@ -987,12 +1099,20 @@ pub async fn toggle_subagent_profile(
     if !matches!(scope, "global" | "project" | "builtin") {
         return bad_request("scope must be global, project, or builtin");
     }
-    match pi_star_core::subagents::toggle_profile(&state.config, &cwd, scope, name, enabled) {
-        Ok(profile) => no_store(json!({ "profile": profile })),
-        Err(error) if error.to_string() == "Agent profile not found" => {
+    let config = state.config.clone();
+    let name = name.to_string();
+    let scope = scope.to_string();
+    match blocking(move || {
+        pi_star_core::subagents::toggle_profile(&config, &cwd, &scope, &name, enabled)
+    })
+    .await
+    {
+        Ok(Ok(profile)) => no_store(json!({ "profile": profile })),
+        Ok(Err(error)) if error.to_string() == "Agent profile not found" => {
             not_found(error.to_string())
         }
-        Err(error) => bad_request(error.to_string()),
+        Ok(Err(error)) => bad_request(error.to_string()),
+        Err(response) => response,
     }
 }
 
@@ -1013,9 +1133,15 @@ pub async fn delete_subagent_profile(
     if !matches!(scope, "global" | "project") {
         return bad_request("scope must be global or project");
     }
-    match pi_star_core::subagents::delete_profile(&state.config, &cwd, scope, name) {
-        Ok(()) => no_store(json!({"ok": true})),
-        Err(error) => internal(error),
+    let config = state.config.clone();
+    let name = name.to_string();
+    let scope = scope.to_string();
+    match blocking(move || pi_star_core::subagents::delete_profile(&config, &cwd, &scope, &name))
+        .await
+    {
+        Ok(Ok(())) => no_store(json!({"ok": true})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -1023,28 +1149,33 @@ pub async fn subagent_view(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let Some(path) = pi_star_core::session::resolve_session_path(&state.config, &id) else {
-        return not_found("Subagent not found");
+    let config = state.config.clone();
+    let view_id = id.clone();
+    let relation = match blocking(move || -> Option<Value> {
+        let path = pi_star_core::session::resolve_session_path(&config, &view_id)?;
+        let session = pi_star_core::session::read_session(&path).ok()?;
+        let info = session.info();
+        info.relation.and_then(|relation| match relation {
+            pi_star_core::session::SessionRelation::Subagent {
+                parent_session_id,
+                profile,
+                description,
+                status,
+            } => Some(json!({
+                "sessionId": view_id,
+                "parentSessionId": parent_session_id,
+                "profile": profile,
+                "description": description,
+                "status": status,
+            })),
+            _ => None,
+        })
+    })
+    .await
+    {
+        Ok(relation) => relation,
+        Err(response) => return response,
     };
-    let Ok(session) = pi_star_core::session::read_session(&path) else {
-        return not_found("Subagent not found");
-    };
-    let info = session.info();
-    let relation = info.relation.and_then(|relation| match relation {
-        pi_star_core::session::SessionRelation::Subagent {
-            parent_session_id,
-            profile,
-            description,
-            status,
-        } => Some(json!({
-            "sessionId": id,
-            "parentSessionId": parent_session_id,
-            "profile": profile,
-            "description": description,
-            "status": status,
-        })),
-        _ => None,
-    });
     match relation {
         Some(run) => no_store(json!({ "run": run })),
         None => not_found("Subagent not found"),
@@ -1057,7 +1188,7 @@ pub async fn subagent_action(
     Json(body): Json<Value>,
 ) -> Response {
     let action = body.get("action").and_then(Value::as_str).unwrap_or("");
-    if state.route_backend(&id) == BackendKind::Rpc {
+    if state.route_backend_async(&id).await == BackendKind::Rpc {
         let Some(session) = state.pi_rpc.get(&id) else {
             return crate::routes::json_error(
                 axum::http::StatusCode::CONFLICT,
@@ -1129,8 +1260,18 @@ pub async fn project_trust(
     if !cwd.is_dir() {
         return not_found("Directory not found");
     }
-    let status = settings::project_trust(&state.config, &cwd);
-    let listing = project_mcp_listing(&cwd);
+    let config = state.config.clone();
+    let trust_cwd = cwd.clone();
+    let (status, listing) = match blocking(move || {
+        let status = settings::project_trust(&config, &trust_cwd);
+        let listing = project_mcp_listing(&trust_cwd);
+        (status, listing)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     no_store(json!({
         "requiresTrust": status.requires_trust,
         "trusted": status.trusted,
@@ -1174,21 +1315,34 @@ pub async fn set_project_trust(
     };
     let cwd = PathBuf::from(cwd);
     let trusted = body.get("trusted").and_then(Value::as_bool).unwrap_or(true);
-    match settings::set_project_trust(&state.config, &cwd, trusted) {
-        Ok(status) => no_store(json!({
+    let config = state.config.clone();
+    let trust_cwd = cwd.clone();
+    match blocking(move || {
+        settings::set_project_trust(&config, &trust_cwd, trusted)
+            .map(|status| (status, project_mcp_listing(&trust_cwd)))
+    })
+    .await
+    {
+        Ok(Ok((status, listing))) => no_store(json!({
             "requiresTrust": status.requires_trust,
             "trusted": status.trusted,
             "decision": status.decision,
             "decisionPath": status.decision_path,
             "inherited": status.inherited,
-            "mcpServers": project_mcp_listing(&cwd),
+            "mcpServers": listing,
         })),
-        Err(error) => internal(error),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
 pub async fn mcp(State(state): State<Arc<AppState>>, Query(query): Query<CwdQuery>) -> Response {
-    no_store(mcp_overview(&state, query.cwd.as_deref()))
+    let state_for = state.clone();
+    let cwd = query.cwd;
+    match blocking(move || mcp_overview(&state_for, cwd.as_deref())).await {
+        Ok(overview) => no_store(overview),
+        Err(response) => response,
+    }
 }
 
 fn mcp_overview(state: &AppState, cwd: Option<&str>) -> Value {
@@ -1322,10 +1476,14 @@ pub async fn mcp_post(State(state): State<Arc<AppState>>, Json(body): Json<Value
     } else {
         state.config.agent_dir.join("mcp.json")
     };
-    let mut config = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|text| serde_json::from_str::<Value>(&text).ok())
-        .unwrap_or_else(|| json!({"mcpServers": {}}));
+    let read_path = path.clone();
+    let mut config = match blocking(move || std::fs::read_to_string(&read_path)).await {
+        Ok(Ok(text)) => {
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({"mcpServers": {}}))
+        }
+        Ok(Err(_)) => json!({"mcpServers": {}}),
+        Err(response) => return response,
+    };
     let Some(servers) = config.get_mut("mcpServers").and_then(Value::as_object_mut) else {
         return internal("mcp.json has no mcpServers object");
     };
@@ -1375,13 +1533,19 @@ pub async fn mcp_post(State(state): State<Arc<AppState>>, Json(body): Json<Value
         "undo" | "set-in-project" | "sign-out" => {}
         _ => return bad_request("Invalid action"),
     }
-    if let Err(error) = settings::write_json_atomic(&path, &config, 0o600) {
-        return internal(error);
+    let write_path = path.clone();
+    let write_config = config.clone();
+    match blocking(move || settings::write_json_atomic(&write_path, &write_config, 0o600)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     }
-    no_store(mcp_overview(
-        &state,
-        body.get("cwd").and_then(Value::as_str),
-    ))
+    let state_for = state.clone();
+    let overview_cwd = body.get("cwd").and_then(Value::as_str).map(str::to_owned);
+    match blocking(move || mcp_overview(&state_for, overview_cwd.as_deref())).await {
+        Ok(overview) => no_store(overview),
+        Err(response) => response,
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -1409,14 +1573,22 @@ pub async fn mcp_test(
         if !state.roots.is_allowed_existing(&cwd) {
             return forbidden("Access denied");
         }
-        if !settings::project_trust(&state.config, &cwd).trusted {
+        let config = state.config.clone();
+        let trust_cwd = cwd.clone();
+        let trusted =
+            match blocking(move || settings::project_trust(&config, &trust_cwd).trusted).await {
+                Ok(trusted) => trusted,
+                Err(response) => return response,
+            };
+        if !trusted {
             return forbidden("The project is not trusted");
         }
         cwd.join(".pi").join("mcp.json")
     } else {
         state.config.agent_dir.join("mcp.json")
     };
-    let Ok(text) = std::fs::read_to_string(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(text)) = blocking(move || std::fs::read_to_string(&read_path)).await else {
         return not_found("MCP server not found");
     };
     let Ok(config) = serde_json::from_str::<Value>(&text) else {
@@ -1750,7 +1922,13 @@ pub async fn skills(State(state): State<Arc<AppState>>, Query(query): Query<CwdQ
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    let (skills, diagnostics, project_resources_loaded) = skills_json(&state, &cwd);
+    let state_for = state.clone();
+    let skills_cwd = cwd.clone();
+    let (skills, diagnostics, project_resources_loaded) =
+        match blocking(move || skills_json(&state_for, &skills_cwd)).await {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
     no_store(json!({
         "skills": skills,
         "diagnostics": diagnostics,
@@ -1818,47 +1996,56 @@ fn skill_roots(state: &AppState, cwd: Option<&Path>) -> Vec<PathBuf> {
 }
 
 pub async fn patch_skills(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
-    let disable = body
-        .get("disableModelInvocation")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
-    let mut files = Vec::new();
-    if let Some(path) = body.get("filePath").and_then(Value::as_str) {
-        files.push(path.to_string());
-    }
-    if let Some(paths) = body.get("filePaths").and_then(Value::as_array) {
-        files.extend(paths.iter().filter_map(Value::as_str).map(str::to_owned));
-    }
-    let mut results = Vec::new();
-    for file in files {
-        let path = PathBuf::from(&file);
-        if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
-            results.push(json!({"filePath": file, "error": "Not a skill file"}));
-            continue;
+    let state_for = state.clone();
+    let results = match blocking(move || {
+        let disable = body
+            .get("disableModelInvocation")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut files = Vec::new();
+        if let Some(path) = body.get("filePath").and_then(Value::as_str) {
+            files.push(path.to_string());
         }
-        let in_skill_root = skill_roots(&state, None)
-            .iter()
-            .any(|root| path.starts_with(root));
-        if !state.roots.is_allowed_existing(&path)
-            && !path.starts_with(&state.config.agent_dir)
-            && !in_skill_root
-        {
-            results.push(json!({"filePath": file, "error": "Access denied"}));
-            continue;
+        if let Some(paths) = body.get("filePaths").and_then(Value::as_array) {
+            files.extend(paths.iter().filter_map(Value::as_str).map(str::to_owned));
         }
-        let Ok(text) = std::fs::read_to_string(&path) else {
-            results.push(json!({"filePath": file, "error": "file not found"}));
-            continue;
-        };
-        let updated = set_skill_disabled(&text, disable);
-        if updated != text {
-            if let Err(error) = std::fs::write(&path, updated) {
-                results.push(json!({"filePath": file, "error": error.to_string()}));
+        let mut results = Vec::new();
+        for file in files {
+            let path = PathBuf::from(&file);
+            if path.extension().and_then(|ext| ext.to_str()) != Some("md") {
+                results.push(json!({"filePath": file, "error": "Not a skill file"}));
                 continue;
             }
+            let in_skill_root = skill_roots(&state_for, None)
+                .iter()
+                .any(|root| path.starts_with(root));
+            if !state_for.roots.is_allowed_existing(&path)
+                && !path.starts_with(&state_for.config.agent_dir)
+                && !in_skill_root
+            {
+                results.push(json!({"filePath": file, "error": "Access denied"}));
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                results.push(json!({"filePath": file, "error": "file not found"}));
+                continue;
+            };
+            let updated = set_skill_disabled(&text, disable);
+            if updated != text {
+                if let Err(error) = std::fs::write(&path, updated) {
+                    results.push(json!({"filePath": file, "error": error.to_string()}));
+                    continue;
+                }
+            }
+            results.push(json!({"filePath": file}));
         }
-        results.push(json!({"filePath": file}));
-    }
+        results
+    })
+    .await
+    {
+        Ok(results) => results,
+        Err(response) => return response,
+    };
     no_store(json!({"results": results}))
 }
 
@@ -1898,6 +2085,14 @@ pub async fn skill_content(
     State(state): State<Arc<AppState>>,
     Query(query): Query<SkillContentQuery>,
 ) -> Response {
+    let state_for = state.clone();
+    match blocking(move || skill_content_sync(&state_for, query)).await {
+        Ok(response) => response,
+        Err(response) => response,
+    }
+}
+
+fn skill_content_sync(state: &AppState, query: SkillContentQuery) -> Response {
     let Some(file_path) = query.file_path else {
         return bad_request("filePath is required");
     };
@@ -2336,10 +2531,6 @@ fn plugin_view(state: &AppState, cwd: Option<&str>) -> Value {
     })
 }
 
-fn plugins_view(state: &AppState, cwd: Option<&str>) -> Value {
-    plugin_view(state, cwd)
-}
-
 pub async fn plugins(
     State(state): State<Arc<AppState>>,
     Query(query): Query<CwdQuery>,
@@ -2351,7 +2542,13 @@ pub async fn plugins(
     if !state.roots.is_allowed_existing(&cwd_path) {
         return forbidden("Access denied");
     }
-    no_store(plugin_view(&state, Some(&cwd)))
+    let state_for = state.clone();
+    let view_cwd = cwd.clone();
+    let view = match blocking(move || plugin_view(&state_for, Some(&view_cwd))).await {
+        Ok(view) => view,
+        Err(response) => return response,
+    };
+    no_store(view)
 }
 
 fn settings_path_for_scope(
@@ -2437,7 +2634,17 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
             let Some(cwd_path) = cwd.as_deref() else {
                 return bad_request("cwd is required for a project package");
             };
-            if !pi_star_core::settings::project_trust(&state.config, cwd_path).trusted {
+            let config = state.config.clone();
+            let trust_cwd = cwd_path.to_path_buf();
+            let trusted = match blocking(move || {
+                pi_star_core::settings::project_trust(&config, &trust_cwd).trusted
+            })
+            .await
+            {
+                Ok(trusted) => trusted,
+                Err(response) => return response,
+            };
+            if !trusted {
                 return forbidden(
                     "Project resources must be trusted before modifying project plugins",
                 );
@@ -2453,7 +2660,16 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
                 return internal(error);
             }
         } else if source.is_empty() {
-            for (item_source, item_scope) in configured_packages(&state, cwd.as_deref()) {
+            let state_for = state.clone();
+            let packages_cwd = cwd.clone();
+            let configured =
+                match blocking(move || configured_packages(&state_for, packages_cwd.as_deref()))
+                    .await
+                {
+                    Ok(configured) => configured,
+                    Err(response) => return response,
+                };
+            for (item_source, item_scope) in configured {
                 if item_scope != scope {
                     continue;
                 }
@@ -2474,10 +2690,20 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
             return internal(error);
         }
         state.invalidate_models();
-        return no_store(plugins_view(
-            &state,
-            cwd.as_deref().and_then(|path| path.to_str()),
-        ));
+        let state_for = state.clone();
+        let view_cwd = cwd.clone();
+        let view = match blocking(move || {
+            plugin_view(
+                &state_for,
+                view_cwd.as_deref().and_then(|path| path.to_str()),
+            )
+        })
+        .await
+        {
+            Ok(view) => view,
+            Err(response) => return response,
+        };
+        return no_store(view);
     }
 
     if let Some(packages) = body.get("packages") {
@@ -2488,10 +2714,21 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
         else {
             return bad_request("packages must be a list of { source, scope }");
         };
-        let trusted = cwd
-            .as_deref()
-            .map(|cwd| pi_star_core::settings::project_trust(&state.config, cwd).trusted)
-            .unwrap_or(false);
+        let trusted = match cwd.as_deref() {
+            Some(cwd_path) => {
+                let config = state.config.clone();
+                let trust_cwd = cwd_path.to_path_buf();
+                match blocking(move || {
+                    pi_star_core::settings::project_trust(&config, &trust_cwd).trusted
+                })
+                .await
+                {
+                    Ok(trusted) => trusted,
+                    Err(response) => return response,
+                }
+            }
+            None => false,
+        };
         let disabled = action == "disable";
         let mut results = Vec::new();
         let mut seen = HashSet::new();
@@ -2513,17 +2750,44 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
                 }));
                 continue;
             }
-            match toggle_package_entry(&state, cwd.as_deref(), &package.source, scope, disabled) {
-                Ok(()) => results.push(json!({"source": package.source, "scope": scope})),
-                Err(error) => results.push(json!({
+            let state_for = state.clone();
+            let toggle_cwd = cwd.clone();
+            let toggle_source = package.source.clone();
+            let toggle_scope = scope.to_string();
+            match blocking(move || {
+                toggle_package_entry(
+                    &state_for,
+                    toggle_cwd.as_deref(),
+                    &toggle_source,
+                    &toggle_scope,
+                    disabled,
+                )
+            })
+            .await
+            {
+                Ok(Ok(())) => results.push(json!({"source": package.source, "scope": scope})),
+                Ok(Err(error)) => results.push(json!({
                     "source": package.source,
                     "scope": scope,
                     "error": error,
                 })),
+                Err(response) => return response,
             }
         }
         state.invalidate_models();
-        let mut view = plugins_view(&state, cwd.as_deref().and_then(|path| path.to_str()));
+        let state_for = state.clone();
+        let view_cwd = cwd.clone();
+        let mut view = match blocking(move || {
+            plugin_view(
+                &state_for,
+                view_cwd.as_deref().and_then(|path| path.to_str()),
+            )
+        })
+        .await
+        {
+            Ok(view) => view,
+            Err(response) => return response,
+        };
         if let Some(object) = view.as_object_mut() {
             object.insert("results".into(), Value::Array(results));
         }
@@ -2537,30 +2801,78 @@ pub async fn plugins_post(State(state): State<Arc<AppState>>, Json(body): Json<V
         let Some(cwd_path) = cwd.as_deref() else {
             return bad_request("cwd is required for a project package");
         };
-        if !pi_star_core::settings::project_trust(&state.config, cwd_path).trusted {
+        let config = state.config.clone();
+        let trust_cwd = cwd_path.to_path_buf();
+        let trusted = match blocking(move || {
+            pi_star_core::settings::project_trust(&config, &trust_cwd).trusted
+        })
+        .await
+        {
+            Ok(trusted) => trusted,
+            Err(response) => return response,
+        };
+        if !trusted {
             return forbidden("Project resources must be trusted before modifying project plugins");
         }
     }
     if action == "remove" {
-        if let Err(error) =
-            crate::routes::plugins_ops::remove(&state, source, scope, cwd.as_deref())
+        let state_for = state.clone();
+        let remove_cwd = cwd.clone();
+        let remove_source = source.to_string();
+        let remove_scope = scope.to_string();
+        match blocking(move || {
+            crate::routes::plugins_ops::remove(
+                &state_for,
+                &remove_source,
+                &remove_scope,
+                remove_cwd.as_deref(),
+            )
+        })
+        .await
         {
-            return internal(error);
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return internal(error),
+            Err(response) => return response,
         }
     } else if matches!(action, "disable" | "enable") {
-        if let Err(error) =
-            toggle_package_entry(&state, cwd.as_deref(), source, scope, action == "disable")
+        let state_for = state.clone();
+        let toggle_cwd = cwd.clone();
+        let toggle_source = source.to_string();
+        let toggle_scope = scope.to_string();
+        let disable_action = action == "disable";
+        match blocking(move || {
+            toggle_package_entry(
+                &state_for,
+                toggle_cwd.as_deref(),
+                &toggle_source,
+                &toggle_scope,
+                disable_action,
+            )
+        })
+        .await
         {
-            return bad_request(error);
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return bad_request(error),
+            Err(response) => return response,
         }
     } else {
         return bad_request("Invalid action");
     }
     state.invalidate_models();
-    no_store(plugins_view(
-        &state,
-        cwd.as_deref().and_then(|path| path.to_str()),
-    ))
+    let state_for = state.clone();
+    let view_cwd = cwd.clone();
+    let view = match blocking(move || {
+        plugin_view(
+            &state_for,
+            view_cwd.as_deref().and_then(|path| path.to_str()),
+        )
+    })
+    .await
+    {
+        Ok(view) => view,
+        Err(response) => return response,
+    };
+    no_store(view)
 }
 
 fn configured_packages(state: &AppState, cwd: Option<&Path>) -> Vec<(String, String)> {
@@ -2592,7 +2904,13 @@ pub async fn plugins_check(
     }
     let requested = body.get("source").and_then(Value::as_str);
     let requested_scope = body.get("scope").and_then(Value::as_str);
-    let mut sources = configured_packages(&state, Some(&cwd));
+    let state_for = state.clone();
+    let sources_cwd = cwd.clone();
+    let mut sources =
+        match blocking(move || configured_packages(&state_for, Some(&sources_cwd))).await {
+            Ok(sources) => sources,
+            Err(response) => return response,
+        };
     if let (Some(source), Some(scope)) = (requested, requested_scope) {
         sources = vec![(source.to_string(), scope.to_string())];
     }
@@ -2606,10 +2924,25 @@ pub async fn plugins_check(
             crate::routes::plugins_ops::SourceKind::Npm(name) => ("npm", name.clone()),
             _ => ("git", source.clone()),
         };
-        let installed =
-            crate::routes::plugins_ops::install_path(&state, &source, &scope, Some(&cwd))
-                .and_then(|path| std::fs::read_to_string(path.join("package.json")).ok())
-                .and_then(|text| serde_json::from_str::<Value>(&text).ok());
+        let state_for = state.clone();
+        let installed_source = source.clone();
+        let installed_scope = scope.clone();
+        let installed_cwd = cwd.clone();
+        let installed = match blocking(move || {
+            crate::routes::plugins_ops::install_path(
+                &state_for,
+                &installed_source,
+                &installed_scope,
+                Some(&installed_cwd),
+            )
+            .and_then(|path| std::fs::read_to_string(path.join("package.json")).ok())
+            .and_then(|text| serde_json::from_str::<Value>(&text).ok())
+        })
+        .await
+        {
+            Ok(installed) => installed,
+            Err(response) => return response,
+        };
         let version = installed
             .as_ref()
             .and_then(|manifest| manifest.get("version"))
@@ -2678,7 +3011,11 @@ pub async fn provider_usage(
         "openai-codex" => "https://chatgpt.com/backend-api/wham/usage",
         _ => return bad_request("Unsupported provider"),
     };
-    let auth = read_json(&state.config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
+    let auth_path = state.config.agent_dir.join("auth.json");
+    let auth = match blocking(move || read_json(&auth_path)).await {
+        Ok(auth) => auth.unwrap_or(Value::Null),
+        Err(response) => return response,
+    };
     let Some(key) = auth
         .get(&provider_id)
         .and_then(|entry| entry.get("key"))
@@ -2853,7 +3190,12 @@ pub async fn skill_check(
     if package.is_some() != scope.is_some() {
         return bad_request("package and scope must be provided together");
     }
-    let (skills, _, _) = skills_json(&state, &cwd);
+    let state_for = state.clone();
+    let skills_cwd = cwd.clone();
+    let (skills, _, _) = match blocking(move || skills_json(&state_for, &skills_cwd)).await {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     let installs: Vec<Value> = skills
         .iter()
         .filter_map(|skill| skill.get("install").cloned())

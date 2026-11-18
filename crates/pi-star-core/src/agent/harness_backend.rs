@@ -78,14 +78,27 @@ impl HarnessBackend {
         path: &Path,
         registry: Weak<AgentRegistry>,
     ) -> Result<Arc<Self>> {
-        let header = read_header(path)?;
-        let session_file = read_session(path)?;
+        let read_path = path.to_path_buf();
+        let (header, session_file) = tokio::task::spawn_blocking(move || -> Result<_> {
+            let header = read_header(&read_path)?;
+            let session_file = read_session(&read_path)?;
+            Ok((header, session_file))
+        })
+        .await
+        .map_err(|error| anyhow!("session read task failed: {error}"))??;
         let cwd = PathBuf::from(&header.cwd);
         roots.add(&cwd);
-        let model = resolve_model(config, &session_file.entries).ok_or_else(|| {
-            anyhow!("No model selected. Configure a provider in Settings › Models.")
-        })?;
-        let providers = build_providers(config, &cwd)?;
+        let model_config = config.clone();
+        let providers_cwd = cwd.clone();
+        let (model, providers) = tokio::task::spawn_blocking(move || -> Result<_> {
+            let model = resolve_model(&model_config, &session_file.entries).ok_or_else(|| {
+                anyhow!("No model selected. Configure a provider in Settings › Models.")
+            })?;
+            let providers = build_providers(&model_config, &providers_cwd)?;
+            Ok((model, providers))
+        })
+        .await
+        .map_err(|error| anyhow!("session model task failed: {error}"))??;
         Self::build(
             config, roots, path, cwd, header.id, model, providers, None, registry,
         )
@@ -146,29 +159,61 @@ impl HarnessBackend {
             .iter()
             .map(|tool| tool.tool.schema().name.clone())
             .collect();
-        let selected_tools = stored_tool_selection(path);
+        let selection_path = path.to_path_buf();
+        let selected_tools =
+            tokio::task::spawn_blocking(move || stored_tool_selection(&selection_path))
+                .await
+                .ok()
+                .flatten();
         let visible_tools: Vec<String> = match selected_tools {
             Some(selected) => selected,
-            None => crate::prompt::default_tool_names(config, &cwd),
+            None => {
+                let config = config.clone();
+                let cwd = cwd.clone();
+                tokio::task::spawn_blocking(move || {
+                    crate::prompt::default_tool_names(&config, &cwd)
+                })
+                .await
+                .unwrap_or_default()
+            }
         }
         .into_iter()
         .filter(|name| tool_names.iter().any(|known| known == name))
         .collect();
         let active_tool_names = harness_tool_names(&visible_tools);
-        let system_prompt = system_prompt
-            .unwrap_or_else(|| super::build_system_prompt(config, &cwd, &visible_tools));
+        let system_prompt = match system_prompt {
+            Some(prompt) => prompt,
+            None => {
+                let prompt_config = config.clone();
+                let prompt_cwd = cwd.clone();
+                let prompt_tools = visible_tools.clone();
+                tokio::task::spawn_blocking(move || {
+                    super::build_system_prompt(&prompt_config, &prompt_cwd, &prompt_tools)
+                })
+                .await
+                .unwrap_or_default()
+            }
+        };
         let stored_prompt = system_prompt.clone();
-        let thinking = read_session(path)
-            .ok()
-            .and_then(|file| {
-                file.entries
-                    .iter()
-                    .any(|entry| {
-                        entry.get("type").and_then(Value::as_str) == Some("thinking_level_change")
-                    })
-                    .then(|| session_settings(&file.entries, None).0)
-            })
-            .unwrap_or_else(|| resolve_thinking(config, &cwd));
+        let thinking_path = path.to_path_buf();
+        let thinking_config = config.clone();
+        let thinking_cwd = cwd.clone();
+        let thinking = tokio::task::spawn_blocking(move || {
+            read_session(&thinking_path)
+                .ok()
+                .and_then(|file| {
+                    file.entries
+                        .iter()
+                        .any(|entry| {
+                            entry.get("type").and_then(Value::as_str)
+                                == Some("thinking_level_change")
+                        })
+                        .then(|| session_settings(&file.entries, None).0)
+                })
+                .unwrap_or_else(|| resolve_thinking(&thinking_config, &thinking_cwd))
+        })
+        .await
+        .unwrap_or_default();
         let model = model_from_def(&model_def);
         let (events, _) = broadcast::channel(EVENT_BUFFER);
         let emitter = Arc::new(WireEmitter {
@@ -381,16 +426,26 @@ impl HarnessBackend {
     pub async fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
         let kind = command.get("type").and_then(Value::as_str).unwrap_or("");
         match kind {
-            "get_state" => Ok(self.state_json(true)),
+            "get_state" => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || backend.state_json(true))
+                    .await
+                    .map_err(|error| anyhow!("state task failed: {error}"))
+            }
             "get_session_stats" => {
                 let stats = self
                     .lane
                     .get_stats()
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
-                let entries = read_session(&self.path)
-                    .map(|session| session.entries)
-                    .unwrap_or_default();
+                let stats_path = self.path.clone();
+                let entries = tokio::task::spawn_blocking(move || {
+                    read_session(&stats_path)
+                        .map(|session| session.entries)
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
                 let role = |entry: &Value| {
                     entry
                         .pointer("/message/role")
@@ -471,9 +526,14 @@ impl HarnessBackend {
                 }))
             }
             "get_last_assistant_text" => {
-                let entries = read_session(&self.path)
-                    .map(|session| session.entries)
-                    .unwrap_or_default();
+                let text_path = self.path.clone();
+                let entries = tokio::task::spawn_blocking(move || {
+                    read_session(&text_path)
+                        .map(|session| session.entries)
+                        .unwrap_or_default()
+                })
+                .await
+                .unwrap_or_default();
                 let text = entries.iter().rev().find_map(|entry| {
                     (entry.get("type").and_then(Value::as_str) == Some("message")
                         && entry.pointer("/message/role").and_then(Value::as_str)
@@ -705,7 +765,12 @@ impl HarnessBackend {
             }
             "get_commands" => Ok(json!({ "commands": [] })),
             "abort_compaction" => Ok(json!({ "cancelled": true })),
-            "reload" => Ok(self.state_json(true)),
+            "reload" => {
+                let backend = self.clone();
+                tokio::task::spawn_blocking(move || backend.state_json(true))
+                    .await
+                    .map_err(|error| anyhow!("state task failed: {error}"))
+            }
             "extension_ui_response" | "extension_ui_input" => Ok(Value::Null),
             "fork" | "clone" => {
                 use pi_star_harness::session::types::{

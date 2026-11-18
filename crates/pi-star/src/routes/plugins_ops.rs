@@ -1,6 +1,7 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{Result, anyhow};
+use pi_star_core::Config;
 use serde_json::{Value, json};
 
 use crate::state::AppState;
@@ -126,7 +127,8 @@ pub async fn install(
     let target = install_path(state, source, scope, cwd)
         .ok_or_else(|| anyhow!("cwd is required for a project package"))?;
     if let Some(parent) = target.parent() {
-        std::fs::create_dir_all(parent)?;
+        let parent = parent.to_path_buf();
+        crate::routes::blocking_result(move || std::fs::create_dir_all(&parent)).await?;
     }
     match &parsed.kind {
         SourceKind::Npm(name) => {
@@ -136,7 +138,8 @@ pub async fn install(
                 .and_then(Path::parent)
                 .ok_or_else(|| anyhow!("invalid npm install path"))?
                 .to_path_buf();
-            ensure_npm_project(&root)?;
+            let root_for_npm = root.clone();
+            crate::routes::blocking_result(move || ensure_npm_project(&root_for_npm)).await?;
             run(
                 "npm",
                 &["install", "--no-audit", "--no-fund", name],
@@ -148,7 +151,9 @@ pub async fn install(
         }
         SourceKind::Git { url, .. } => {
             if target.exists() {
-                std::fs::remove_dir_all(&target)?;
+                let remove_target = target.clone();
+                crate::routes::blocking_result(move || std::fs::remove_dir_all(&remove_target))
+                    .await?;
             }
             let output = tokio::process::Command::new("git")
                 .args(["clone", "--depth", "1", url])
@@ -178,7 +183,14 @@ pub async fn install(
             }
         }
     }
-    add_setting_package(state, &parsed.original, scope, cwd)?;
+    let config = state.config.clone();
+    let package_source = parsed.original.clone();
+    let scope_owned = scope.to_string();
+    let cwd_owned = cwd.map(Path::to_path_buf);
+    crate::routes::blocking_result(move || {
+        add_setting_package(&config, &package_source, &scope_owned, cwd_owned.as_deref())
+    })
+    .await?;
     Ok(target)
 }
 
@@ -196,7 +208,7 @@ pub async fn update(
     }
     if let Some(target) = install_path(state, source, scope, cwd) {
         if target.exists() {
-            let _ = std::fs::remove_dir_all(&target);
+            let _ = crate::routes::blocking_result(move || std::fs::remove_dir_all(&target)).await;
         }
     }
     install(state, source, scope, cwd).await
@@ -226,7 +238,7 @@ pub fn remove(state: &AppState, source: &str, scope: &str, cwd: Option<&Path>) -
             }
         }
     }
-    remove_setting_package(state, source, scope, cwd)
+    remove_setting_package(&state.config, source, scope, cwd)
 }
 
 fn api_scope(scope: &str) -> &str {
@@ -265,24 +277,24 @@ async fn run(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<()> {
     Ok(())
 }
 
-fn settings_path(state: &AppState, scope: &str, cwd: Option<&Path>) -> Result<PathBuf> {
+fn settings_path(config: &Config, scope: &str, cwd: Option<&Path>) -> Result<PathBuf> {
     if scope == "project" {
         Ok(cwd
             .ok_or_else(|| anyhow!("cwd is required for a project package"))?
             .join(".pi")
             .join("settings.json"))
     } else {
-        Ok(state.config.settings_path())
+        Ok(config.settings_path())
     }
 }
 
 fn add_setting_package(
-    state: &AppState,
+    config: &Config,
     source: &str,
     scope: &str,
     cwd: Option<&Path>,
 ) -> Result<()> {
-    let path = settings_path(state, scope, cwd)?;
+    let path = settings_path(config, scope, cwd)?;
     let mut settings = std::fs::read_to_string(&path)
         .ok()
         .and_then(|text| serde_json::from_str::<Value>(&text).ok())
@@ -305,12 +317,12 @@ fn add_setting_package(
 }
 
 fn remove_setting_package(
-    state: &AppState,
+    config: &Config,
     source: &str,
     scope: &str,
     cwd: Option<&Path>,
 ) -> Result<()> {
-    let path = settings_path(state, scope, cwd)?;
+    let path = settings_path(config, scope, cwd)?;
     let Ok(text) = std::fs::read_to_string(&path) else {
         return Ok(());
     };

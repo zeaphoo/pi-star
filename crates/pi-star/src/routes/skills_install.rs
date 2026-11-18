@@ -8,7 +8,7 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
-use crate::routes::{bad_request, forbidden, internal, no_store};
+use crate::routes::{bad_request, blocking, forbidden, internal, no_store};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -39,7 +39,15 @@ pub async fn install(
             return forbidden("Project resources must be trusted before installing project skills");
         }
     }
-    match install_skill(&state, &package, &scope, cwd.as_deref()) {
+    let state_for_install = state.clone();
+    let result =
+        match blocking(move || install_skill(&state_for_install, &package, &scope, cwd.as_deref()))
+            .await
+        {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
+    match result {
         Ok(skill) => no_store(json!({"success": true, "skill": skill})),
         Err(error) => internal(error),
     }
@@ -57,7 +65,19 @@ pub async fn update(State(state): State<Arc<AppState>>, Json(body): Json<Value>)
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    match install_skill(&state, package, scope, Some(&cwd)) {
+    let state_for_install = state.clone();
+    let package = package.to_string();
+    let scope = scope.to_string();
+    let current_cwd = cwd.clone();
+    let result = match blocking(move || {
+        install_skill(&state_for_install, &package, &scope, Some(&current_cwd))
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    match result {
         Ok(skill) => no_store(json!({"success": true, "skill": skill, "output": "Skill updated"})),
         Err(error) => internal(error),
     }

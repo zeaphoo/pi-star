@@ -12,7 +12,7 @@ use pi_star_core::project::{ProjectInfo, project_key};
 use pi_star_core::settings;
 
 use crate::auth::{check_password, login_cookie, logout_cookie};
-use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
 pub async fn web_auth_status(
@@ -189,9 +189,11 @@ pub async fn home() -> Response {
 
 pub async fn default_cwd() -> Response {
     let dir = settings::default_cwd();
-    match std::fs::create_dir_all(&dir) {
-        Ok(()) => no_store(json!({"cwd": dir.to_string_lossy()})),
-        Err(error) => internal(error),
+    let create_dir = dir.clone();
+    match blocking(move || std::fs::create_dir_all(&create_dir)).await {
+        Ok(Ok(())) => no_store(json!({"cwd": dir.to_string_lossy()})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -208,16 +210,29 @@ pub async fn validate_cwd(
         return bad_request("Path is required");
     };
     let cwd = normalize_cwd(&cwd);
-    if !cwd.is_dir() {
+    let lookup_cwd = cwd.clone();
+    let prepared = match blocking(move || -> Option<(String, String)> {
+        if !lookup_cwd.is_dir() {
+            return None;
+        }
+        let project = ProjectInfo::for_cwd(&lookup_cwd);
+        let key = project_key(Path::new(&project.project_root));
+        Some((project.project_root, key))
+    })
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    let Some((project_root, project_key)) = prepared else {
         return bad_request(format!("Directory does not exist: {}", cwd.display()));
-    }
+    };
     state.roots.add(&cwd);
-    let project = ProjectInfo::for_cwd(&cwd);
     no_store(json!({
         "success": true,
         "cwd": cwd.to_string_lossy(),
-        "projectRoot": project.project_root,
-        "projectKey": project_key(Path::new(&project.project_root)),
+        "projectRoot": project_root,
+        "projectKey": project_key,
     }))
 }
 
@@ -249,32 +264,44 @@ pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
         .or_else(settings::home_dir)
         .unwrap_or_default();
     let resolved = start.canonicalize().unwrap_or(start);
-    if !resolved.is_dir() {
-        return not_found("Directory does not exist");
-    }
-    let mut directories = Vec::new();
-    if let Ok(entries) = std::fs::read_dir(&resolved) {
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
-                || (entry
-                    .file_type()
-                    .map(|kind| kind.is_symlink())
-                    .unwrap_or(false)
-                    && path.is_dir());
-            if is_dir {
-                directories.push(json!({
-                    "name": entry.file_name().to_string_lossy(),
-                    "path": path.to_string_lossy(),
-                }));
+    let browse_path = resolved.clone();
+    let prepared = match blocking(move || -> Option<Vec<Value>> {
+        if !browse_path.is_dir() {
+            return None;
+        }
+        let mut directories = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(&browse_path) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
+                    || (entry
+                        .file_type()
+                        .map(|kind| kind.is_symlink())
+                        .unwrap_or(false)
+                        && path.is_dir());
+                if is_dir {
+                    directories.push(json!({
+                        "name": entry.file_name().to_string_lossy(),
+                        "path": path.to_string_lossy(),
+                    }));
+                }
             }
         }
-    }
-    directories.sort_by(|a, b| {
-        a.get("name")
-            .and_then(Value::as_str)
-            .cmp(&b.get("name").and_then(Value::as_str))
-    });
+        directories.sort_by(|a, b| {
+            a.get("name")
+                .and_then(Value::as_str)
+                .cmp(&b.get("name").and_then(Value::as_str))
+        });
+        Some(directories)
+    })
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    let Some(directories) = prepared else {
+        return not_found("Directory does not exist");
+    };
     no_store(json!({
         "path": resolved.to_string_lossy(),
         "parentPath": resolved.parent().map(|parent| parent.to_string_lossy().into_owned()),
@@ -290,23 +317,35 @@ pub struct CreateDirBody {
 
 pub async fn create_cwd(Json(body): Json<CreateDirBody>) -> Response {
     let parent = normalize_cwd(&body.path);
-    let name = body.name.trim();
+    let name = body.name.trim().to_string();
     if name.is_empty() || name == "." || name == ".." || name.contains('/') || name.contains('\\') {
         return bad_request("Directory name must be a single folder name");
     }
-    if !parent.is_dir() {
-        return bad_request("Parent path is not a directory");
-    }
-    let target = parent.join(name);
-    match std::fs::create_dir(&target) {
-        Ok(()) => no_store(json!({"success": true, "path": target.to_string_lossy()})),
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+    let target = parent.join(&name);
+    let create_target = target.clone();
+    match blocking(move || {
+        if !parent.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "parent is not a directory",
+            ));
+        }
+        std::fs::create_dir(&create_target)
+    })
+    .await
+    {
+        Ok(Ok(())) => no_store(json!({"success": true, "path": target.to_string_lossy()})),
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             crate::routes::json_error(
                 StatusCode::CONFLICT,
                 "A file or directory with this name already exists",
             )
         }
-        Err(error) => internal(error),
+        Ok(Err(error)) if error.kind() == std::io::ErrorKind::NotFound => {
+            bad_request("Parent path is not a directory")
+        }
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 

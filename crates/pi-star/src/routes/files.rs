@@ -13,7 +13,7 @@ use serde_json::json;
 use pi_star_core::files;
 
 use crate::debug_streams::StreamKind;
-use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Default)]
@@ -53,9 +53,11 @@ pub async fn get_file(
     match kind {
         "list" => {
             let show_hidden = query.hidden.as_deref() == Some("1");
-            match files::list_directory(&file_path, show_hidden) {
-                Ok(list) => no_store(list),
-                Err(error) => internal(error),
+            let list_path = file_path.clone();
+            match blocking(move || files::list_directory(&list_path, show_hidden)).await {
+                Ok(Ok(list)) => no_store(list),
+                Ok(Err(error)) => internal(error),
+                Err(response) => response,
             }
         }
         "read" => {
@@ -68,25 +70,33 @@ pub async fn get_file(
             if let Some(mime) = files::media_mime_for(&file_path) {
                 return file_response(&file_path, mime, &headers, false).await;
             }
-            match files::read_text_chunk(&file_path, query.offset.unwrap_or(0)) {
-                Ok(chunk) => no_store(chunk),
-                Err(error) => internal(error),
+            let read_path = file_path.clone();
+            let offset = query.offset.unwrap_or(0);
+            match blocking(move || files::read_text_chunk(&read_path, offset)).await {
+                Ok(Ok(chunk)) => no_store(chunk),
+                Ok(Err(error)) => internal(error),
+                Err(response) => response,
             }
         }
         "download" => {
             let mime = files::download_mime_for(&file_path);
             file_response(&file_path, &mime, &headers, true).await
         }
-        "meta" => match files::file_meta(&file_path) {
-            Ok(meta) => no_store(meta),
-            Err(error) => internal(error),
-        },
+        "meta" => {
+            let meta_path = file_path.clone();
+            match blocking(move || files::file_meta(&meta_path)).await {
+                Ok(Ok(meta)) => no_store(meta),
+                Ok(Err(error)) => internal(error),
+                Err(response) => response,
+            }
+        }
         "preview" => {
             if file_path.extension().and_then(|ext| ext.to_str()) != Some("docx") {
                 return bad_request("Preview not available for this file type");
             }
-            match files::docx_preview(&file_path) {
-                Ok(html) => (
+            let preview_path = file_path.clone();
+            match blocking(move || files::docx_preview(&preview_path)).await {
+                Ok(Ok(html)) => (
                     StatusCode::OK,
                     [
                         (header::CONTENT_TYPE, "text/html; charset=utf-8".to_string()),
@@ -100,7 +110,8 @@ pub async fn get_file(
                     html,
                 )
                     .into_response(),
-                Err(error) => internal(error),
+                Ok(Err(error)) => internal(error),
+                Err(response) => response,
             }
         }
         "watch" => watch_file(file_path, query, headers, state.debug_streams.clone()).await,
@@ -109,8 +120,11 @@ pub async fn get_file(
 }
 
 async fn file_response(path: &Path, mime: &str, headers: &HeaderMap, attachment: bool) -> Response {
-    let Ok(metadata) = std::fs::metadata(path) else {
-        return not_found("Not found");
+    let meta_path = path.to_path_buf();
+    let metadata = match blocking(move || std::fs::metadata(&meta_path)).await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(_)) => return not_found("Not found"),
+        Err(response) => return response,
     };
     if !metadata.is_file() {
         return bad_request("Not a file");
@@ -142,9 +156,11 @@ async fn file_response(path: &Path, mime: &str, headers: &HeaderMap, attachment:
         )
             .into_response();
     }
-    let file = match std::fs::File::open(path) {
-        Ok(file) => file,
-        Err(error) => return internal(error),
+    let open_path = path.to_path_buf();
+    let file = match blocking(move || std::fs::File::open(&open_path)).await {
+        Ok(Ok(file)) => file,
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     };
     let mut file = tokio::fs::File::from_std(file);
     use tokio::io::{AsyncReadExt, AsyncSeekExt};
@@ -183,7 +199,15 @@ async fn watch_file(
 ) -> Response {
     let stream_handle = streams.register(StreamKind::FileWatch, None, query.holder, &headers);
     let stream = async_stream::stream! {
-        let mut last = files::modified_version(&path);
+        let mut last = match blocking({
+            let path = path.clone();
+            move || files::modified_version(&path)
+        })
+        .await
+        {
+            Ok(version) => version,
+            Err(_) => None,
+        };
         stream_handle.connected();
         yield Ok::<_, std::convert::Infallible>(
             axum::response::sse::Event::default().event("connected").data(json!({"filePath": path.to_string_lossy()}).to_string())
@@ -191,7 +215,15 @@ async fn watch_file(
         let mut interval = tokio::time::interval(Duration::from_secs(1));
         loop {
             interval.tick().await;
-            let next = files::modified_version(&path);
+            let next = match blocking({
+                let path = path.clone();
+                move || files::modified_version(&path)
+            })
+            .await
+            {
+                Ok(version) => version,
+                Err(_) => None,
+            };
             if next != last {
                 last = next.clone();
                 let payload = match next {
@@ -234,8 +266,11 @@ pub async fn post_file(
         state.roots.add(&target);
         return no_store(json!({ "path": target.to_string_lossy() }));
     }
-    let Ok(metadata) = std::fs::metadata(&directory) else {
-        return not_found("Upload directory not found");
+    let meta_dir = directory.clone();
+    let metadata = match blocking(move || std::fs::metadata(&meta_dir)).await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(_)) => return not_found("Upload directory not found"),
+        Err(response) => return response,
     };
     if !metadata.is_dir() {
         return bad_request("Upload target is not a directory");
@@ -253,8 +288,16 @@ pub async fn post_file(
             Ok(body) => body.0,
             Err(error) => return bad_request(error.to_string()),
         };
-        let (conflicts, non_replaceable) =
-            files::inspect_upload_targets(&directory, &body.file_names);
+        let inspect_dir = directory.clone();
+        let file_names = body.file_names;
+        let (conflicts, non_replaceable) = match blocking(move || {
+            files::inspect_upload_targets(&inspect_dir, &file_names)
+        })
+        .await
+        {
+            Ok(result) => result,
+            Err(response) => return response,
+        };
         return no_store(json!({"conflicts": conflicts, "nonReplaceable": non_replaceable}));
     }
     let mut multipart = match Multipart::from_request(request, &state).await {
@@ -299,9 +342,13 @@ pub async fn post_file(
             errors.push(json!({"name": file_name, "error": "File already exists"}));
             continue;
         }
-        match files::write_upload(&directory, &file_name, &data, exists) {
-            Ok(path) => uploaded.push(path.to_string_lossy().into_owned()),
-            Err(error) => errors.push(json!({"name": file_name, "error": error.to_string()})),
+        let upload_dir = directory.clone();
+        let upload_name = file_name.clone();
+        match blocking(move || files::write_upload(&upload_dir, &upload_name, &data, exists)).await
+        {
+            Ok(Ok(path)) => uploaded.push(path.to_string_lossy().into_owned()),
+            Ok(Err(error)) => errors.push(json!({"name": file_name, "error": error.to_string()})),
+            Err(response) => return response,
         }
     }
     no_store(json!({"uploaded": uploaded, "skipped": skipped, "errors": errors}))
@@ -339,14 +386,17 @@ pub async fn file_index(
         return forbidden("Access denied");
     }
     let query_text = query.q.unwrap_or_default();
-    match files::index_files(&cwd, &query_text) {
-        Ok((files, truncated)) if query_text.is_empty() => {
+    let query_is_empty = query_text.is_empty();
+    let index_cwd = cwd.clone();
+    match blocking(move || files::index_files(&index_cwd, &query_text)).await {
+        Ok(Ok((files, truncated))) if query_is_empty => {
             no_store(json!({ "files": files, "truncated": truncated }))
         }
-        Ok((files, _)) => no_store(json!({
+        Ok(Ok((files, _))) => no_store(json!({
             "matches": files.into_iter().map(|path| json!({"path": path, "isDir": false})).collect::<Vec<_>>()
         })),
-        Err(error) => internal(error),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 

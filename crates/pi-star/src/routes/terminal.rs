@@ -12,7 +12,7 @@ use serde_json::json;
 use pi_star_core::terminal::TerminalEvent;
 
 use crate::debug_streams::StreamKind;
-use crate::routes::{bad_request, forbidden, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, forbidden, internal, no_store, not_found};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize)]
@@ -39,14 +39,14 @@ pub async fn create(
     if !state.roots.is_allowed_existing(&cwd) {
         return forbidden("Access denied");
     }
-    match state.terminals.create(
-        &cwd,
-        body.cols.unwrap_or(80),
-        body.rows.unwrap_or(24),
-        body.id,
-    ) {
-        Ok(id) => no_store(json!({ "id": id })),
-        Err(error) => internal(error),
+    let terminals = state.terminals.clone();
+    let cols = body.cols.unwrap_or(80);
+    let rows = body.rows.unwrap_or(24);
+    let id = body.id;
+    match blocking(move || terminals.create(&cwd, cols, rows, id)).await {
+        Ok(Ok(id)) => no_store(json!({ "id": id })),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -82,19 +82,23 @@ pub async fn command(
             if data.len() > 64 * 1024 {
                 return bad_request("Invalid terminal command");
             }
-            if state.terminals.write(&id, &data) {
-                no_store(json!({ "success": true }))
-            } else {
-                not_found("Terminal not found")
+            let terminals = state.terminals.clone();
+            let terminal_id = id.clone();
+            match blocking(move || terminals.write(&terminal_id, &data)).await {
+                Ok(true) => no_store(json!({ "success": true })),
+                Ok(false) => not_found("Terminal not found"),
+                Err(response) => response,
             }
         }
         "resize" => {
             let cols = body.cols.unwrap_or(80).clamp(2, 1000);
             let rows = body.rows.unwrap_or(24).clamp(2, 1000);
-            if state.terminals.resize(&id, cols, rows) {
-                no_store(json!({ "success": true }))
-            } else {
-                not_found("Terminal not found")
+            let terminals = state.terminals.clone();
+            let terminal_id = id.clone();
+            match blocking(move || terminals.resize(&terminal_id, cols, rows)).await {
+                Ok(true) => no_store(json!({ "success": true })),
+                Ok(false) => not_found("Terminal not found"),
+                Err(response) => response,
             }
         }
         _ => bad_request("Invalid terminal command"),
@@ -102,7 +106,8 @@ pub async fn command(
 }
 
 pub async fn kill(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
-    state.terminals.kill(&id);
+    let terminals = state.terminals.clone();
+    let _ = blocking(move || terminals.kill(&id)).await;
     no_store(json!({ "success": true }))
 }
 

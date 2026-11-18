@@ -11,7 +11,7 @@ use serde_json::{Value, json};
 
 use crate::debug_streams::StreamKind;
 use crate::pi_rpc::PiSpawnOptions;
-use crate::routes::{bad_request, internal, no_store, not_found};
+use crate::routes::{bad_request, blocking, internal, no_store, not_found};
 use crate::state::AppState;
 use pi_star_core::agent::backend::BackendKind;
 
@@ -65,13 +65,19 @@ pub async fn new_session(
 
     // Write the choice before any backend process opens the file: pi ignores
     // the custom entry, and QuickPI's harness reads it when it lazily starts.
-    let path = match pi_star_core::session::create_session_file(&state.config, &cwd) {
-        Ok(path) => path,
-        Err(error) => return internal(error),
+    let config = state.config.clone();
+    let create_cwd = cwd.clone();
+    let path = match blocking(move || {
+        let path = pi_star_core::session::create_session_file(&config, &create_cwd)?;
+        pi_star_core::agent::backend::set_session_backend(&path, backend)?;
+        Ok::<_, anyhow::Error>(path)
+    })
+    .await
+    {
+        Ok(Ok(path)) => path,
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     };
-    if let Err(error) = pi_star_core::agent::backend::set_session_backend(&path, backend) {
-        return internal(error);
-    }
 
     let kind = body.kind.as_deref().unwrap_or("prompt");
     let command = if kind == "ensure_session" {
@@ -123,9 +129,12 @@ pub async fn new_session(
             }))
         }
         BackendKind::Quick => {
-            let runtime = match state.agents.open_path(&path) {
-                Ok(runtime) => runtime,
-                Err(error) => return internal(error),
+            let state_for = state.clone();
+            let open_path = path.clone();
+            let runtime = match blocking(move || state_for.agents.open_path(&open_path)).await {
+                Ok(Ok(runtime)) => runtime,
+                Ok(Err(error)) => return internal(error),
+                Err(response) => return response,
             };
             if let (Some(provider), Some(model_id)) =
                 (body.provider.as_ref(), body.model_id.as_ref())
@@ -156,7 +165,11 @@ pub async fn new_session(
                     Err(error) => return internal(error),
                 }
             };
-            let state_json = runtime.state_json(false);
+            let runtime_for_state = runtime.clone();
+            let state_json = match blocking(move || runtime_for_state.state_json(false)).await {
+                Ok(state) => state,
+                Err(response) => return response,
+            };
             no_store(json!({
                 "success": true,
                 "sessionId": runtime.id,
@@ -187,7 +200,7 @@ pub async fn get_state(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<StateQuery>,
 ) -> Response {
-    let backend = state.route_backend(&id);
+    let backend = state.route_backend_async(&id).await;
     if let Some(session) = state.pi_rpc.get(&id) {
         // pi's RPC get_state has no context usage; the host extension reads it
         // from the live session, so status polls carry the current percentage.
@@ -199,13 +212,17 @@ pub async fn get_state(
         }));
     }
     if let Some(runtime) = state.agents.get(&id) {
+        let runtime_for_state = runtime.clone();
+        let include_prompt = query.system_prompt.as_deref() != Some("0");
+        let state_json = match blocking(move || runtime_for_state.state_json(include_prompt)).await
+        {
+            Ok(state) => state,
+            Err(response) => return response,
+        };
         return no_store(json!({
             "running": true,
             "backend": backend.id(),
-            "state": with_backend(
-                runtime.state_json(query.system_prompt.as_deref() != Some("0")),
-                backend,
-            ),
+            "state": with_backend(state_json, backend),
         }));
     }
     no_store(json!({ "running": false, "backend": backend.id() }))
@@ -223,18 +240,21 @@ pub async fn command(
         let Some(kind) = BackendKind::parse(requested) else {
             return bad_request("backend must be rpc or quick");
         };
-        return match state.set_backend(&id, kind) {
-            Ok(kind) => no_store(json!({
+        let state_for_backend = state.clone();
+        let id_for_backend = id.clone();
+        return match blocking(move || state_for_backend.set_backend(&id_for_backend, kind)).await {
+            Ok(Ok(kind)) => no_store(json!({
                 "success": true,
                 "data": { "backend": kind.id() },
             })),
-            Err(error) => {
+            Ok(Err(error)) => {
                 crate::routes::json_error(axum::http::StatusCode::CONFLICT, error.to_string())
             }
+            Err(response) => response,
         };
     }
 
-    let backend = state.route_backend(&id);
+    let backend = state.route_backend_async(&id).await;
     match backend {
         BackendKind::Rpc => {
             let session = match state.pi_rpc.open_or_create(&id).await {
@@ -254,11 +274,17 @@ pub async fn command(
             }
         }
         BackendKind::Quick => {
-            let runtime = state
-                .agents
-                .get(&id)
-                .map(Ok)
-                .unwrap_or_else(|| state.agents.open_or_create(&id));
+            let runtime = match state.agents.get(&id) {
+                Some(runtime) => Ok(runtime),
+                None => {
+                    let state_for = state.clone();
+                    let open_id = id.clone();
+                    match blocking(move || state_for.agents.open_or_create(&open_id)).await {
+                        Ok(runtime) => runtime,
+                        Err(response) => return response,
+                    }
+                }
+            };
             let runtime = match runtime {
                 Ok(runtime) => runtime,
                 Err(_) => return not_found("Session not found"),
@@ -297,18 +323,24 @@ pub async fn events(
     Query(query): Query<StreamQuery>,
     headers: HeaderMap,
 ) -> Response {
-    if state.route_backend(&id) == BackendKind::Rpc {
+    if state.route_backend_async(&id).await == BackendKind::Rpc {
         let session = match state.pi_rpc.open_or_create(&id).await {
             Ok(session) => session,
             Err(_) => return not_found("Session not found"),
         };
         return pi_events(&state, session, query.holder, headers);
     }
-    let runtime = state
-        .agents
-        .get(&id)
-        .map(Ok)
-        .unwrap_or_else(|| state.agents.open_or_create(&id));
+    let runtime = match state.agents.get(&id) {
+        Some(runtime) => Ok(runtime),
+        None => {
+            let state_for = state.clone();
+            let open_id = id.clone();
+            match blocking(move || state_for.agents.open_or_create(&open_id)).await {
+                Ok(runtime) => runtime,
+                Err(response) => return response,
+            }
+        }
+    };
     let runtime = match runtime {
         Ok(runtime) => runtime,
         Err(_) => return not_found("Session not found"),
@@ -317,11 +349,14 @@ pub async fn events(
         Ok(receiver) => receiver,
         Err(error) => return internal(error),
     };
-    let streaming = runtime
-        .state_json(false)
-        .get("isStreaming")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
+    let runtime_for_state = runtime.clone();
+    let streaming = match blocking(move || runtime_for_state.state_json(false)).await {
+        Ok(state) => state,
+        Err(response) => return response,
+    }
+    .get("isStreaming")
+    .and_then(Value::as_bool)
+    .unwrap_or(false);
     let pending_ui = runtime.pending_extension_ui_ids();
     let stream_handle =
         state
@@ -462,7 +497,7 @@ pub async fn running(State(state): State<Arc<AppState>>) -> Response {
 }
 
 pub async fn lease(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
-    let backend = state.route_backend(&id);
+    let backend = state.route_backend_async(&id).await;
     if let Some(session) = state.pi_rpc.get(&id) {
         session.touch();
         return no_store(json!({
@@ -475,12 +510,17 @@ pub async fn lease(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<St
     }
     if let Some(runtime) = state.agents.get(&id) {
         runtime.touch();
+        let runtime_for_state = runtime.clone();
+        let state_json = match blocking(move || runtime_for_state.state_json(false)).await {
+            Ok(state) => state,
+            Err(response) => return response,
+        };
         return no_store(json!({
             "running": runtime.is_running(),
             "awaitingInput": false,
             "subagentsActive": false,
             "backend": backend.id(),
-            "state": with_backend(runtime.state_json(false), backend),
+            "state": with_backend(state_json, backend),
         }));
     }
     no_store(json!({
@@ -580,70 +620,79 @@ pub async fn debug(
     State(state): State<Arc<AppState>>,
     Query(query): Query<DebugQuery>,
 ) -> Response {
-    let mut ids = state.agents.ids();
-    ids.extend(state.debug_streams.session_ids_with_streams());
-    ids.sort();
-    ids.dedup();
-    let sessions: Vec<Value> = ids.iter().map(|id| session_summary(&state, id)).collect();
+    let state_for = state.clone();
+    match blocking(move || {
+        let state = &state_for;
+        let mut ids = state.agents.ids();
+        ids.extend(state.debug_streams.session_ids_with_streams());
+        ids.sort();
+        ids.dedup();
+        let sessions: Vec<Value> = ids.iter().map(|id| session_summary(&state, id)).collect();
 
-    let session = query.session.as_ref().map(|id| {
-        let runtime = state.agents.get(id);
-        let streams: Vec<Value> = state
-            .debug_streams
-            .session_agent_streams(id)
-            .iter()
-            .map(|stream| stream.to_client_json())
-            .collect();
-        json!({
-            "sessionId": id,
-            "wrapper": runtime
-                .as_ref()
-                .map(|runtime| wrapper_json(&state, id, runtime))
-                .unwrap_or(Value::Null),
-            "lifecycle": Value::Null,
-            "starting": false,
-            "providers": [],
-            "eventStreams": streams,
-            "subagents": { "active": false, "runs": [], "notifications": [] },
-            "mcp": Value::Null,
-        })
-    });
+        let session = query.session.as_ref().map(|id| {
+            let runtime = state.agents.get(id);
+            let streams: Vec<Value> = state
+                .debug_streams
+                .session_agent_streams(id)
+                .iter()
+                .map(|stream| stream.to_client_json())
+                .collect();
+            json!({
+                "sessionId": id,
+                "wrapper": runtime
+                    .as_ref()
+                    .map(|runtime| wrapper_json(&state, id, runtime))
+                    .unwrap_or(Value::Null),
+                "lifecycle": Value::Null,
+                "starting": false,
+                "providers": [],
+                "eventStreams": streams,
+                "subagents": { "active": false, "runs": [], "notifications": [] },
+                "mcp": Value::Null,
+            })
+        });
 
-    let agent_streams = state.debug_streams.count(StreamKind::Agent);
-    let terminal_streams = state.debug_streams.count(StreamKind::Terminal);
-    let file_watches = state.debug_streams.count(StreamKind::FileWatch);
-    let terminals = state.terminals.count();
-    no_store(json!({
-        "now": crate::debug_streams::now_ms(),
-        "server": {
-            "startedAt": state.started_epoch_ms,
-            "idleTimeoutMs": state.idle_timeout_ms,
-            "heartbeatMs": 30_000,
-            "wrappers": {
-                "alive": state.agents.ids().len(),
-                "closing": 0,
-                "starting": 0,
+        let agent_streams = state.debug_streams.count(StreamKind::Agent);
+        let terminal_streams = state.debug_streams.count(StreamKind::Terminal);
+        let file_watches = state.debug_streams.count(StreamKind::FileWatch);
+        let terminals = state.terminals.count();
+        no_store(json!({
+            "now": crate::debug_streams::now_ms(),
+            "server": {
+                "startedAt": state.started_epoch_ms,
+                "idleTimeoutMs": state.idle_timeout_ms,
+                "heartbeatMs": 30_000,
+                "wrappers": {
+                    "alive": state.agents.ids().len(),
+                    "closing": 0,
+                    "starting": 0,
+                },
+                "eventStreams": { "total": agent_streams },
+                "sseTotal": agent_streams + terminal_streams + file_watches,
+                "pages": state.debug_streams.pages(),
+                "fileWatches": file_watches,
+                "terminals": {
+                    "count": terminals,
+                    "listeners": terminal_streams,
+                    "detached": 0,
+                    "exited": state.terminals.exited_count(),
+                    "nextCleanupAt": Value::Null,
+                },
             },
-            "eventStreams": { "total": agent_streams },
-            "sseTotal": agent_streams + terminal_streams + file_watches,
-            "pages": state.debug_streams.pages(),
-            "fileWatches": file_watches,
-            "terminals": {
-                "count": terminals,
-                "listeners": terminal_streams,
-                "detached": 0,
-                "exited": state.terminals.exited_count(),
-                "nextCleanupAt": Value::Null,
-            },
-        },
-        "sessions": sessions,
-        "session": session,
-        "piRpc": state.pi_rpc.ids()
-            .into_iter()
-            .filter_map(|id| state.pi_rpc.get(&id))
-            .map(|session| session.debug_snapshot())
-            .collect::<Vec<_>>(),
-    }))
+            "sessions": sessions,
+            "session": session,
+            "piRpc": state.pi_rpc.ids()
+                .into_iter()
+                .filter_map(|id| state.pi_rpc.get(&id))
+                .map(|session| session.debug_snapshot())
+                .collect::<Vec<_>>(),
+        }))
+    })
+    .await
+    {
+        Ok(response) => response,
+        Err(response) => response,
+    }
 }
 
 const MAX_INLINE_BASH_OUTPUT_BYTES: u64 = 5 * 1024 * 1024;
@@ -698,31 +747,46 @@ pub async fn bash_output(
     if !resolved.is_file() {
         return not_found("full output unavailable");
     }
-    let Some(session_path) = pi_star_core::session::resolve_session_path(&state.config, &id) else {
+    let config = state.config.clone();
+    let session_id = id.clone();
+    let resolved_for_check = resolved.clone();
+    let referenced = match blocking(move || -> Option<bool> {
+        let session_path = pi_star_core::session::resolve_session_path(&config, &session_id)?;
+        let session = pi_star_core::session::read_session(&session_path).ok()?;
+        Some(session.entries.iter().any(|entry| {
+            pi_star_core::session::entry_type(entry) == Some("message")
+                && entry.pointer("/message/role").and_then(Value::as_str) == Some("bashExecution")
+                && entry
+                    .pointer("/message/fullOutputPath")
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| {
+                        pi_star_core::project::same_path(Path::new(value), &resolved_for_check)
+                    })
+        }))
+    })
+    .await
+    {
+        Ok(referenced) => referenced,
+        Err(response) => return response,
+    };
+    let Some(referenced) = referenced else {
         return not_found("Session not found");
     };
-    let Ok(session) = pi_star_core::session::read_session(&session_path) else {
-        return not_found("Session not found");
-    };
-    let referenced = session.entries.iter().any(|entry| {
-        pi_star_core::session::entry_type(entry) == Some("message")
-            && entry.pointer("/message/role").and_then(Value::as_str) == Some("bashExecution")
-            && entry
-                .pointer("/message/fullOutputPath")
-                .and_then(Value::as_str)
-                .is_some_and(|value| pi_star_core::project::same_path(Path::new(value), &resolved))
-    });
     if !referenced {
         return crate::routes::json_error(StatusCode::FORBIDDEN, "forbidden");
     }
-    let metadata = match std::fs::metadata(&resolved) {
-        Ok(metadata) => metadata,
-        Err(_) => return not_found("full output unavailable"),
+    let meta_path = resolved.clone();
+    let metadata = match blocking(move || std::fs::metadata(&meta_path)).await {
+        Ok(Ok(metadata)) => metadata,
+        Ok(Err(_)) => return not_found("full output unavailable"),
+        Err(response) => return response,
     };
     if query.download.as_deref() == Some("1") {
-        let bytes = match std::fs::read(&resolved) {
-            Ok(bytes) => bytes,
-            Err(_) => return not_found("full output unavailable"),
+        let read_path = resolved.clone();
+        let bytes = match blocking(move || std::fs::read(&read_path)).await {
+            Ok(Ok(bytes)) => bytes,
+            Ok(Err(_)) => return not_found("full output unavailable"),
+            Err(response) => return response,
         };
         return (
             StatusCode::OK,
@@ -753,9 +817,11 @@ pub async fn bash_output(
         )
             .into_response();
     }
-    let bytes = match std::fs::read(&resolved) {
-        Ok(bytes) => bytes,
-        Err(_) => return not_found("full output unavailable"),
+    let read_path = resolved.clone();
+    let bytes = match blocking(move || std::fs::read(&read_path)).await {
+        Ok(Ok(bytes)) => bytes,
+        Ok(Err(_)) => return not_found("full output unavailable"),
+        Err(response) => return response,
     };
     no_store(json!({
         "success": true,

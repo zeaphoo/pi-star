@@ -18,7 +18,9 @@ use pi_star_core::session::{
 
 use pi_star_core::agent::backend::BackendKind;
 
-use crate::routes::{bad_request, internal, json_error, no_store, not_found};
+use crate::routes::{
+    bad_request, blocking, internal, json_error, no_store, not_found, session_path,
+};
 use crate::state::AppState;
 
 #[derive(Debug, Deserialize, Default)]
@@ -30,7 +32,12 @@ pub struct ListQuery {
 
 pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQuery>) -> Response {
     let summary = query.summary.as_deref() == Some("1");
-    let sessions = state.session_index.scan(&state.config, summary);
+    let index = state.session_index.clone();
+    let config = state.config.clone();
+    let sessions = match blocking(move || index.scan(&config, summary)).await {
+        Ok(sessions) => sessions,
+        Err(response) => return response,
+    };
     let version = sessions
         .iter()
         .map(|session| session.modified.clone())
@@ -67,56 +74,68 @@ pub async fn get_session(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<SessionQuery>,
 ) -> Response {
-    let path = match session::resolve_session_path(&state.config, &id) {
+    let path = match session_path(state.config.clone(), id.clone()).await {
         Some(path) => path,
         None => return not_found("Session not found"),
     };
-    let session = match read_session(&path) {
-        Ok(session) => session,
+    let read_path = path.clone();
+    let build_id = id.clone();
+    let tail_query = query.tail;
+    let before = query.before.clone();
+    let defer_thinking = query.defer_thinking.clone();
+    let defer_media = query.defer_media.clone();
+    let prepared = match blocking(move || -> Result<_, String> {
+        let session = read_session(&read_path).map_err(|error| error.to_string())?;
+        // The v3 file is the source of truth, live wrapper or not: the harness
+        // appends through to it, and every other read path (`/context`,
+        // `/entries`, `/stats`) already reads it. A wrapper used to shadow the
+        // file here, which made this one route disagree with the rest and left
+        // `?force=1` with nothing to rebuild.
+        let entries = session.entries.clone();
+        let info = session.info();
+        let leaf_id = session.leaf_id();
+        let tail = tail_query
+            .unwrap_or(session::DEFAULT_TAIL)
+            .clamp(1, session::MAX_TAIL);
+        let context = build_context(
+            &build_id,
+            &entries,
+            leaf_id.as_deref(),
+            tail,
+            before.as_deref(),
+            defer_thinking.as_deref().is_some_and(|value| value != "0"),
+            defer_media.as_deref().is_some_and(|value| value != "0"),
+        );
+        let tree = build_tree(&entries);
+        let stats = compute_stats(&entries);
+        let tool_names = entries
+            .iter()
+            .find(|entry| {
+                entry_type(entry) == Some("custom")
+                    && entry.get("customType").and_then(Value::as_str)
+                        == Some("pi-star:tool-selection")
+            })
+            .and_then(|entry| entry.pointer("/data/tools").cloned());
+        let latest = entries.last().and_then(entry_id).unwrap_or_default();
+        let revision = format!("{}:{}:{}", info.modified, entries.len(), latest);
+        let total_ms = total_active_ms(&entries);
+        Ok((
+            info, leaf_id, context, tree, stats, tool_names, revision, total_ms,
+        ))
+    })
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    let (info, leaf_id, context, tree, stats, tool_names, revision, total_ms) = match prepared {
+        Ok(prepared) => prepared,
         Err(error) => return internal(error),
     };
-    // The v3 file is the source of truth, live wrapper or not: the harness
-    // appends through to it, and every other read path (`/context`, `/entries`,
-    // `/stats`) already reads it. A wrapper used to shadow the file here, which
-    // made this one route disagree with the rest and left `?force=1` with
-    // nothing to rebuild.
-    let entries = session.entries.clone();
-    let info = session.info();
     state.roots.add(&info.cwd);
     if let Some(root) = &info.project_root {
         state.roots.add(root);
     }
-    let leaf_id = session.leaf_id();
-    let tail = query
-        .tail
-        .unwrap_or(session::DEFAULT_TAIL)
-        .clamp(1, session::MAX_TAIL);
-    let context = build_context(
-        &id,
-        &entries,
-        leaf_id.as_deref(),
-        tail,
-        query.before.as_deref(),
-        query
-            .defer_thinking
-            .as_deref()
-            .is_some_and(|value| value != "0"),
-        query
-            .defer_media
-            .as_deref()
-            .is_some_and(|value| value != "0"),
-    );
-    let tree = build_tree(&entries);
-    let stats = compute_stats(&entries);
-    let tool_names = entries
-        .iter()
-        .find(|entry| {
-            entry_type(entry) == Some("custom")
-                && entry.get("customType").and_then(Value::as_str) == Some("pi-star:tool-selection")
-        })
-        .and_then(|entry| entry.pointer("/data/tools").cloned());
-    let latest = entries.last().and_then(entry_id).unwrap_or_default();
-    let revision = format!("{}:{}:{}", info.modified, session.entries.len(), latest);
     let mut response = json!({
         "sessionId": id,
         "filePath": path.to_string_lossy(),
@@ -126,7 +145,7 @@ pub async fn get_session(
         "snapshotRevision": revision,
         "context": context,
         "stats": stats,
-        "totalActiveMs": total_active_ms(&entries),
+        "totalActiveMs": total_ms,
     });
     if query.tree.as_deref() == Some("summary") {
         response["treeFormat"] = Value::String("summary".into());
@@ -147,7 +166,7 @@ pub async fn rename(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<RenameBody>,
 ) -> Response {
-    if state.route_backend(&id) == BackendKind::Rpc {
+    if state.route_backend_async(&id).await == BackendKind::Rpc {
         if let Some(active) = state.pi_rpc.get(&id) {
             return match active
                 .send(&json!({"type": "set_session_name", "name": body.name.trim()}))
@@ -158,12 +177,14 @@ pub async fn rename(
             };
         }
     }
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    match append_session_info(&path, body.name.trim()) {
-        Ok(()) => no_store(json!({ "ok": true })),
-        Err(error) => internal(error),
+    let name = body.name.trim().to_string();
+    match blocking(move || append_session_info(&path, &name)).await {
+        Ok(Ok(())) => no_store(json!({ "ok": true })),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
     }
 }
 
@@ -171,12 +192,16 @@ pub async fn delete(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
     state.agents.remove(&id);
     state.pi_rpc.remove(&id);
-    let deleted = delete_session_file(&state, &path);
+    let state_for_delete = state.clone();
+    let deleted = match blocking(move || delete_session_file(&state_for_delete, &path)).await {
+        Ok(deleted) => deleted,
+        Err(response) => return response,
+    };
     no_store(json!({ "ok": true, "deleted": deleted }))
 }
 
@@ -189,19 +214,29 @@ pub async fn delete_many(
     State(state): State<Arc<AppState>>,
     Json(body): Json<DeleteManyBody>,
 ) -> Response {
-    let mut deleted = Vec::new();
-    let mut missing = Vec::new();
-    for id in body.ids {
-        match session::resolve_session_path(&state.config, &id) {
-            Some(path) => {
-                state.agents.remove(&id);
-                state.pi_rpc.remove(&id);
-                delete_session_file(&state, &path);
-                deleted.push(id);
+    let state_for_delete = state.clone();
+    let ids = body.ids;
+    let (deleted, missing) = match blocking(move || {
+        let mut deleted = Vec::new();
+        let mut missing = Vec::new();
+        for id in ids {
+            match session::resolve_session_path(&state_for_delete.config, &id) {
+                Some(path) => {
+                    state_for_delete.agents.remove(&id);
+                    state_for_delete.pi_rpc.remove(&id);
+                    delete_session_file(&state_for_delete, &path);
+                    deleted.push(id);
+                }
+                None => missing.push(id),
             }
-            None => missing.push(id),
         }
-    }
+        (deleted, missing)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     no_store(json!({ "deleted": deleted, "missing": missing }))
 }
 
@@ -237,26 +272,36 @@ pub struct StatsBody {
 }
 
 pub async fn stats(State(state): State<Arc<AppState>>, Json(body): Json<StatsBody>) -> Response {
-    let mut stats = serde_json::Map::new();
-    for id in body.ids {
-        if let Some(path) = session::resolve_session_path(&state.config, &id) {
-            if let Ok(session) = read_session(&path) {
-                let value = compute_stats(&session.entries);
-                let (thinking_level, model) = session::session_settings(&session.entries, None);
-                stats.insert(
-                    id,
-                    json!({
-                        "tokens": value.tokens,
-                        "cost": value.cost,
-                        "toolCalls": value.tool_calls,
-                        "totalActiveMs": total_active_ms(&session.entries),
-                        "model": model,
-                        "thinkingLevel": thinking_level,
-                    }),
-                );
+    let config = state.config.clone();
+    let ids = body.ids;
+    let stats = match blocking(move || {
+        let mut stats = serde_json::Map::new();
+        for id in ids {
+            if let Some(path) = session::resolve_session_path(&config, &id) {
+                if let Ok(session) = read_session(&path) {
+                    let value = compute_stats(&session.entries);
+                    let (thinking_level, model) = session::session_settings(&session.entries, None);
+                    stats.insert(
+                        id,
+                        json!({
+                            "tokens": value.tokens,
+                            "cost": value.cost,
+                            "toolCalls": value.tool_calls,
+                            "totalActiveMs": total_active_ms(&session.entries),
+                            "model": model,
+                            "thinkingLevel": thinking_level,
+                        }),
+                    );
+                }
             }
         }
-    }
+        stats
+    })
+    .await
+    {
+        Ok(stats) => stats,
+        Err(response) => return response,
+    };
     no_store(json!({ "stats": stats }))
 }
 
@@ -276,74 +321,90 @@ pub async fn search(
     if query.is_empty() {
         return no_store(json!({ "results": [], "truncated": false }));
     }
-    let needle = query.to_lowercase();
-    let mut results = Vec::new();
-    let mut truncated = false;
-    for info in state.session_index.scan(&state.config, false) {
-        if results.len() >= 30 {
-            truncated = true;
-            break;
-        }
-        let Ok(session) = read_session(Path::new(&info.path)) else {
-            continue;
-        };
-        let title_hit = info
-            .name
-            .as_deref()
-            .is_some_and(|name| name.to_lowercase().contains(&needle))
-            || info.first_message.to_lowercase().contains(&needle);
-        if title_hit {
-            results.push(json!({
-                "session": info,
-                "blockIndex": 0,
-                "titleMatch": true,
-                "before": "",
-                "match": query,
-                "after": "",
-            }));
-            continue;
-        }
-        for entry in &session.entries {
-            let text = message_text(entry);
-            let lower = text.to_lowercase();
-            if let Some(index) = lower.find(&needle) {
-                let start = text[..index]
-                    .char_indices()
-                    .rev()
-                    .nth(60)
-                    .map(|(i, _)| i)
-                    .unwrap_or(0);
-                let end = text[index + needle.len()..]
-                    .char_indices()
-                    .nth(60)
-                    .map(|(i, _)| index + needle.len() + i)
-                    .unwrap_or(text.len());
-                results.push(json!({
-                    "session": info,
-                    "entryId": entry_id(entry),
-                    "blockIndex": 0,
-                    "before": &text[start..index],
-                    "match": &text[index..index + needle.len()],
-                    "after": &text[index + needle.len()..end],
-                }));
+    let config = state.config.clone();
+    let index = state.session_index.clone();
+    let (results, truncated) = match blocking(move || {
+        let needle = query.to_lowercase();
+        let mut results = Vec::new();
+        let mut truncated = false;
+        for info in index.scan(&config, false) {
+            if results.len() >= 30 {
+                truncated = true;
                 break;
             }
+            let Ok(session) = read_session(Path::new(&info.path)) else {
+                continue;
+            };
+            let title_hit = info
+                .name
+                .as_deref()
+                .is_some_and(|name| name.to_lowercase().contains(&needle))
+                || info.first_message.to_lowercase().contains(&needle);
+            if title_hit {
+                results.push(json!({
+                    "session": info,
+                    "blockIndex": 0,
+                    "titleMatch": true,
+                    "before": "",
+                    "match": query,
+                    "after": "",
+                }));
+                continue;
+            }
+            for entry in &session.entries {
+                let text = message_text(entry);
+                let lower = text.to_lowercase();
+                if let Some(index) = lower.find(&needle) {
+                    let start = text[..index]
+                        .char_indices()
+                        .rev()
+                        .nth(60)
+                        .map(|(i, _)| i)
+                        .unwrap_or(0);
+                    let end = text[index + needle.len()..]
+                        .char_indices()
+                        .nth(60)
+                        .map(|(i, _)| index + needle.len() + i)
+                        .unwrap_or(text.len());
+                    results.push(json!({
+                        "session": info,
+                        "entryId": entry_id(entry),
+                        "blockIndex": 0,
+                        "before": &text[start..index],
+                        "match": &text[index..index + needle.len()],
+                        "after": &text[index + needle.len()..end],
+                    }));
+                    break;
+                }
+            }
         }
-    }
+        (results, truncated)
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
     no_store(json!({ "results": results, "truncated": truncated }))
 }
 
 pub async fn ui_state_get(State(state): State<Arc<AppState>>) -> Response {
-    no_store(json!({ "state": state.ui_state.read() }))
+    let store = state.ui_state.clone();
+    match blocking(move || store.read()).await {
+        Ok(state) => no_store(json!({ "state": state })),
+        Err(response) => response,
+    }
 }
 
 pub async fn ui_state_post(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
-    match state.ui_state.apply(&body) {
-        Ok(state) => no_store(json!({ "state": state })),
-        Err(error) => json_error(StatusCode::BAD_REQUEST, error.to_string()),
+    let store = state.ui_state.clone();
+    match blocking(move || store.apply(&body)).await {
+        Ok(Ok(state)) => no_store(json!({ "state": state })),
+        Ok(Err(error)) => json_error(StatusCode::BAD_REQUEST, error.to_string()),
+        Err(response) => response,
     }
 }
 
@@ -369,8 +430,8 @@ pub async fn fork_session(
     fork_session_inner(&state, &id, body.entry_id.as_deref()).await
 }
 
-async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) -> Response {
-    if state.route_backend(id) == BackendKind::Rpc {
+async fn fork_session_inner(state: &Arc<AppState>, id: &str, entry_id: Option<&str>) -> Response {
+    if state.route_backend_async(id).await == BackendKind::Rpc {
         if let Some(active) = state.pi_rpc.get(id) {
             // With an entry, pi forks before that user message. Without one the
             // session is copied as it stands, which is what the file-backed path
@@ -396,11 +457,19 @@ async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) 
                 .map(str::to_owned)
                 .unwrap_or_else(|| active.id());
             let new_path = active.path();
-            let mut info = read_session(&new_path)
-                .map(|session| serde_json::to_value(session.info()))
-                .ok()
-                .and_then(Result::ok)
-                .unwrap_or(Value::Null);
+            let info_path = new_path.clone();
+            let mut info = match blocking(move || {
+                read_session(&info_path)
+                    .map(|session| serde_json::to_value(session.info()))
+                    .ok()
+                    .and_then(Result::ok)
+                    .unwrap_or(Value::Null)
+            })
+            .await
+            {
+                Ok(info) => info,
+                Err(response) => return response,
+            };
             if info.is_object() {
                 info["parentSessionId"] = Value::String(id.to_string());
                 info["relation"] = json!({"kind":"fork","originSessionId": id});
@@ -408,23 +477,24 @@ async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) 
             return no_store(json!({ "sessionId": new_id, "session": info }));
         }
     }
-    let Some(path) = session::resolve_session_path(&state.config, id) else {
+    let Some(path) = session_path(state.config.clone(), id.to_string()).await else {
         return not_found("Session not found");
     };
-    let session = match read_session(&path) {
-        Ok(session) => session,
-        Err(error) => return internal(error),
-    };
-    let leaf = entry_id.map(str::to_owned).or_else(|| session.leaf_id());
-    let entries = slice_active_branch(&session.entries, leaf.as_deref(), 100_000, false);
-    let new_path = match create_session_file(&state.config, Path::new(&session.cwd())) {
-        Ok(path) => path,
-        Err(error) => return internal(error),
-    };
-    if let Err(error) = append_lines(&new_path, &entries) {
-        return internal(error);
-    }
-    if let Ok(mut new_session) = read_session(&new_path) {
+    let config = state.config.clone();
+    let id_owned = id.to_string();
+    let entry_owned = entry_id.map(str::to_owned);
+    let path_for_fork = path.clone();
+    let result = match blocking(move || -> Result<Value, String> {
+        let path = path_for_fork;
+        let session = read_session(&path).map_err(|error| error.to_string())?;
+        let leaf = entry_owned.or_else(|| session.leaf_id());
+        let entries = slice_active_branch(&session.entries, leaf.as_deref(), 100_000, false);
+        let new_path = create_session_file(&config, Path::new(&session.cwd()))
+            .map_err(|error| error.to_string())?;
+        append_lines(&new_path, &entries).map_err(|error| error.to_string())?;
+        let Ok(mut new_session) = read_session(&new_path) else {
+            return Err("The forked session could not be read".to_string());
+        };
         let source_title = session.name().unwrap_or_else(|| "Session".into());
         let title = format!("{} · {:04x}", source_title, rand_suffix());
         let _ = append_session_info(&new_path, &title);
@@ -436,15 +506,23 @@ async fn fork_session_inner(state: &AppState, id: &str, entry_id: Option<&str>) 
             .and_then(Result::ok)
             .unwrap_or(Value::Null);
         if info.is_object() {
-            info["parentSessionId"] = Value::String(id.to_string());
-            info["relation"] = json!({"kind": "fork", "originSessionId": id});
+            info["parentSessionId"] = Value::String(id_owned.clone());
+            info["relation"] = json!({"kind": "fork", "originSessionId": id_owned});
         }
-        return no_store(json!({
+        Ok(json!({
             "sessionId": new_session.header.id,
             "session": info,
-        }));
+        }))
+    })
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    match result {
+        Ok(value) => no_store(value),
+        Err(error) => internal(error),
     }
-    internal("The forked session could not be read")
 }
 
 fn rewrite_header(path: &Path, header: &session::SessionHeader) -> std::io::Result<()> {
@@ -480,32 +558,41 @@ pub async fn context(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<ContextQuery>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let session = match read_session(&path) {
-        Ok(session) => session,
+    let read_path = path.clone();
+    let build_id = id.clone();
+    let tail_query = query.tail;
+    let leaf_id = query.leaf_id.clone();
+    let before = query.before.clone();
+    let defer_thinking = query.defer_thinking.clone();
+    let defer_media = query.defer_media.clone();
+    let prepared = match blocking(move || -> Result<_, String> {
+        let session = read_session(&read_path).map_err(|error| error.to_string())?;
+        let tail = tail_query
+            .unwrap_or(session::DEFAULT_TAIL)
+            .clamp(1, session::MAX_TAIL);
+        let context = build_context(
+            &build_id,
+            &session.entries,
+            leaf_id.as_deref(),
+            tail,
+            before.as_deref(),
+            defer_thinking.as_deref().is_some_and(|value| value != "0"),
+            defer_media.as_deref().is_some_and(|value| value != "0"),
+        );
+        Ok((context, tail))
+    })
+    .await
+    {
+        Ok(prepared) => prepared,
+        Err(response) => return response,
+    };
+    let (context, tail) = match prepared {
+        Ok(prepared) => prepared,
         Err(error) => return internal(error),
     };
-    let tail = query
-        .tail
-        .unwrap_or(session::DEFAULT_TAIL)
-        .clamp(1, session::MAX_TAIL);
-    let context = build_context(
-        &id,
-        &session.entries,
-        query.leaf_id.as_deref(),
-        tail,
-        query.before.as_deref(),
-        query
-            .defer_thinking
-            .as_deref()
-            .is_some_and(|value| value != "0"),
-        query
-            .defer_media
-            .as_deref()
-            .is_some_and(|value| value != "0"),
-    );
     no_store(json!({
         "context": context,
         "tail": tail,
@@ -552,10 +639,11 @@ pub async fn entries(
     AxumPath(id): AxumPath<String>,
     Query(query): Query<EntriesQuery>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let Ok(session) = read_session(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
         return not_found("Session not found");
     };
     let limit = query
@@ -605,10 +693,11 @@ pub async fn entry(
     State(state): State<Arc<AppState>>,
     AxumPath((id, entry_id)): AxumPath<(String, String)>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let Ok(session) = read_session(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
         return not_found("Session not found");
     };
     match session
@@ -747,7 +836,7 @@ fn truncate_string_field(block: &mut Value, field: &str, chars: usize) {
 }
 
 pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<String>) -> Response {
-    let backend = state.route_backend(&id);
+    let backend = state.route_backend_async(&id).await;
     if let Some(session) = state.pi_rpc.get(&id) {
         let mut state_json = session.state_json();
         if let Some(object) = state_json.as_object_mut() {
@@ -760,7 +849,11 @@ pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<St
         }));
     }
     if let Some(runtime) = state.agents.get(&id) {
-        let mut state_json = runtime.state_json(true);
+        let runtime_for_state = runtime.clone();
+        let mut state_json = match blocking(move || runtime_for_state.state_json(true)).await {
+            Ok(state) => state,
+            Err(response) => return response,
+        };
         if let Some(object) = state_json.as_object_mut() {
             object.insert("backend".into(), Value::String(backend.id().into()));
         }
@@ -770,7 +863,10 @@ pub async fn state(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<St
             "state": state_json,
         }));
     }
-    if session::resolve_session_path(&state.config, &id).is_none() {
+    if session_path(state.config.clone(), id.clone())
+        .await
+        .is_none()
+    {
         return not_found("Session not found");
     }
     no_store(json!({ "running": false, "backend": backend.id() }))
@@ -780,19 +876,29 @@ pub async fn auto_name(
     State(state): State<Arc<AppState>>,
     AxumPath(id): AxumPath<String>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let Ok(session) = read_session(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
         return internal("could not read session");
     };
     let (_, session_model) = session::session_settings(&session.entries, None);
-    let default_model = state.models().ok().and_then(|data| data.default_model);
+    let state_for_models = state.clone();
+    let default_model = match blocking(move || state_for_models.models()).await {
+        Ok(Ok(data)) => data.default_model,
+        Ok(Err(_)) => None,
+        Err(response) => return response,
+    };
     let model_ref = session_model
         .map(|model| (model.provider, model.model_id))
         .or_else(|| default_model.map(|model| (model.provider, model.model_id)));
     if let Some((provider, model_id)) = model_ref {
-        let defs = models::model_defs(&state.config).unwrap_or_default();
+        let config = state.config.clone();
+        let defs = match blocking(move || models::model_defs(&config)).await {
+            Ok(defs) => defs.unwrap_or_default(),
+            Err(response) => return response,
+        };
         if let Some(model) = defs.get(&format!("{provider}/{model_id}")).cloned() {
             let generated = tokio::time::timeout(
                 std::time::Duration::from_secs(90),
@@ -805,8 +911,14 @@ pub async fn auto_name(
             .await;
             match generated {
                 Ok(Ok(generated)) => {
-                    if let Err(error) = append_session_info(&path, &generated.title) {
-                        return internal(error);
+                    let append_path = path.clone();
+                    let title = generated.title.clone();
+                    let appended =
+                        blocking(move || append_session_info(&append_path, &title)).await;
+                    match appended {
+                        Ok(Ok(())) => {}
+                        Ok(Err(error)) => return internal(error),
+                        Err(response) => return response,
                     }
                     return no_store(json!({
                         "title": generated.title,
@@ -841,7 +953,7 @@ pub async fn auto_name(
     } else {
         title
     };
-    if state.route_backend(&id) == BackendKind::Rpc {
+    if state.route_backend_async(&id).await == BackendKind::Rpc {
         if let Some(active) = state.pi_rpc.get(&id) {
             if let Err(error) = active
                 .send(&json!({"type": "set_session_name", "name": title}))
@@ -852,8 +964,11 @@ pub async fn auto_name(
             return no_store(json!({ "title": title, "usage": null }));
         }
     }
-    if let Err(error) = append_session_info(&path, &title) {
-        return internal(error);
+    let title_for_append = title.clone();
+    match blocking(move || append_session_info(&path, &title_for_append)).await {
+        Ok(Ok(())) => {}
+        Ok(Err(error)) => return internal(error),
+        Err(response) => return response,
     }
     no_store(json!({ "title": title, "usage": null }))
 }
@@ -869,10 +984,11 @@ pub async fn thinking(
     AxumPath((id, entry_id)): AxumPath<(String, String)>,
     Query(query): Query<BlockQuery>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let Ok(session) = read_session(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
         return not_found("Session not found");
     };
     let Some(entry) = session
@@ -906,10 +1022,11 @@ pub async fn tool_result_image(
     AxumPath((id, entry_id)): AxumPath<(String, String)>,
     Query(query): Query<BlockQuery>,
 ) -> Response {
-    let Some(path) = session::resolve_session_path(&state.config, &id) else {
+    let Some(path) = session_path(state.config.clone(), id.clone()).await else {
         return not_found("Session not found");
     };
-    let Ok(session) = read_session(&path) else {
+    let read_path = path.clone();
+    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
         return not_found("Session not found");
     };
     let Some(entry) = session

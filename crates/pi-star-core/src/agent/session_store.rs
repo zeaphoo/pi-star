@@ -270,14 +270,18 @@ impl V3SessionStorage {
         })
     }
 
-    fn persist(&self, entry: &Entry) -> Result<(), String> {
+    async fn persist(&self, entry: &Entry) -> Result<(), String> {
         let value = entry_to_v3(entry)?;
-        append_lines(&self.path, &[value]).map_err(|error| error.to_string())
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || append_lines(&path, &[value]))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())
     }
 
     /// Append a pi-native control entry (session_info/label) and advance the
     /// in-memory leaf with it.
-    fn append_control(&self, kind: &str, extra: Map<String, Value>) -> Result<(), String> {
+    async fn append_control(&self, kind: &str, extra: Map<String, Value>) -> Result<(), String> {
         let mut state = self.inner.snapshot_state();
         let parent_id = state
             .require_lane("main")
@@ -309,7 +313,11 @@ impl V3SessionStorage {
             value,
         });
         let wire = entry_to_v3(&entry)?;
-        append_lines(&self.path, &[wire]).map_err(|error| error.to_string())?;
+        let path = self.path.clone();
+        tokio::task::spawn_blocking(move || append_lines(&path, &[wire]))
+            .await
+            .map_err(|error| error.to_string())?
+            .map_err(|error| error.to_string())?;
         state
             .apply_mutation(SessionMutation::Entry {
                 seq,
@@ -345,7 +353,7 @@ impl SessionStorage for V3SessionStorage {
         let _guard = self.io.lock().await;
         let before = self.inner.snapshot_state();
         let stamped = self.inner.append_entry(entry, lane).await?;
-        if let Err(error) = self.persist(&stamped) {
+        if let Err(error) = self.persist(&stamped).await {
             self.inner.replace_state(before);
             return Err(SessionError::storage(error));
         }
@@ -414,7 +422,7 @@ impl SessionStorage for V3SessionStorage {
             "name".into(),
             Value::String(name.unwrap_or("").trim().to_string()),
         );
-        if let Err(error) = self.append_control("session_info", extra) {
+        if let Err(error) = self.append_control("session_info", extra).await {
             self.inner.replace_state(before);
             return Err(SessionError::storage(error));
         }
@@ -435,7 +443,7 @@ impl SessionStorage for V3SessionStorage {
             "label".into(),
             label.map_or(Value::Null, |label| Value::String(label.to_string())),
         );
-        if let Err(error) = self.append_control("label", extra) {
+        if let Err(error) = self.append_control("label", extra).await {
             self.inner.replace_state(before);
             return Err(SessionError::storage(error));
         }
