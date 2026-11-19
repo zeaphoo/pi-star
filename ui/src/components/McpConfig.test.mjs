@@ -117,7 +117,7 @@ test("without a project only the global file is listed, under the Code mode row"
   assert.ok(sidebar.indexOf("Code mode: Automatic") < sidebar.indexOf("github: On"));
   assert.match(row(html, "Code mode"), /aria-label="Code mode: Automatic"/);
   assert.match(row(html, "github"), /aria-label="github: On"/);
-  assert.match(shown, /2 of 2 servers turned on/);
+  assert.ok(!shown.includes("servers turned on"), "the count no longer takes a footer row");
 });
 
 test("with a project, its group comes first and every row names its state", () => {
@@ -400,7 +400,7 @@ test("loading, a failed load and an empty listing each say so", () => {
   assert.match(empty, /global No servers/);
   assert.doesNotMatch(empty, /0 of 0/);
   assert.match(text(view({ selected: "global\0gone" })), /Select a server or Code mode\./);
-  assert.match(decode(view({ refreshing: true })), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  assert.match(decode(view({ refreshing: true })), /<button type="button" disabled="" class="config-sidebar-action">Refresh<\/button>/);
 });
 
 /** The Code mode switch's buttons, by label, with whether each is pressed and disabled. */
@@ -426,7 +426,7 @@ test("the Code mode pane offers Automatic and Always on, and says once when its 
     { label: "Always on", pressed: false, disabled: false, describedBy: undefined },
   ]);
   assert.match(text(automatic),
-    /Add MCP Code mode The model calls tools from a short script; MCP tools use it by default\. Changes apply to sessions started afterwards\. Mode Automatic Always on Turns on when an MCP server that uses code mode connects\. Sandbox Available\./);
+    /Add MCP Refresh Code mode The model calls tools from a short script; MCP tools use it by default\. Changes apply to sessions started afterwards\. Mode Automatic Always on Turns on when an MCP server that uses code mode connects\. Sandbox Available\./);
   // Said once, in the intro, not under every row.
   assert.equal(text(codemodeView({
     sandbox: { state: "available" },
@@ -872,7 +872,7 @@ test("while a change is on its way every control waits, and the one in use says 
   assert.equal(controls.remove[1], "Removing…");
   assert.match(controls.remove[0], /disabled=""/);
   assert.match(controls.toggle, /disabled=""/);
-  assert.match(decode(removing), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  assert.match(decode(removing), /<button type="button" disabled="" class="config-sidebar-action">Refresh<\/button>/);
   for (const match of decode(removing).matchAll(/<button type="button" role="switch"[^>]*>/g)) assert.match(match[0], /disabled=""/);
 
   const switching = detailControls(writeView({ view: { busy: "switch:global\0docs" } }));
@@ -971,7 +971,7 @@ test("a Code mode save and a server change never overlap", () => {
   assert.match(controls.toggle, /disabled=""/);
   assert.match(controls.remove[0], /disabled=""/);
   assert.match(groupSwitch(saving, "1/2"), /disabled=""/);
-  assert.match(decode(saving), /<button type="button" disabled="" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  assert.match(decode(saving), /<button type="button" disabled="" class="config-sidebar-action">Refresh<\/button>/);
   // While a server change runs, neither Code mode option can be chosen.
   const info = { sandbox: { state: "available" }, builtinDisabled: false, preference: "automatic" };
   assert.deepEqual(codemodeOptions(codemodeView(info, { view: { busy: "switch:global\0docs" } })).map(({ disabled }) => disabled), [true, true]);
@@ -1186,7 +1186,7 @@ test("while a test runs its button says so, and every other control keeps workin
   const controls = detailControls(html);
   assert.doesNotMatch(controls.toggle, /disabled/);
   assert.doesNotMatch(controls.remove[0], /disabled/);
-  assert.match(decode(html), /<button type="button" class="config-button config-button-secondary config-button-default">Refresh<\/button>/);
+  assert.match(decode(html), /<button type="button" class="config-sidebar-action">Refresh<\/button>/);
   // ...and a change on its way does not hold Test either.
   assert.doesNotMatch(statusRow(testView({}, { view: { busy: "switch:global\0docs" } })).button.attributes, /disabled/);
 });

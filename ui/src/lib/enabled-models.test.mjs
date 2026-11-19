@@ -8,10 +8,8 @@ const jiti = createJiti(import.meta.url, {
   moduleCache: false,
 });
 const {
-  clearEnabledModels,
   computeEnabledModelsState,
   modelRefProvider,
-  pruneStaleEnabledModels,
   constrainProviderEntries,
   renameModelPatterns,
   renameProviderPatterns,
@@ -254,15 +252,6 @@ test("unknown references are ignored instead of being written out", () => {
   assert.deepEqual(result.patterns, before.patterns);
 });
 
-test("clearing the scope drops every pattern, stale ones included", () => {
-  assert.deepEqual(clearEnabledModels(input(["anthropic/*", "gone/*"])), {
-    ok: true,
-    patterns: undefined,
-    changed: true,
-  });
-  assert.equal(clearEnabledModels(input(undefined)).changed, false);
-});
-
 // ── Model ids containing slashes (extension providers, OpenRouter, …) ─────────
 
 const NESTED = [
@@ -383,41 +372,6 @@ test("normalizing keeps a provider whose entries pin a thinking level", () => {
   ]);
 });
 
-
-// ── Pruning entries that match nothing ───────────────────────────────────────
-
-test("pruning drops only the unmatched entries", () => {
-  const result = pruneStaleEnabledModels(
-    input(["deepseek/v4-flash", "anthropic/*", "gone/*", "openai/gpt-5.5"]),
-  );
-  assert.deepEqual(result.patterns, ["anthropic/*", "openai/gpt-5.5"]);
-  assert.equal(result.changed, true);
-});
-
-test("pruning is a no-op when every entry matches", () => {
-  const before = input(["anthropic/*", "openai/gpt-5.5"]);
-  const result = pruneStaleEnabledModels(before);
-  assert.equal(result.changed, false);
-  assert.deepEqual(result.patterns, before.patterns);
-});
-
-test("pruning a list that is only stale removes the setting", () => {
-  const result = pruneStaleEnabledModels(input(["gone/*", "missing/model"]));
-  assert.equal(result.patterns, undefined);
-  assert.equal(result.changed, true);
-});
-
-test("pruning drops a signed-out provider's entries with the stale ones", () => {
-  // openai signed out: pi warns about its entries, and nothing else can remove them.
-  const before = input(["anthropic/*", "openai/gpt-5.5:high", "gone/*"], AVAILABLE.filter((ref) => !ref.startsWith("openai/")));
-  assert.deepEqual(computeEnabledModelsState(before).stalePatterns, ["openai/gpt-5.5:high", "gone/*"]);
-  assert.deepEqual(pruneStaleEnabledModels(before).patterns, ["anthropic/*"]);
-});
-
-test("pruning keeps the scope when the survivors still narrow it", () => {
-  const result = pruneStaleEnabledModels(input(["anthropic/*", "gone/*"]));
-  assert.deepEqual(result.patterns, ["anthropic/*"]);
-});
 
 test("a wider pattern already covering a provider is not rewritten", () => {
   // `*` covers both openai models here (it stops at the nested commandcode ids),

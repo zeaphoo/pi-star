@@ -23,7 +23,7 @@ type UsageMetric = { id: string; label: string; value: number | string; unit?: s
 type UsageReport = { capturedAt: number; buckets: UsageBucket[]; metrics: UsageMetric[]; notes?: string[] };
 type UsageResponse = { providerId: string; status: "ready" | "auth-unavailable" | "query-failed"; report?: UsageReport; message?: string };
 
-const STORAGE_PREFIX = "pi-star:provider-usage:";
+const STORAGE_PREFIX = "pi-star:provider-usage:v2:";
 
 export function ProviderUsageSummary({ providerId, enabled }: { providerId: string; enabled: boolean }) {
   if (!isProviderUsageId(providerId)) return null;
@@ -87,6 +87,8 @@ function ProviderUsageContent({ providerId, enabled }: { providerId: string; ena
   }, [providerId, t]);
 
   const report = snapshot?.status === "ready" ? snapshot.report : undefined;
+  const percentBuckets = report?.buckets.filter((bucket) => usedPercent(bucket) !== undefined) ?? [];
+  const otherBuckets = report?.buckets.filter((bucket) => usedPercent(bucket) === undefined) ?? [];
   return (
     <section style={{ paddingTop: 10, display: "flex", flexDirection: "column", gap: 10 }}>
       <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: 8 }}>
@@ -120,30 +122,96 @@ function ProviderUsageContent({ providerId, enabled }: { providerId: string; ena
       {!report && !error && <span style={{ fontSize: 12, color: "var(--text-dim)" }}>{t("providerUsage.notQueried")}</span>}
       {error && <span style={{ fontSize: 12, color: "#f87171" }}>{error}</span>}
       {report && (
-        <div style={{ display: "grid", gridTemplateColumns: "180px minmax(0, 1fr)", columnGap: 14, rowGap: 8, alignItems: "baseline", minWidth: 0, width: "min(100%, 420px)", maxWidth: "100%", fontSize: 12 }}>
-          {report.buckets.map((bucket) => (
-            <div key={bucket.id} style={{ display: "contents" }}>
-              <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bucket.groupLabel ? `${bucket.groupLabel} / ${bucket.label}` : bucket.label}</span>
-              <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{formatBucket(bucket, t("providerUsage.available"))}</span>
+        <>
+          {percentBuckets.length > 0 && (
+            <div className="provider-usage-limits">
+              {percentBuckets.map((bucket) => <PercentUsageRow key={bucket.id} bucket={bucket} />)}
             </div>
-          ))}
-          {report.metrics.map((metric) => (
-            <div key={metric.id} style={{ display: "contents" }}>
-              <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{metric.label}</span>
-              <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{formatMetric(metric)}</span>
+          )}
+          {(otherBuckets.length > 0 || report.metrics.length > 0) && (
+            <div style={{ display: "grid", gridTemplateColumns: "180px minmax(0, 1fr)", columnGap: 14, rowGap: 8, alignItems: "baseline", minWidth: 0, width: "min(100%, 420px)", maxWidth: "100%", fontSize: 12 }}>
+              {otherBuckets.map((bucket) => (
+                <div key={bucket.id} style={{ display: "contents" }}>
+                  <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{bucket.groupLabel ? `${bucket.groupLabel} / ${bucket.label}` : bucket.label}</span>
+                  <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{formatBucket(bucket, t("providerUsage.available"))}</span>
+                </div>
+              ))}
+              {report.metrics.map((metric) => (
+                <div key={metric.id} style={{ display: "contents" }}>
+                  <span style={{ color: "var(--text-muted)", fontFamily: "var(--font-mono)", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{metric.label}</span>
+                  <span style={{ color: "var(--text)", fontFamily: "var(--font-mono)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{formatMetric(metric)}</span>
+                </div>
+              ))}
             </div>
-          ))}
-        </div>
+          )}
+        </>
       )}
     </section>
   );
 }
 
-function formatBucket(bucket: UsageBucket, availableLabel: string): string {
-  if (bucket.unit === "percent" && bucket.remaining !== undefined) {
-    const reset = bucket.resetsAt ? ` / ${formatReset(bucket.resetsAt)}` : "";
-    return `${Math.round(bucket.remaining)}%${reset}`;
+function PercentUsageRow({ bucket }: { bucket: UsageBucket }) {
+  const { t, locale } = useI18n();
+  const used = usedPercent(bucket) ?? 0;
+  const label = percentBucketLabel(bucket, t);
+  const reset = bucket.resetsAt ? formatResetRelative(bucket.resetsAt, locale, t) : null;
+  return (
+    <div className="provider-usage-limit">
+      <div className="provider-usage-limit-head">
+        <span className="provider-usage-limit-label">{label}</span>
+        {reset && <span className="provider-usage-limit-reset">{reset}</span>}
+        <span className="provider-usage-limit-used">{t("providerUsage.used", { percent: Math.round(used) })}</span>
+      </div>
+      <div
+        className="provider-usage-bar"
+        role="progressbar"
+        aria-label={label}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(used)}
+      >
+        <span className="provider-usage-bar-fill" style={{ width: `${used}%` }} />
+      </div>
+    </div>
+  );
+}
+
+function usedPercent(bucket: UsageBucket): number | undefined {
+  if (bucket.unit !== "percent") return undefined;
+  const used = bucket.used ?? (bucket.remaining !== undefined ? 100 - bucket.remaining : undefined);
+  return used === undefined ? undefined : Math.min(100, Math.max(0, used));
+}
+
+function percentBucketLabel(bucket: UsageBucket, t: (key: string) => string): string {
+  const key = {
+    rolling: "providerUsage.windowRolling",
+    weekly: "providerUsage.windowWeekly",
+    monthly: "providerUsage.windowMonthly",
+  }[bucket.id.toLowerCase()];
+  const label = key ? t(key) : bucket.label;
+  return bucket.groupLabel ? `${bucket.groupLabel} / ${label}` : label;
+}
+
+function formatResetRelative(seconds: number, locale: string, t: (key: string, params?: Record<string, string | number>) => string): string {
+  const remainingMinutes = Math.max(1, Math.ceil((seconds * 1_000 - Date.now()) / 60_000));
+  const days = Math.floor(remainingMinutes / 1_440);
+  const hours = Math.floor((remainingMinutes % 1_440) / 60);
+  const minutes = remainingMinutes % 60;
+  const parts: string[] = [];
+  if (days > 0) {
+    parts.push(`${days}${t("providerUsage.unitDay")}`);
+    if (hours > 0) parts.push(`${hours}${t("providerUsage.unitHour")}`);
+  } else if (hours > 0) {
+    parts.push(`${hours}${t("providerUsage.unitHour")}`);
+    if (minutes > 0) parts.push(`${minutes}${t("providerUsage.unitMinute")}`);
+  } else {
+    parts.push(`${minutes}${t("providerUsage.unitMinute")}`);
   }
+  const separator = locale.startsWith("zh") ? "" : " ";
+  return t("providerUsage.resetsIn", { time: parts.join(separator) });
+}
+
+function formatBucket(bucket: UsageBucket, availableLabel: string): string {
   if (bucket.unit === "currency") return `${bucket.currency === "CNY" ? "CNY " : "$"}${formatAmount(bucket.remaining ?? bucket.limit)}`;
   if (bucket.remaining !== undefined && bucket.limit !== undefined) return `${formatAmount(bucket.remaining)} / ${formatAmount(bucket.limit)}`;
   return bucket.period ?? availableLabel;
@@ -156,8 +224,4 @@ function formatMetric(metric: UsageMetric): string {
 
 function formatAmount(value: number | undefined): string {
   return value === undefined ? "-" : Number.isInteger(value) ? String(value) : value.toFixed(2);
-}
-
-function formatReset(seconds: number): string {
-  return new Date(seconds * 1_000).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

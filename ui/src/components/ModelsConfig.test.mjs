@@ -10,6 +10,7 @@ const {
   modelCostToDraft,
   modelDropIndex,
   modelSidebarLabel,
+  modelsConfigDirty,
   moveModelEntry,
   parseCompleteModelCost,
   providerSidebarLabel,
@@ -347,4 +348,14 @@ test("the Models sidebar labels a provider by its models.json name and falls bac
   assert.equal(providerSidebarLabel("openai", {}, "OpenAI"), "OpenAI");
   assert.equal(providerSidebarLabel("typesafe", {}, "TypeSafe"), "TypeSafe");
   assert.equal(providerSidebarLabel("openai", { name: "OpenAI API" }, "OpenAI"), "OpenAI API");
+});
+
+test("the footer Save acts only on draft changes or a pending provider rename", () => {
+  const config = { providers: { relay: { api: "openai-completions" } } };
+  const saved = JSON.stringify(config);
+  assert.equal(modelsConfigDirty(config, saved), false);
+  assert.equal(modelsConfigDirty({ providers: {} }, saved), true);
+  assert.equal(modelsConfigDirty(config, saved, "relay-2", "relay"), true);
+  assert.equal(modelsConfigDirty(config, saved, "relay", "relay"), false);
+  assert.equal(modelsConfigDirty(config, saved, "", "relay"), true);
 });

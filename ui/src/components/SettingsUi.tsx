@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef } from "react";
+import { Children, createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef } from "react";
 import type { ButtonHTMLAttributes, ClipboardEvent, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
 
 type ConfigButtonVariant = "primary" | "secondary" | "danger" | "ghost";
@@ -744,6 +744,10 @@ export function ConfigDetail({ children, style }: { children: ReactNode; style?:
 }
 
 export function ConfigFooter({ status, children }: { status?: ReactNode; children?: ReactNode }) {
+  // A footer with neither status nor a control is an empty strip, so it stays
+  // out of the panel entirely. Panels that only sometimes have something to
+  // save or run then gain the height back.
+  if (!status && Children.toArray(children).length === 0) return null;
   return (
     <footer className="config-footer">
       <div className="config-footer-status">{status}</div>
@@ -841,28 +845,43 @@ export function ConfigSwitch({
   );
 }
 
-/** The list's add button; like a row, its click opens the detail on a phone unless prevented. */
-export function ConfigListAction({ active = false, children, className, onClick, ref, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; ref?: Ref<HTMLButtonElement> }) {
+/** A compact sidebar-row action, kept out of the footer when it is just Refresh or Check updates. */
+export function ConfigSidebarAction({ className, children, type = "button", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
+  return (
+    <button
+      type={type}
+      {...props}
+      className={["config-sidebar-action", className].filter(Boolean).join(" ")}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function ConfigListAction({ active = false, children, trailing, className, onClick, ref, ...props }: ButtonHTMLAttributes<HTMLButtonElement> & { active?: boolean; trailing?: ReactNode; ref?: Ref<HTMLButtonElement> }) {
   const { openDetail } = useConfigDetailNavigation();
   const buttonRef = useReportDetailTitle(active, ref);
   return (
     <div className="config-list-action">
-      <button
-        type="button"
-        {...props}
-        ref={buttonRef}
-        onClick={(event) => {
-          onClick?.(event);
-          if (!event.defaultPrevented) openDetail();
-        }}
-        aria-current={active ? "page" : undefined}
-        className={["config-list-action-button", className].filter(Boolean).join(" ")}
-      >
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-          <path d="M12 5v14M5 12h14" />
-        </svg>
-        {children}
-      </button>
+      <div className="config-list-action-row">
+        <button
+          type="button"
+          {...props}
+          ref={buttonRef}
+          onClick={(event) => {
+            onClick?.(event);
+            if (!event.defaultPrevented) openDetail();
+          }}
+          aria-current={active ? "page" : undefined}
+          className={["config-list-action-button", className].filter(Boolean).join(" ")}
+        >
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" />
+          </svg>
+          {children}
+        </button>
+        {trailing}
+      </div>
     </div>
   );
 }

@@ -35,6 +35,7 @@ import {
   ConfigSaveTarget,
   ConfigScopeTag,
   ConfigSidebar,
+  ConfigSidebarAction,
   ConfigSidebarGroupLabel,
   ConfigSidebarGroupStatus,
   ConfigSidebarGroupSwitch,
@@ -98,15 +99,6 @@ function statusLabel(status: PluginPackageInfo["status"], t: Translate): string 
   return t(`plugins.status.${status}`);
 }
 
-/** The footer's resource totals, in the order of a package's resource summary. */
-function totalsSummary(totals: PluginsResponse["totals"], t: Translate): string {
-  return [
-    t("i18n.resourceCount", { count: totals.extensions, label: t("i18n.extensionShort") }),
-    t("i18n.resourceCount", { count: totals.skills, label: t("i18n.skillShort") }),
-    t("i18n.resourceCount", { count: totals.prompts, label: t("i18n.promptShort") }),
-    t("i18n.resourceCount", { count: totals.themes, label: t("i18n.themeShort") }),
-  ].join(" · ");
-}
 
 function diagnosticText(diagnostic: PluginsResponse["diagnostics"][number]): string {
   return `${diagnostic.type}: ${diagnostic.source ? `${diagnostic.source}: ` : ""}${diagnostic.message}`;
@@ -999,6 +991,16 @@ export function PluginsConfig({
                   setActionError(null);
                   setActionMessage(null);
                 }}
+                trailing={<>
+                  <ConfigSidebarAction onClick={() => void loadPlugins()} disabled={footerBusy}>
+                    {t("i18n.refresh")}
+                  </ConfigSidebarAction>
+                  {hasCheckablePackages && (
+                    <ConfigSidebarAction onClick={() => void checkForUpdates()} disabled={footerBusy}>
+                      {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
+                    </ConfigSidebarAction>
+                  )}
+                </>}
               >
                  {t("i18n.addPlugin")}
             </ConfigListAction>
@@ -1043,45 +1045,37 @@ export function PluginsConfig({
           </ConfigDetail>
         </ConfigSplitView>
 
-        <ConfigFooter status={
+        {(availableUpdateCount > 0 || (data?.diagnostics.length ?? 0) > 0) && (
+          <ConfigFooter status={
             availableUpdateCount > 0 ? (
               <span style={{ fontSize: 12, color: "var(--accent)" }}>
                 {availableUpdateCount}{" "}
                 {availableUpdateCount === 1 ? t("i18n.update") : t("i18n.updates")}
               </span>
-            ) : data?.diagnostics.length ? (
-              <ConfigFooterStatus
-                tone={data.diagnostics.some((d) => d.type === "error") ? "error" : "warning"}
-                summary={data.diagnostics.length === 1
-                  ? t("plugins.diagnostic")
-                  : t("plugins.diagnostics", { count: data.diagnostics.length })}
-                details={data.diagnostics.map(diagnosticText)}
-              />
             ) : (
-              <ConfigFooterStatus summary={data ? totalsSummary(data.totals, t) : ""} />
+              <ConfigFooterStatus
+                tone={data?.diagnostics.some((d) => d.type === "error") ? "error" : "warning"}
+                summary={data?.diagnostics.length === 1
+                  ? t("plugins.diagnostic")
+                  : t("plugins.diagnostics", { count: data?.diagnostics.length ?? 0 })}
+                details={data?.diagnostics.map(diagnosticText)}
+              />
             )}
-        >
-          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
-          {hasCheckablePackages && (
-            <ConfigButton
-              variant={availableUpdateCount > 0 ? "primary" : "secondary"}
-              onClick={() => void (availableUpdateCount > 0 ? updateAllPluginsAction() : checkForUpdates())}
-              disabled={footerBusy}
-              title={availableUpdateCount > 0 ? t("i18n.updateAllPluginsHint") : undefined}
-            >
-              {updatingAll
-                ? t("i18n.updating")
-                : checkingAll
-                  ? t("i18n.checking")
-                  : availableUpdateCount > 0
-                    ? `${t("i18n.updateAllPlugins")} (${availableUpdateCount})`
-                    : t("i18n.checkUpdates")}
-            </ConfigButton>
-          )}
-          <ConfigButton variant="secondary" onClick={() => void loadPlugins()} disabled={footerBusy}>
-             {t("i18n.refresh")}
-          </ConfigButton>
-        </ConfigFooter>
+          >
+            {availableUpdateCount > 0 && (
+              <ConfigButton
+                variant="primary"
+                onClick={() => void updateAllPluginsAction()}
+                disabled={footerBusy}
+                title={t("i18n.updateAllPluginsHint")}
+              >
+                {updatingAll
+                  ? t("i18n.updating")
+                  : `${t("i18n.updateAllPlugins")} (${availableUpdateCount})`}
+              </ConfigButton>
+            )}
+          </ConfigFooter>
+        )}
     </ConfigPanelShell>
   );
 }

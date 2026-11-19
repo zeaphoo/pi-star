@@ -301,3 +301,17 @@ export function providerSidebarLabel(
 ): string {
   return provider.name?.trim() || runtimeName?.trim() || providerId;
 }
+
+/**
+ * Whether the Models panel has anything left for its footer Save to write:
+ * an edited draft, or a provider name typed but not applied with Rename.
+ */
+export function modelsConfigDirty(
+  config: unknown,
+  savedJSON: string,
+  pendingProviderName?: string,
+  providerName?: string,
+): boolean {
+  return JSON.stringify(config) !== savedJSON
+    || (pendingProviderName !== undefined && pendingProviderName !== providerName);
+}

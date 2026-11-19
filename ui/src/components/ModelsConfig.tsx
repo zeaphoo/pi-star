@@ -16,6 +16,7 @@ import {
   hasModelCostDraftValue,
   modelCostToDraft,
   modelDropIndex,
+  modelsConfigDirty,
   modelSidebarLabel,
   moveModelEntry,
   parseCompleteModelCost,
@@ -57,7 +58,6 @@ import {
   useConfigDetailNavigation,
 } from "./SettingsUi";
 import {
-  EnabledModelsBanner,
   EnabledModelsProviderSwitch,
   EnabledModelsProviderSwitchNote,
   EnabledModelsSection,
@@ -338,10 +338,10 @@ function SectionTitle({ children }: { children: React.ReactNode }) {
 
 // ── Provider detail ───────────────────────────────────────────────────────────
 
-function ProviderDetail({ name, editingName, provider, onChange, onEditingNameChange, onRename, onDelete, onAddModels, enabledModels }: {
+function ProviderDetail({ name, editingName, provider, onChange, onEditingNameChange, onDelete, onAddModels, enabledModels }: {
   name: string; editingName: string; provider: ProviderEntry;
   onChange: (p: ProviderEntry) => void; onEditingNameChange: (n: string) => void;
-  onRename: (n: string) => void; onDelete: () => void;
+  onDelete: () => void;
   onAddModels: (models: DiscoveredModel[]) => void; enabledModels: EnabledModelsController;
 }) {
   const { t } = useI18n();
@@ -443,12 +443,6 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
 
        <Field label={t("i18n.providerName")}>
         <TextInput value={editingName} onChange={onEditingNameChange} placeholder="provider-name" mono />
-        {editingName !== name && editingName.trim() && (
-          <button onClick={() => onRename(editingName.trim())}
-            style={{ marginTop: 4, padding: "3px 10px", background: "var(--accent)", border: "none", borderRadius: 4, color: "var(--accent-contrast)", cursor: "pointer", fontSize: 11, alignSelf: "flex-start" }}>
-             {t("i18n.rename")}
-          </button>
-        )}
       </Field>
 
       <Field label="Base URL">
@@ -1756,7 +1750,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
               <polyline points="20 6 9 17 4 12" />
             </svg>
           )}
-           {savedOk ? t("i18n.saved") : saving ? t("i18n.saving") : t("i18n.save")}
+           {savedOk ? t("i18n.saved") : saving ? t("i18n.saving") : t("models.saveKey")}
         </button>
       </div>
 
@@ -1936,6 +1930,8 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   /** Set once the provider lists have answered; until then an overrides-only entry may be a managed provider's. */
   const [authListed, setAuthListed] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
+  /** The models.json draft as last read or written; the footer Save acts on a diff from it. */
+  const savedConfigRef = useRef("");
   /** Provider ids as models.json has them on disk, and where renames moved them. */
   const savedProvidersRef = useRef<Set<string>>(new Set());
   const renamesRef = useRef<Map<string, string>>(new Map());
@@ -1951,11 +1947,17 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   /** The model row being dragged, and the row its drop line is on. */
   const draggedModelRef = useRef<{ providerName: string; index: number } | null>(null);
   const [modelDrop, setModelDrop] = useState<{ providerName: string; index: number; after: boolean } | null>(null);
-  /**
-   * The provider name field while it differs from the provider's id. Save
-   * applies it like every other visible edit; Rename applies it right away.
-   */
+  /** The provider name field while it differs from the provider's id. */
   const [providerNameDraft, setProviderNameDraft] = useState<{ provider: string; name: string } | null>(null);
+  const dirty = !loading
+    && !loadError
+    && modelsConfigDirty(
+      config,
+      savedConfigRef.current,
+      providerNameDraft?.name.trim(),
+      providerNameDraft?.provider,
+    );
+  const footerVisible = dirty || saving || savedOk || saveError !== null || loadError !== null;
 
   const refreshAuthProviders = useCallback(() => {
     fetch("/api/auth/providers")
@@ -1979,6 +1981,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
       .then((d) => {
         const normalized = d.providers ? d : { ...d, providers: {} };
         setConfig(normalized);
+        savedConfigRef.current = JSON.stringify(normalized);
         savedProvidersRef.current = new Set(Object.keys(normalized.providers ?? {}));
         savedModelIdsRef.current = savedModelIds(normalized);
         const keys = Object.keys(normalized.providers ?? {});
@@ -2056,10 +2059,30 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     return next;
   }, []);
 
-  const renameProvider = useCallback((oldName: string, newName: string) => {
-    if (applyProviderRename(config, oldName, newName)) setSaveError(null);
-    else setSaveError(t("models.providerNameTaken", { name: newName }));
-  }, [applyProviderRename, config, t]);
+  const discardChanges = useCallback(() => {
+    if (!savedConfigRef.current) return;
+    let saved: ModelsJson;
+    try {
+      saved = JSON.parse(savedConfigRef.current) as ModelsJson;
+    } catch {
+      return;
+    }
+    setConfig(saved);
+    savedProvidersRef.current = new Set(Object.keys(saved.providers ?? {}));
+    savedModelIdsRef.current = savedModelIds(saved);
+    renamesRef.current.clear();
+    setProviderNameDraft(null);
+    setSaveError(null);
+    setSavedOk(false);
+    setModelDrop(null);
+    draggedModelRef.current = null;
+    const keys = Object.keys(saved.providers ?? {});
+    setSelection((current) => current && customSelectionExists(saved, current)
+      ? current
+      : keys[0]
+        ? { type: "provider", name: keys[0] }
+        : null);
+  }, []);
 
   const deleteProvider = useCallback((name: string) => {
     const next = deleteProviderEntry(config, {
@@ -2207,18 +2230,25 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     setSaving(true);
     setSaveError(null);
     setSavedOk(false);
-    // A provider name typed but not applied with Rename is still a visible
-    // edit: move the provider before writing, like every other field.
+    // A provider name typed but not yet applied is still a visible edit:
+    // move the provider before writing, like every other field.
     let draft = config;
-    const pendingName = providerNameDraft?.name.trim();
-    if (providerNameDraft && pendingName && config.providers?.[providerNameDraft.provider]) {
-      const renamed = applyProviderRename(config, providerNameDraft.provider, pendingName);
-      if (!renamed) {
-        setSaveError(t("models.providerNameTaken", { name: pendingName }));
+    if (providerNameDraft) {
+      const pendingName = providerNameDraft.name.trim();
+      if (!pendingName) {
+        setSaveError(t("models.providerNameRequired"));
         setSaving(false);
         return;
       }
-      draft = renamed;
+      if (config.providers?.[providerNameDraft.provider]) {
+        const renamed = applyProviderRename(config, providerNameDraft.provider, pendingName);
+        if (!renamed) {
+          setSaveError(t("models.providerNameTaken", { name: pendingName }));
+          setSaving(false);
+          return;
+        }
+        draft = renamed;
+      }
     }
     try {
       draft = normalizeContextWindowOverrides(draft);
@@ -2232,6 +2262,8 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
       const d = await res.json() as { success?: boolean; error?: string };
       if (!res.ok || d.error) setSaveError(d.error ?? `HTTP ${res.status}`);
       else {
+        setConfig(draft);
+        savedConfigRef.current = JSON.stringify(draft);
         setSavedOk(true);
         setTimeout(() => setSavedOk(false), 2000);
         // models.json just changed under the switches: providers may have been
@@ -2294,7 +2326,6 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
           provider={provider}
           onChange={(p) => updateProvider(selection.name, p)}
           onEditingNameChange={(n) => setProviderNameDraft(n === selection.name ? null : { provider: selection.name, name: n })}
-          onRename={(n) => renameProvider(selection.name, n)}
           onDelete={() => deleteProvider(selection.name)}
           onAddModels={(models) => addDiscoveredModels(selection.name, models)}
           enabledModels={enabledModels}
@@ -2319,8 +2350,6 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
   return (
     <>
     <ConfigPanelShell embedded={embedded} title={t("common.models")} subtitle="~/.pi/agent/models.json" closeLabel={t("i18n.close")} onClose={onClose}>
-
-        <EnabledModelsBanner controller={enabledModels} />
 
         {/* Body */}
         <ConfigSplitView>
@@ -2471,28 +2500,35 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
           </ConfigDetail>
         </ConfigSplitView>
 
-        {/* Footer */}
-        <ConfigFooter status={(loadError || saveError) ? (
-          <span style={{ color: "#f87171" }}>
-            {loadError ? t("models.configUnreadable", { error: loadError }) : saveError}
-          </span>
-        ) : t("models.applyHelp")}>
-          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.cancel")}</ConfigButton>}
-          <ConfigButton
-            variant="primary"
-            onClick={handleSave}
-            disabled={saving || savedOk || loadError !== null}
-            className={savedOk ? "is-success" : undefined}
-          >
-            {savedOk && (
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"
-                className="config-button-success-icon">
-                <polyline points="20 6 9 17 4 12" />
-              </svg>
+        {/* Only models.json drafts need this bar; built-in provider details
+            save their credentials and model switches on their own. */}
+        {footerVisible && (
+          <ConfigFooter status={(loadError || saveError) ? (
+            <span style={{ color: "#f87171" }}>
+              {loadError ? t("models.configUnreadable", { error: loadError }) : saveError}
+            </span>
+          ) : saving ? t("i18n.saving")
+            : dirty ? <>{t("models.unsavedChanges")} {t("models.applyHelp")}</>
+              : savedOk ? t("i18n.saved")
+                : null}>
+            {(dirty || saving || saveError !== null) ? (
+              <>
+                <ConfigButton onClick={discardChanges} disabled={saving || loadError !== null}>
+                  {t("models.discardChanges")}
+                </ConfigButton>
+                <ConfigButton
+                  variant="primary"
+                  onClick={handleSave}
+                  disabled={saving || loadError !== null}
+                >
+                  <span>{saving ? t("i18n.saving") : t("models.saveChanges")}</span>
+                </ConfigButton>
+              </>
+            ) : (
+              !embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>
             )}
-             <span>{savedOk ? t("i18n.saved") : saving ? t("i18n.saving") : t("i18n.save")}</span>
-          </ConfigButton>
-        </ConfigFooter>
+          </ConfigFooter>
+        )}
     </ConfigPanelShell>
     {pickerOpen && (
       <AddProviderPicker

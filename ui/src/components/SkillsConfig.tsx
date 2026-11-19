@@ -28,12 +28,12 @@ import {
   ConfigDetailStack,
   ConfigEmptyState,
   ConfigField,
-  ConfigFooter,
   ConfigListAction,
   ConfigPanelShell,
   ConfigSaveTarget,
   ConfigScopeTag,
   ConfigSidebar,
+  ConfigSidebarAction,
   ConfigSidebarGroupLabel,
   ConfigSidebarGroupStatus,
   ConfigSidebarGroupSwitch,
@@ -1000,6 +1000,16 @@ export function SkillsConfig({
             <ConfigListAction
                 onClick={() => setAddMode(true)}
                 active={addMode}
+                trailing={<>
+                  <ConfigSidebarAction onClick={() => void loadSkills()} disabled={bulkBusy}>
+                    {t("i18n.refresh")}
+                  </ConfigSidebarAction>
+                  {skills.some((skill) => Boolean(skill.install)) && (
+                    <ConfigSidebarAction onClick={() => void checkForUpdates()} disabled={bulkBusy}>
+                      {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
+                    </ConfigSidebarAction>
+                  )}
+                </>}
               >
                  {t("i18n.addSkill")}
             </ConfigListAction>
@@ -1058,32 +1068,7 @@ export function SkillsConfig({
           </ConfigDetail>
         </ConfigSplitView>
 
-        {/* Footer */}
-        <ConfigFooter status={
-            Object.values(updateStatuses).filter(
-              (status) => status.state === "update-available",
-            ).length > 0 && (
-              <span style={{ fontSize: 12, color: "#d97706" }}>
-                {
-                  Object.values(updateStatuses).filter(
-                    (status) => status.state === "update-available",
-                  ).length
-                }{" "}
-                {Object.values(updateStatuses).filter(
-                  (status) => status.state === "update-available",
-                ).length === 1
-                   ? t("i18n.update")
-                   : t("i18n.updates")}
-              </span>
-            )}
-        >
-          {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
-          {skills.some((skill) => Boolean(skill.install)) && (
-            <ConfigButton variant="secondary" onClick={() => void checkForUpdates()} disabled={checkingAll || updatingSkill !== null}>
-              {checkingAll ? t("i18n.checking") : t("i18n.checkUpdates")}
-            </ConfigButton>
-          )}
-        </ConfigFooter>
+
     </ConfigPanelShell>
   );
 }

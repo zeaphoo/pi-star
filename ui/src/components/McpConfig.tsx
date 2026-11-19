@@ -53,6 +53,7 @@ import {
   ConfigScopeSwitch,
   ConfigScopeTag,
   ConfigSidebar,
+  ConfigSidebarAction,
   ConfigSidebarGroupLabel,
   ConfigSidebarGroupStatus,
   ConfigSidebarGroupSwitch,
@@ -966,7 +967,6 @@ export function McpConfigView({
     else if (shown !== undefined && undoToken === undefined) focusIfLost(document, focusFallback());
   }, [undoToken]);
   const problems = data ? mcpFileProblems(data.files) : [];
-  const counts = mcpGroupCounts(servers);
   const globalFile = data?.files.find((file) => file.scope === "global");
   const autoEnable = data ? mcpEffectiveAutoEnableCodemode(data) : undefined;
   const emptyKey = data ? mcpEmptyDetailKey(servers.length, data.files) : undefined;
@@ -1100,7 +1100,16 @@ export function McpConfigView({
             ) : null}
           </ConfigSidebarList>
           {data && (
-            <ConfigListAction ref={addActionRef} active={adding} onClick={onAddOpen}>
+            <ConfigListAction
+              ref={addActionRef}
+              active={adding}
+              onClick={onAddOpen}
+              trailing={(
+                <ConfigSidebarAction onClick={onRefresh} disabled={controlsBusy}>
+                  {t("i18n.refresh")}
+                </ConfigSidebarAction>
+              )}
+            >
               {t("mcp.add.action")}
             </ConfigListAction>
           )}
@@ -1176,31 +1185,26 @@ export function McpConfigView({
         </ConfigDetail>
       </ConfigSplitView>
 
-      <ConfigFooter
-        status={problems.length > 0 ? (
-          <ConfigFooterStatus
-            tone={problems.some(({ problem }) => isBlockingFileProblem(problem)) ? "error" : "warning"}
-            summary={problems.length === 1 ? t("mcp.footer.fileProblem") : t("mcp.footer.fileProblems", { count: problems.length })}
-            details={problems.map(({ file, problem }) => {
-              const detail = mcpFileProblemDetail(problem, file.realPath);
-              return (
-                <>
-                  <code className="mcp-config-chip">{displayPath(file.path)}</code>{" "}
-                  {t(`mcp.fileProblem.${problem.reason}`)}
-                  {detail && <> <code className="mcp-config-chip">{detail}</code></>}
-                </>
-              );
-            })}
-          />
-        ) : (
-          <ConfigFooterStatus summary={counts.total > 0 ? t("mcp.serverCount", { enabled: counts.enabled, total: counts.total }) : ""} />
-        )}
-      >
-        {!embedded && <ConfigButton onClick={onClose}>{t("i18n.close")}</ConfigButton>}
-        <ConfigButton variant="secondary" onClick={onRefresh} disabled={controlsBusy}>
-          {t("i18n.refresh")}
-        </ConfigButton>
-      </ConfigFooter>
+      {problems.length > 0 && (
+        <ConfigFooter
+          status={
+            <ConfigFooterStatus
+              tone={problems.some(({ problem }) => isBlockingFileProblem(problem)) ? "error" : "warning"}
+              summary={problems.length === 1 ? t("mcp.footer.fileProblem") : t("mcp.footer.fileProblems", { count: problems.length })}
+              details={problems.map(({ file, problem }) => {
+                const detail = mcpFileProblemDetail(problem, file.realPath);
+                return (
+                  <>
+                    <code className="mcp-config-chip">{displayPath(file.path)}</code>{" "}
+                    {t(`mcp.fileProblem.${problem.reason}`)}
+                    {detail && <> <code className="mcp-config-chip">{detail}</code></>}
+                  </>
+                );
+              })}
+            />
+          }
+        />
+      )}
     </ConfigPanelShell>
   );
 }

@@ -440,27 +440,4 @@ export function constrainProviderEntries(input: EnabledModelsInput): EnabledMode
   return { ok: true, patterns, changed: !samePatterns(patterns, input.patterns) };
 }
 
-/**
- * Drop the entries that match no available model.
- *
- * Every other operation preserves them, because an entry usually goes unmatched
- * for a reason that can reverse itself (a provider signed out, a catalog not
- * refreshed yet). This one is the user saying they are gone for good, so it is
- * the only way to clean up after a provider renamed its models. A signed-out
- * provider's entries go too: pi warns about them on every start, and the panel
- * lists no switch for a provider without available models, so keeping them
- * here left no way to remove them but editing settings.json (#1427 kept them).
- */
-export function pruneStaleEnabledModels(input: EnabledModelsInput): EnabledModelsEdit {
-  const kept = toEntries(input.resolutions).filter((entry) => entry.matched.length > 0);
-  if (kept.length === input.resolutions.length) {
-    return { ok: true, patterns: input.patterns, changed: false };
-  }
-  // Nothing left to narrow with: drop the key instead of writing an empty list.
-  const patterns = kept.length === 0 ? undefined : serialize(kept, input);
-  return { ok: true, patterns, changed: !samePatterns(patterns, input.patterns) };
-}
 
-export function clearEnabledModels(input: EnabledModelsInput): EnabledModelsEdit {
-  return { ok: true, patterns: undefined, changed: input.patterns !== undefined };
-}

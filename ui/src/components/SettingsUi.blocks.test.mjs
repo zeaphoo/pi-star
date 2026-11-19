@@ -13,6 +13,7 @@ const {
   ConfigAddSourcePanel,
   ConfigDetailGrid,
   ConfigDetailGridRow,
+  ConfigFooter,
   ConfigFooterStatus,
   ConfigNotice,
   ConfigSaveTarget,
@@ -112,6 +113,11 @@ test("a detail grid pairs each label with its value", () => {
     '<div class="config-detail-grid-label">Installed path</div><div class="config-detail-grid-value is-error">Not found</div>',
     "</div>",
   ].join(""));
+});
+
+test("an empty footer takes no strip and a used one still renders", () => {
+  assert.equal(render(h(ConfigFooter, null)), "");
+  assert.match(render(h(ConfigFooter, { status: "3 ext" })), /class="config-footer"/);
 });
 
 test("a footer status with details opens a visible list instead of a tooltip", () => {
