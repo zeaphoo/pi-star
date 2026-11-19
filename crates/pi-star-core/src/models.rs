@@ -779,9 +779,24 @@ pub fn resolve_patterns(
         .iter()
         .map(|pattern| {
             let (base, pin) = split_thinking_pin(pattern.trim_start_matches('!'));
+            // Compile once per pattern instead of once per reference: the
+            // panel resolves dozens of exact entries against every model, and
+            // a debug build would otherwise spend seconds compiling the same
+            // regexes over and over.
+            let matcher = if base == "*" || !has_glob_meta(base) {
+                None
+            } else {
+                Glob::new(base).ok().map(|glob| glob.compile_matcher())
+            };
             let matched = refs
                 .iter()
-                .filter(|reference| matches_pattern(base, reference))
+                .filter(|reference| {
+                    base == "*"
+                        || base == reference.as_str()
+                        || matcher
+                            .as_ref()
+                            .is_some_and(|matcher| matcher.is_match(reference))
+                })
                 .cloned()
                 .collect();
             (pattern.clone(), matched, pin.map(str::to_owned))
@@ -797,21 +812,22 @@ pub fn enabled_model_refs(
     // `!ref` is the exclusion an earlier pi-star wrote; pi itself only reads
     // positive patterns, so a later edit normalizes it away (patterns_for).
     let positives = patterns.iter().any(|pattern| !pattern.starts_with('!'));
+    let resolutions = resolve_patterns(patterns, refs);
     let mut enabled = if patterns.is_empty() || !positives {
         refs.iter().cloned().collect()
     } else {
         let mut set = std::collections::BTreeSet::new();
-        for (pattern, matched, _) in resolve_patterns(patterns, refs) {
+        for (pattern, matched, _) in &resolutions {
             if !pattern.starts_with('!') {
-                set.extend(matched);
+                set.extend(matched.iter().cloned());
             }
         }
         set
     };
-    for (pattern, matched, _) in resolve_patterns(patterns, refs) {
+    for (pattern, matched, _) in &resolutions {
         if pattern.starts_with('!') {
             for reference in matched {
-                enabled.remove(&reference);
+                enabled.remove(reference);
             }
         }
     }
@@ -852,10 +868,19 @@ pub fn patterns_for(
         .collect()
 }
 
+fn has_glob_meta(pattern: &str) -> bool {
+    pattern
+        .bytes()
+        .any(|byte| matches!(byte, b'*' | b'?' | b'[' | b'{'))
+}
+
 fn matches_pattern(pattern: &str, key: &str) -> bool {
     let (pattern, _) = split_thinking_pin(pattern);
     if pattern == "*" || pattern == key {
         return true;
+    }
+    if !has_glob_meta(pattern) {
+        return false;
     }
     Glob::new(pattern)
         .ok()
