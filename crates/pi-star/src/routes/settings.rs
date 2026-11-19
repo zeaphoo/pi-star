@@ -3134,11 +3134,72 @@ fn usage_report(provider_id: &str, payload: &Value) -> (Vec<Value>, Vec<Value>) 
                 }
             }
         }
+        "opencode-go" => {
+            // Go reports only the used percentage of each fixed window plus a
+            // reset timestamp. Turn them into buckets so the panel shows named
+            // windows with reset times instead of three unlabeled "percent"
+            // numbers from the generic fallback.
+            let usage = payload
+                .get("usage")
+                .filter(|value| value.is_object())
+                .unwrap_or(payload);
+            let Some(windows) = usage.as_object() else {
+                return (buckets, metrics);
+            };
+            for (id, raw) in windows {
+                let Some(window) = raw.as_object() else {
+                    continue;
+                };
+                let percent = ["percent", "usagePercent", "usage_percent"]
+                    .iter()
+                    .find_map(|key| window.get(*key).and_then(Value::as_f64))
+                    .filter(|value| *value >= 0.0);
+                let Some(percent) = percent else {
+                    continue;
+                };
+                let used = percent.clamp(0.0, 100.0);
+                let label = match id.as_str() {
+                    "rolling" => "Rolling",
+                    "weekly" => "Weekly",
+                    "monthly" => "Monthly",
+                    _ => id.as_str(),
+                };
+                let mut bucket = json!({
+                    "id": id,
+                    "label": label,
+                    "used": used,
+                    "remaining": 100.0 - used,
+                    "limit": 100,
+                    "unit": "percent",
+                });
+                let resets_at = ["resetsAt", "resetAt", "resets_at", "reset_at"]
+                    .iter()
+                    .find_map(|key| window.get(*key).and_then(usage_epoch_seconds));
+                if let Some(resets_at) = resets_at {
+                    bucket["resetsAt"] = json!(resets_at);
+                }
+                buckets.push(bucket);
+            }
+        }
         _ => {
             collect_usage_numbers(payload, "", &mut metrics);
         }
     }
     (buckets, metrics)
+}
+
+fn usage_epoch_seconds(value: &Value) -> Option<i64> {
+    if let Some(number) = value.as_f64() {
+        return Some(if number >= 1_000_000_000_000.0 {
+            (number / 1_000.0) as i64
+        } else {
+            number as i64
+        });
+    }
+    let text = value.as_str()?.trim();
+    chrono::DateTime::parse_from_rfc3339(text)
+        .ok()
+        .map(|time| time.timestamp())
 }
 
 fn collect_usage_numbers(value: &Value, prefix: &str, metrics: &mut Vec<Value>) {
@@ -3376,4 +3437,38 @@ fn skill_slug(name: &str) -> String {
         }
     }
     slug.trim_matches('-').to_string()
+}
+
+#[cfg(test)]
+mod usage_tests {
+    use super::*;
+
+    #[test]
+    fn opencode_usage_windows_become_remaining_percent_buckets() {
+        let payload = json!({
+            "usage": {
+                "rolling": {"status": "ok", "percent": 3, "resetsAt": "2026-09-14T05:53:50.774Z"},
+                "weekly": {"status": "ok", "percent": 1, "resetsAt": "2026-09-21T00:00:00.774Z"},
+                "monthly": {"status": "ok", "percent": 98, "resetsAt": "2026-09-19T02:38:27.774Z"},
+            }
+        });
+        let (buckets, metrics) = usage_report("opencode-go", &payload);
+        assert!(metrics.is_empty());
+        assert_eq!(buckets.len(), 3);
+        assert_eq!(buckets[0]["id"], "rolling");
+        assert_eq!(buckets[0]["label"], "Rolling");
+        assert_eq!(buckets[0]["used"], 3.0);
+        assert_eq!(buckets[0]["remaining"], 97.0);
+        assert_eq!(buckets[0]["unit"], "percent");
+        assert_eq!(
+            buckets[0]["resetsAt"],
+            json!(
+                chrono::DateTime::parse_from_rfc3339("2026-09-14T05:53:50.774Z")
+                    .unwrap()
+                    .timestamp()
+            )
+        );
+        assert_eq!(buckets[1]["remaining"], 99.0);
+        assert_eq!(buckets[2]["remaining"], 2.0);
+    }
 }
