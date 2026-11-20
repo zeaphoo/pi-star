@@ -233,6 +233,12 @@ pub async fn command(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<Value>,
 ) -> Response {
+    run_command(state, id, body).await
+}
+
+/// The command dispatcher shared by `POST /api/agent/{id}` and the stream
+/// bus's `cmd` frame. Returns the same JSON shape either way.
+pub(crate) async fn run_command(state: Arc<AppState>, id: String, body: Value) -> Response {
     if body.get("type").and_then(Value::as_str) == Some("set_backend") {
         let Some(requested) = body.get("backend").and_then(Value::as_str) else {
             return bad_request("backend is required");
@@ -456,7 +462,7 @@ fn pi_events(
         .into_response()
 }
 
-fn filter_event(event: Value) -> Option<Value> {
+pub(crate) fn filter_event(event: Value) -> Option<Value> {
     let kind = event.get("type").and_then(Value::as_str).unwrap_or("");
     if matches!(kind, "turn_start" | "turn_end" | "entry_appended") {
         return None;
@@ -679,6 +685,7 @@ pub async fn debug(
                     "nextCleanupAt": Value::Null,
                 },
             },
+            "hub": state.hub.snapshot(),
             "sessions": sessions,
             "session": session,
             "piRpc": state.pi_rpc.ids()

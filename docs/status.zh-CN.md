@@ -20,12 +20,13 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | 文件 | ✅ | list/read/download/meta/upload/upload-check/allow-link/watch、DOCX 预览 |
 | @ 文件索引 | ✅ | git ls-files + 忽略规则回退，模糊匹配 |
 | Git / worktree | ✅ | status、diff、list/add/remove |
-| 终端 | ✅ | portable-pty + SSE + 进程组清理 |
+| 实时传输 | ✅ | 单条 `/api/stream` WebSocket，频道订阅、游标续传、背压与全局缓冲预算；SharedWorker 跨标签页共享 |
+| 终端 | ✅ | portable-pty + `terminal:<id>` 频道 + 进程组清理 |
 | Agent 主链路 | ✅ | 后端按会话选择并持久化为 `pi-star:agent-backend` custom entry：默认 `rpc`（`pi --mode rpc`，标准 PI），可选 `quick`（进程内 `AgentHarness`/QuickPI，pi v3 存储，工具经 AllowedRoots 沙箱，含 MCP 与 subagent）；`/api/agent/backends` 与聊天输入区的 Agent 下拉共用同一份状态，运行中禁止切换。QuickPI 的系统提示按 pi 的 sections（tools/rules/docs/context/skills/cwd）渲染，工具 loadout 读取 settings `defaultTools` 与 `pi-star:tool-selection`，`set_tools` 同时持久化选择 |
 | PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue、模型/thinking、压缩/重试、统计、fork/clone、session rekey、单写者路由、子代理 session 锁、扩展 UI、事件流；`pi-star-agent-extension` 补偿 get/set tools、tree、branch、reload 和基础 subagent 工具；真实 pi + 假模型端到端测试覆盖工具、abort、扩展 UI、fork/rekey。作为默认 `rpc` 后端，仅拥有被选中该后端的会话 |
 | 会话空闲回收 / 租约 | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`，后台 30s 回收；lease 续租 |
 | Subagents | ✅ | 内置 `general-purpose`/`explore`/`plan`、global/workspace/project 三种文件 scope、pi-web 完整 profile 字段（display_name、load_skills/extensions、codemode、mcp、max_turns、prompt_mode、color、isolation、persist_session、扩展工具选择等）、未知 frontmatter 保留、builtin 开关与 `agents/settings.json`、子会话/等待/并发/状态显示 |
-| 扩展 UI | ✅ | pending 请求、SSE 重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
+| 扩展 UI | ✅ | pending 请求、重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
 | Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped，项目设置覆盖全局 |
 | Provider | ✅ | OpenAI-compatible / Anthropic Messages；模型缓存、provider usage |
 | OAuth / device-code | ✅ | Anthropic 授权码 + PKCE、GitHub Copilot device-code；其余内置 provider 通过随包的 pi/pi-ai OAuth 流程（Node bridge）登录；API Key 保存/删除/登出 |
@@ -36,7 +37,7 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | 项目信任 | ✅ | 继承、决策、项目 MCP 清单 |
 | 静态服务/SPA | ✅ | 缓存头、SPA fallback、API JSON 404 |
 | 认证/安全 | ✅ | Host/Origin、body limit、cookie/Basic Auth、失败指数退避 |
-| Debug / web-auth | ✅ | 只读快照；连接页面表按 agent/terminal/file-watch 统计 SSE、地址与浏览器标签 |
+| Debug / web-auth | ✅ | 只读快照；按连接/频道统计（socket 数、频道类型、缺口与丢弃）、地址与浏览器标签 |
 | app-update | ✅ | 可配置发布源（`PI_STAR_UPDATE_URL`），12h 缓存，支持 `PI_STAR_SKIP_VERSION_CHECK=1` |
 | 内嵌前端资源 | ✅ | release 用 `rust-embed` 编入 `ui/dist`；debug 读磁盘；`--ui-dir` 显式覆盖；健康响应暴露 `assets` |
 | 桌面运行契约 | ✅ | stdout `assets`/`listening`/`bind-failed` 事件、stderr 日志、bind 退出码 2、`--exit-on-stdin-eof` |

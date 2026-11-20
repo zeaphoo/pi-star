@@ -9,11 +9,13 @@ import type {
   DebugSessionSummary,
   DebugSnapshotResponse,
   DebugStreamCloseReason,
+  DebugBusSnapshot,
   DebugTrackedEventSource,
   DebugTrackedEventSourceKind,
   DebugWrapperSnapshot,
 } from "@/lib/debug-types";
 import { listTrackedEventSources, readHttpProtocol, readPageVisibility, readRunningPoll } from "@/lib/page-debug";
+import { busSnapshot } from "@/lib/stream-bus";
 import { projectNameOf } from "@/lib/session-tree";
 import type { SessionInfo, SubagentSessionStatus } from "@/lib/types";
 import { isHiddenRelation } from "@/lib/session-family";
@@ -290,6 +292,7 @@ export interface DebugPageReading {
   /** The chat's reader threw (a chat from before a hot reload): nothing is known of its stream. */
   clientFailed: boolean;
   sources: DebugTrackedEventSource[];
+  bus: DebugBusSnapshot | null;
   visibility: DebugPageVisibility | null;
   protocol: string | null;
   runningPoll: DebugRunningPoll | null;
@@ -327,6 +330,7 @@ export function readDebugPage(
     client,
     clientFailed: failed,
     sources: attempt(listTrackedEventSources, []),
+    bus: attempt(busSnapshot, null),
     visibility: attempt<DebugPageVisibility | null>(readPageVisibility, null),
     protocol: attempt(readHttpProtocol, null),
     runningPoll: attempt<DebugRunningPoll | null>(readRunningPoll, null),

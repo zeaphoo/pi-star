@@ -8,6 +8,8 @@
 // hooks/useAgentSession.ts. This helper collapses that down to one line.
 
 import { missingCwdFromBody } from "./missing-cwd";
+import { apiFetch } from "./api-fetch";
+import { BusUnavailable, request as busRequest, busReady } from "./stream-bus";
 
 export class AgentCommandError extends Error {
   constructor(
@@ -43,10 +45,43 @@ export async function sendAgentCommand<T = unknown>(
   sessionId: string,
   command: Record<string, unknown>,
 ): Promise<T> {
-  const res = await fetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
+  if (busReady()) {
+    try {
+      const reply = await busRequest(`agent:${sessionId}`, command);
+      const body = (reply.body ?? {}) as {
+        success?: boolean;
+        data?: T;
+        error?: string;
+        code?: string;
+        accepted?: boolean;
+      };
+      if (reply.status >= 400 || body.error) {
+        throw new AgentCommandError(
+          body.error ?? `HTTP ${reply.status}`,
+          reply.status,
+          body.code,
+          body.accepted,
+          missingCwdFromBody(body) ?? undefined,
+        );
+      }
+      return body.data as T;
+    } catch (error) {
+      if (!(error instanceof BusUnavailable)) {
+        if (error instanceof AgentCommandError) throw error;
+        throw new AgentCommandError(
+          error instanceof Error ? error.message : String(error),
+          0,
+          "bus_error",
+        );
+      }
+      // No socket for this page: fall through to the HTTP route.
+    }
+  }
+  const res = await apiFetch(`/api/agent/${encodeURIComponent(sessionId)}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(command),
+    timeoutMs: 15_000,
   });
   const body = (await res.json().catch(() => ({}))) as {
     success?: boolean;

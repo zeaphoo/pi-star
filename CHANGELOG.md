@@ -16,6 +16,17 @@
 
 ### Changed
 
+- **实时流改为单连接多路复用（stream bus）**：Agent 事件、终端输出、文件 watch 与登录流程不再
+  各开一条 SSE，而是共用一条 `/api/stream` WebSocket，并由 SharedWorker 在标签页之间共享；
+  浏览器因此每个 profile 只持有一条长连接，不再受 HTTP/1.1 每源 6 连接的限制。频道带游标
+  （终端按字节偏移、文件按版本、Agent 按序号）可断线续传；终端输入与 Agent 命令也走同一连接。
+  旧的 `*/events` SSE 端点保留一个发布周期并标记为 deprecated。
+- **缓冲按负载伸缩**：每个频道的回放缓冲从 1 MiB 起按水位扩容（终端上限 20 MiB），空闲后回收；
+  全 Hub 默认 256 MiB 预算，超出时按 terminal → file → agent 顺序淘汰旧帧。可用
+  `PI_STAR_STREAM_RING_*` 覆盖。
+- **普通请求有超时**：新增统一请求策略，未单独设置超时的请求默认 60 秒失败，后台请求并发受限，
+  不再因连接池被占满而无限等待。
+
 - **许可证改为 Apache-2.0**：项目整体以 Apache License 2.0 发布；从 pi-web 与 pi-rust 复制的代码
   继续保持 MIT，上游署名与 MIT 全文保留在 `NOTICE`。
 - **README 重新定位**：突出跨平台桌面一体化（Agent / 代码浏览器 / Git diff / 终端）与两个

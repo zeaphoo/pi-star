@@ -17,7 +17,7 @@ crates/pi-star-agent/   agent loop, events, queues, tool calls (merged from rpi)
 crates/pi-star-tools/   built-in tools and ExecutionEnv (merged from rpi)
 crates/pi-star-harness/ session state machine, compaction, system prompt, skills, harness loop
 crates/pi-star-core/    sessions (v3), config, models, files/Git, terminal, UiState, agent adapters
-crates/pi-star/         Axum routes, SSE, static/embedded assets, auth and security middleware, CLI
+crates/pi-star/         Axum routes, the `/api/stream` WebSocket bus, static/embedded assets, auth, CLI
 app/                    Tauri 2 desktop shell (separate Cargo workspace): launches and supervises pi-star
 agent-extension/        pi extension: fills in tools, branches, and subagents for the RPC backend
 openspec/               proposals/specs/designs/tasks for the port and desktop work
@@ -38,9 +38,10 @@ The main paths that already work:
   tree/branches, rename, delete, fork, search, stats, export, and sidebar UI state
   (pins/archive/project order/project names).
 - File list/read/download/metadata/upload/upload-check/directory-link confirmation, the `@` file
-  index, and file-watch SSE.
-- Git status/diff, worktree list/create/remove, and a PTY terminal (input/resize/SSE output).
-- Agent runtime: new session, prompt, SSE events, abort/queue, set_model, set_thinking_level,
+  index, and live file changes on the `file:<path>` channel.
+- Git status/diff, worktree list/create/remove, and a PTY terminal (`terminal:<id>` channel plus
+  `cmd` frames for input/resize).
+- Agent runtime: new session, prompt, live events on the `agent:<session>` channel, abort/queue, set_model, set_thinking_level,
   set_tools, compact, navigate_tree, fork, stats, last reply, idle reclamation; OpenAI-compatible
   and Anthropic Messages streaming providers; built-in read/write/edit/bash/find/grep/ls tools.
 - Subagents: child-session creation, parent waiting, concurrency caps, profile scan/save/toggle,

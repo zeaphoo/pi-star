@@ -44,8 +44,8 @@ test("agent command HTTP rejections are distinguishable from transport failures"
   await assert.rejects(
     sendAgentCommand("session-id", { type: "prompt", message: "hello" }),
     (error) => {
-      assert.equal(error, transportError);
       assert.equal(error instanceof AgentCommandError, false);
+      assert.equal(error.code, "network");
       assert.equal(isPromptRejectedError(error), false);
       return true;
     },

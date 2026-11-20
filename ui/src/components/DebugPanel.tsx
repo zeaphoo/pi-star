@@ -659,7 +659,7 @@ function SampleValue({ samples, t }: { samples: readonly DebugSample[]; t: Trans
  */
 function PageColumn({ page, samples, reply, ctx }: { page: DebugPageReading; samples: DebugSamples; reply: DebugSnapshotResponse | null; ctx: Ctx }) {
   const { t } = ctx;
-  const pool = poolSlots(page.sources, page.protocol, page.client?.connection?.sessionId ?? null);
+  const pool = poolSlots(page.sources, page.bus ? t("debug.page.bus") : page.protocol, page.client?.connection?.sessionId ?? null);
   const running = page.runningPoll;
   return (
     <div className="debug-col debug-col-page">
@@ -668,6 +668,20 @@ function PageColumn({ page, samples, reply, ctx }: { page: DebugPageReading; sam
       </div>
       <Meter pool={pool} ctx={ctx} />
       <div className="debug-measures">
+        {page.bus && (
+          <>
+            <span className="debug-measure-name"><span className="debug-label">{t("debug.bus.title")}</span></span>
+            <span className="debug-measure-sub">
+              {join([
+                t("debug.bus.state", { state: page.bus.state }),
+                t("debug.bus.sockets", { sockets: page.bus.sockets }),
+                t("debug.bus.channels", { count: page.bus.channels.length }),
+                t("debug.bus.gaps", { count: page.bus.gaps }),
+                t("debug.bus.dropped", { count: page.bus.dropped }),
+              ])}
+            </span>
+          </>
+        )}
         <span className="debug-measure-name"><span className="debug-label">{t("debug.page.debugPoll")}</span></span>
         <Sparkline samples={samples.poll} label={sparkLabel(samples.poll, t)} />
         <SampleValue samples={samples.poll} t={t} />

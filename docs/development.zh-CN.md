@@ -16,7 +16,7 @@ crates/pi-star-agent/   Agent loop、事件、队列、工具调用（源码融�
 crates/pi-star-tools/   内置工具与 ExecutionEnv（源码融合自 rpi）
 crates/pi-star-harness/ 会话状态机、压缩、system prompt、skills、harness loop
 crates/pi-star-core/    会话(v3)、配置、模型、文件/Git、终端、UiState、Agent 适配层
-crates/pi-star/         Axum 路由、SSE、静态/内嵌资源、认证与安全中间件、CLI
+crates/pi-star/         Axum 路由、`/api/stream` WebSocket 总线、静态/内嵌资源、认证、CLI
 app/                    Tauri 2 桌面壳（独立 Cargo workspace）：启动并监督 pi-star
 agent-extension/        pi 扩展：补齐 RPC 后端的工具/分支/子代理能力
 openspec/               迁移与桌面化的 proposal/spec/design/tasks
@@ -34,9 +34,9 @@ release 构建会把 `ui/dist` 用 `rust-embed` 编进 `pi-star` 二进制；deb
   文件树、聊天、模型选择、设置面板和终端 UI 均可加载。
 - 扫描并读取 pi 的 JSONL 会话，支持会话列表、活动分支上下文、向上分页、树/分支、
   重命名、删除、fork、搜索、统计、导出和侧边栏 UI 状态（pin/archive/项目顺序/项目名）。
-- 文件列表/读取/下载/元数据/上传/上传检查/目录链接确认、@ 文件索引、文件 watch SSE。
-- Git status/diff、worktree 列表/创建/删除、PTY 终端（输入/resize/SSE 输出）。
-- Agent 运行时：新建会话、prompt、SSE 事件、abort/队列、set_model、set_thinking_level、
+- 文件列表/读取/下载/元数据/上传/上传检查/目录链接确认、@ 文件索引、`file:<path>` 频道的实时变更。
+- Git status/diff、worktree 列表/创建/删除、PTY 终端（`terminal:<id>` 频道，输入/resize 走 `cmd` 帧）。
+- Agent 运行时：新建会话、prompt、`agent:<session>` 频道的实时事件、abort/队列、set_model、set_thinking_level、
   set_tools、compact、navigate_tree、fork、统计、最近回复、空闲回收；OpenAI-compatible
   与 Anthropic Messages 流式 provider；内置 read/write/edit/bash/find/grep/ls 工具。
 - Subagent：子会话创建、父会话等待、并发上限、profile 扫描/保存/开关和状态显示。

@@ -77,6 +77,8 @@ pub struct AppState {
     /// `PI_WEB_IDLE_TIMEOUT_MS` in effect; 0 means disabled.
     pub idle_timeout_ms: u64,
     pub debug_streams: Arc<DebugStreams>,
+    /// The multiplexed live-stream transport (one WebSocket per browser).
+    pub hub: Arc<crate::stream::Hub>,
     pub password: Option<String>,
     pub auth_token: String,
     pub allowed_hosts: Vec<String>,
@@ -137,6 +139,8 @@ impl AppState {
                     .map(str::to_owned),
             );
         }
+        let hub = crate::stream::Hub::new(crate::stream::HubConfig::default());
+        hub.start_maintenance();
         let idle_timeout_ms = std::env::var("PI_WEB_IDLE_TIMEOUT_MS")
             .ok()
             .and_then(|value| value.parse::<u64>().ok())
@@ -157,6 +161,7 @@ impl AppState {
             started_epoch_ms: crate::debug_streams::now_ms(),
             idle_timeout_ms,
             debug_streams: Arc::new(DebugStreams::new()),
+            hub,
             password,
             auth_token: uuid::Uuid::new_v4().to_string(),
             allowed_hosts,
@@ -285,6 +290,7 @@ impl AppState {
     }
 
     pub fn shutdown(&self) {
+        self.hub.shutdown();
         self.agents.shutdown();
         self.pi_rpc.shutdown();
         self.terminals.kill_all();

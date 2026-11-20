@@ -16,7 +16,8 @@ import { encodeFilePathForApi, getFileDirectory, getFileName, getRelativeFilePat
 import { fileVersion, fileVersionChanged } from "@/lib/file-version";
 import { injectSandboxedHtmlPolyfill } from "@/lib/html-sandbox-polyfill";
 import { HIDDEN_PAGE_GRACE_MS, usePageHiddenFor } from "@/hooks/usePageHidden";
-import { pageId, trackEventSource } from "@/lib/page-debug";
+import { pageId } from "@/lib/page-debug";
+import { subscribe } from "@/lib/stream-bus";
 import { parsePdfPageFragment, resolveLocalFileHref, shouldOpenLocalFileInApp } from "@/lib/file-links";
 import { parseFrontmatter } from "@/lib/frontmatter";
 import { isExternalMarkdownHref, jumpToMarkdownFragment, markdownAppUrlTransform, markdownPreviewRehypePlugins, markdownPreviewRemarkPlugins, markdownUrlTransform, normalizeDisplayMath } from "@/lib/markdown";
@@ -506,7 +507,6 @@ function ImageViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
   const [size, setSize] = useState<number | null>(null);
   const [naturalSize, setNaturalSize] = useState<{ w: number; h: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
   const shownVersionRef = useRef<string | null>(null);
@@ -524,11 +524,6 @@ function ImageViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
 
   useEffect(() => {
     setWatching(false);
-
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
 
     if (!watchEnabled) return;
 
@@ -556,35 +551,32 @@ function ImageViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
+    const unsubscribe = subscribe(`file:${filePath}`, (event) => {
+      const data = event as { type?: string; size?: number; mtime?: string };
+      if (data.type === "connected") {
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+        setWatching(true);
+        synchronize();
+        return;
+      }
+      if (data.type !== "change") return;
+
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+          const d = data;
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+
+        setNaturalSize(null);
+        setError(null);
+        setBust((b) => b + 1);
+    }, {
+      onError: () => setWatching(false),
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setNaturalSize(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      unsubscribe();
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
@@ -687,7 +679,6 @@ function AudioViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
   const shownVersionRef = useRef<string | null>(null);
@@ -705,11 +696,6 @@ function AudioViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
 
   useEffect(() => {
     setWatching(false);
-
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
 
     if (!watchEnabled) return;
 
@@ -737,35 +723,32 @@ function AudioViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
+    const unsubscribe = subscribe(`file:${filePath}`, (event) => {
+      const data = event as { type?: string; size?: number; mtime?: string };
+      if (data.type === "connected") {
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+        setWatching(true);
+        synchronize();
+        return;
+      }
+      if (data.type !== "change") return;
+
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+          const d = data;
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+    }, {
+      onError: () => setWatching(false),
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      unsubscribe();
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
@@ -849,7 +832,6 @@ function VideoViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
   const [size, setSize] = useState<number | null>(null);
   const [duration, setDuration] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
   const shownVersionRef = useRef<string | null>(null);
@@ -867,11 +849,6 @@ function VideoViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
 
   useEffect(() => {
     setWatching(false);
-
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
 
     if (!watchEnabled) return;
 
@@ -899,35 +876,32 @@ function VideoViewer({ filePath, cwd, sourceSessionId, refreshKey, watchEnabled 
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
+    const unsubscribe = subscribe(`file:${filePath}`, (event) => {
+      const data = event as { type?: string; size?: number; mtime?: string };
+      if (data.type === "connected") {
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
+        setWatching(true);
+        synchronize();
+        return;
+      }
+      if (data.type !== "change") return;
+
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+          const d = data;
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") setSize(d.size);
+
+        setDuration(null);
+        setError(null);
+        setBust((b) => b + 1);
+    }, {
+      onError: () => setWatching(false),
     });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") setSize(d.size);
-      } catch { /* ignore */ }
-      setDuration(null);
-      setError(null);
-      setBust((b) => b + 1);
-    });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      unsubscribe();
     };
   }, [filePath, sourceSessionId, watchEnabled]);
 
@@ -1012,7 +986,6 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, refreshKey, initialPag
   useExternalRefresh(refreshKey, () => setBust((value) => value + 1));
   const [size, setSize] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const esRef = useRef<EventSource | null>(null);
   const syncRequestRef = useRef(0);
   // The version on screen; a reconnect that finds it unchanged loads nothing.
   const shownVersionRef = useRef<string | null>(null);
@@ -1057,11 +1030,6 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, refreshKey, initialPag
   useEffect(() => {
     setWatching(false);
 
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
     if (!watchEnabled) return;
 
     let active = true;
@@ -1093,40 +1061,37 @@ function DocumentViewer({ filePath, cwd, sourceSessionId, refreshKey, initialPag
         });
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
+    const unsubscribe = subscribe(`file:${filePath}`, (event) => {
+      const data = event as { type?: string; size?: number; mtime?: string };
+      if (data.type === "connected") {
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      synchronize();
-    });
-    es.addEventListener("change", (e) => {
-      syncRequestRef.current += 1;
-      shownVersionRef.current = null;
-      try {
-        const d = JSON.parse((e as MessageEvent).data) as { size?: number; mtime?: string };
-        shownVersionRef.current = fileVersion(d);
-        if (typeof d.size === "number") {
-          setSize(d.size);
-          if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
-            setError("DOCX too large for preview (>10MB)");
-            return;
+        setWatching(true);
+        synchronize();
+        return;
+      }
+      if (data.type !== "change") return;
+
+        syncRequestRef.current += 1;
+        shownVersionRef.current = null;
+          const d = data;
+          shownVersionRef.current = fileVersion(d);
+          if (typeof d.size === "number") {
+            setSize(d.size);
+            if (!isPdf && d.size > DOCX_PREVIEW_MAX_BYTES) {
+              setError("DOCX too large for preview (>10MB)");
+              return;
+            }
           }
-        }
-      } catch { /* ignore */ }
-      setError(null);
-      setBust((b) => b + 1);
+
+        setError(null);
+        setBust((b) => b + 1);
+    }, {
+      onError: () => setWatching(false),
     });
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      unsubscribe();
     };
   }, [filePath, isPdf, sourceSessionId, watchEnabled]);
 
@@ -1266,7 +1231,6 @@ function TextFileViewer({
   const [displayMode, setDisplayMode] = useState<DisplayMode>(requestedInitialDisplayMode);
   const [wrapLines, setWrapLines] = useState(initialWrapLines);
   const [watching, setWatching] = useState(false);
-  const esRef = useRef<EventSource | null>(null);
   const contentRequestRef = useRef(0);
   // The version of the content on screen; a reconnect that finds it unchanged
   // keeps what is loaded (Load more chunks, scroll, highlighting).
@@ -1406,11 +1370,6 @@ function TextFileViewer({
   useEffect(() => {
     setWatching(false);
 
-    if (esRef.current) {
-      esRef.current.close();
-      esRef.current = null;
-    }
-
     if (!watchEnabled) return;
 
     let active = true;
@@ -1419,44 +1378,41 @@ function TextFileViewer({
       void fetchGitDiff(filePath);
     };
 
-    const es = trackEventSource("file-watch", new EventSource(getFileApiUrl(filePath, "watch", sourceSessionId)), filePath);
-    esRef.current = es;
+    const unsubscribe = subscribe(`file:${filePath}`, (event) => {
+      const data = event as { type?: string; size?: number; mtime?: string };
+      if (data.type === "connected") {
 
-    es.addEventListener("connected", () => {
-      setWatching(true);
-      // The server emits connected only after its watcher exists. Reading now
-      // closes the gap between the last snapshot and live events, unless the
-      // file on screen is still the one on disk (a reconnect). The diff is read
-      // again either way: a commit made meanwhile changes it, not the file.
-      const shown = shownVersionRef.current;
-      if (shown === null) {
-        synchronize();
+        setWatching(true);
+        // The server emits connected only after its watcher exists. Reading now
+        // closes the gap between the last snapshot and live events, unless the
+        // file on screen is still the one on disk (a reconnect). The diff is read
+        // again either way: a commit made meanwhile changes it, not the file.
+        const shown = shownVersionRef.current;
+        if (shown === null) {
+          synchronize();
+          return;
+        }
+        fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
+          .then((response) => response.json())
+          .then((meta: { size?: number; mtime?: string }) => {
+            if (!active) return;
+            if (fileVersionChanged(shownVersionRef.current, fileVersion(meta))) synchronize();
+            else void fetchGitDiff(filePath);
+          })
+          .catch(() => {
+            if (active) synchronize();
+          });
         return;
       }
-      fetch(getFileApiUrl(filePath, "meta", sourceSessionId))
-        .then((response) => response.json())
-        .then((meta: { size?: number; mtime?: string }) => {
-          if (!active) return;
-          if (fileVersionChanged(shownVersionRef.current, fileVersion(meta))) synchronize();
-          else void fetchGitDiff(filePath);
-        })
-        .catch(() => {
-          if (active) synchronize();
-        });
+      if (data.type !== "change") return;
+        synchronize();
+    }, {
+      onError: () => setWatching(false),
     });
-
-    es.addEventListener("change", synchronize);
-
-    const markDisconnected = () => {
-      setWatching(false);
-    };
-    es.addEventListener("error", markDisconnected);
-    es.onerror = markDisconnected;
 
     return () => {
       active = false;
-      es.close();
-      if (esRef.current === es) esRef.current = null;
+      unsubscribe();
     };
   }, [filePath, fetchContent, fetchGitDiff, sourceSessionId, watchEnabled]);
 

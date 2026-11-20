@@ -340,6 +340,16 @@ export interface DebugTrackedEventSource {
   lastErrorAt: number | null;
 }
 
+/** The page's stream-bus view: one socket, many channels. */
+export interface DebugBusSnapshot {
+  mode: "bus" | "legacy";
+  state: string;
+  sockets: number;
+  channels: { channel: string; kind: string }[];
+  gaps: number;
+  dropped: number;
+}
+
 export interface DebugPageVisibility {
   state: "visible" | "hidden";
   /** Since tracking started (the page's first chat mount). */

@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useId, useRef, type ButtonHTMLAttributes, type DragEvent } from "react";
+import { subscribe } from "@/lib/stream-bus";
 import { useI18n } from "@/hooks/useI18n";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
@@ -1376,8 +1377,12 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
   const [loginState, setLoginState] = useState<OAuthLoginState>({ phase: "idle" });
   const { t } = useI18n();
   const [inputValue, setInputValue] = useState("");
-  const eventSourceRef = useRef<EventSource | null>(null);
+  const unsubscribeRef = useRef<(() => void) | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const stopLogin = useCallback(() => {
+    unsubscribeRef.current?.();
+    unsubscribeRef.current = null;
+  }, []);
 
   useEffect(() => {
     if (loginState.phase === "auth" || loginState.phase === "prompt") {
@@ -1389,24 +1394,18 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
   useEffect(() => {
     setLoginState({ phase: "idle" });
     setInputValue("");
-    eventSourceRef.current?.close();
-    eventSourceRef.current = null;
-  }, [provider.id]);
+    stopLogin();
+  }, [provider.id, stopLogin]);
 
-  useEffect(() => {
-    return () => { eventSourceRef.current?.close(); };
-  }, []);
+  useEffect(() => stopLogin, [stopLogin]);
 
   const handleLogin = useCallback(() => {
-    eventSourceRef.current?.close();
+    stopLogin();
     setLoginState({ phase: "connecting" });
     setInputValue("");
 
-    const es = new EventSource(`/api/auth/login/${encodeURIComponent(provider.id)}`);
-    eventSourceRef.current = es;
-
-    es.onmessage = (e) => {
-      const data = JSON.parse(e.data) as {
+    unsubscribeRef.current = subscribe(`auth:${provider.id}`, (event) => {
+      const data = event as {
         type: string; url?: string; instructions?: string | null;
         token?: string; message?: string; placeholder?: string | null;
         userCode?: string; verificationUri?: string; intervalSeconds?: number | null; expiresInSeconds?: number | null;
@@ -1431,22 +1430,23 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
       } else if (data.type === "progress") {
         setLoginState({ phase: "progress", message: data.message! });
       } else if (data.type === "success") {
-        es.close();
+        stopLogin();
         setLoginState({ phase: "success" });
         onRefresh();
       } else if (data.type === "error") {
-        es.close();
+        stopLogin();
         setLoginState({ phase: "error", message: data.message! });
       } else if (data.type === "cancelled") {
-        es.close();
+        stopLogin();
         setLoginState({ phase: "idle" });
       }
-    };
-    es.onerror = () => {
-      es.close();
-      setLoginState((prev) => prev.phase === "success" ? prev : { phase: "error", message: t("models.connectionLost") });
-    };
-  }, [provider.id, onRefresh, t]);
+    }, {
+      onError: () => {
+        stopLogin();
+        setLoginState((prev) => prev.phase === "success" ? prev : { phase: "error", message: t("models.connectionLost") });
+      },
+    });
+  }, [provider.id, onRefresh, t, stopLogin]);
 
   const handleLogout = useCallback(async () => {
     await fetch(`/api/auth/logout/${encodeURIComponent(provider.id)}`, { method: "POST" });
@@ -1512,7 +1512,7 @@ function OAuthDetail({ provider, onRefresh, enabledModels, contextSettings }: {
           {isWorking ? (
             <ConfigButton
               size="small"
-              onClick={() => { eventSourceRef.current?.close(); setLoginState({ phase: "idle" }); }}
+              onClick={() => { stopLogin(); setLoginState({ phase: "idle" }); }}
             >
               {t("i18n.cancel")}
             </ConfigButton>

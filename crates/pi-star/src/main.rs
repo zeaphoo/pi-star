@@ -8,6 +8,7 @@ mod pi_runtime;
 mod protocol;
 mod routes;
 mod state;
+mod stream;
 mod web_assets;
 
 use std::future::IntoFuture;

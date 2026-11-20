@@ -22,12 +22,12 @@ and "Ask in new chat" are kept). The item-by-item comparison, ported scope, and 
 | Files | ✅ | list/read/download/meta/upload/upload-check/allow-link/watch, DOCX preview |
 | @ file index | ✅ | git ls-files with ignore-rule fallback, fuzzy matching |
 | Git / worktree | ✅ | status, diff, list/add/remove |
-| Terminal | ✅ | portable-pty + SSE + process-group cleanup |
+| Live transport | ✅ | one `/api/stream` WebSocket per browser profile: channel subscriptions, cursor resume, backpressure, whole-hub buffer budget, SharedWorker across tabs |
 | Agent main path | ✅ | Backend chosen per session and persisted as the `pi-star:agent-backend` custom entry: default `rpc` (`pi --mode rpc`, standard PI), optional `quick` (in-process `AgentHarness`/QuickPI, pi v3 storage, tools sandboxed through AllowedRoots, including MCP and subagents); `/api/agent/backends` and the Agent dropdown in the composer share the same state, and switching is disabled while running. QuickPI renders the system prompt by pi's sections (tools/rules/docs/context/skills/cwd), reads the tool loadout from settings `defaultTools` and `pi-star:tool-selection`, and `set_tools` persists the selection as well |
 | PiRpcBackend | ✅ | prompt/steer/follow-up/abort/queue, model/thinking, compaction/retry, stats, fork/clone, session rekey, single-writer routing, subagent session locks, extension UI, event stream; `pi-star-agent-extension` fills in get/set tools, tree, branch, reload, and basic subagent tools; real-pi + fake-model end-to-end tests cover tools, abort, extension UI, fork/rekey. As the default `rpc` backend it only owns sessions that selected it |
 | Idle reclamation / leases | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`, background reclaim every 30s; lease renewal |
 | Subagents | ✅ | Built-in `general-purpose`/`explore`/`plan`, global/workspace/project file scopes, full pi-web profile fields (display_name, load_skills/extensions, codemode, mcp, max_turns, prompt_mode, color, isolation, persist_session, extension tool selection, etc.), unknown frontmatter preserved, builtin switches and `agents/settings.json`, child session/waiting/concurrency/status display |
-| Extension UI | ✅ | Pending requests, SSE replay ids, response/input, blocking timeout; never triggered without a Node extension process |
+| Extension UI | ✅ | Pending requests, replay ids, response/input, blocking timeout; never triggered without a Node extension process |
 | Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped; project settings override global |
 | Providers | ✅ | OpenAI-compatible / Anthropic Messages; model cache, provider usage |
 | OAuth / device-code | ✅ | Anthropic authorization code + PKCE, GitHub Copilot device-code; all other built-in providers sign in through the bundled pi/pi-ai OAuth flow (Node bridge); API key save/delete/sign-out |
@@ -38,7 +38,7 @@ and "Ask in new chat" are kept). The item-by-item comparison, ported scope, and 
 | Project trust | ✅ | Inheritance, decisions, project MCP manifest |
 | Static serving / SPA | ✅ | Cache headers, SPA fallback, API JSON 404 |
 | Auth / security | ✅ | Host/Origin, body limit, cookie/Basic Auth, exponential backoff on failures |
-| Debug / web-auth | ✅ | Read-only snapshots; connection table with SSE counts, addresses, and browser tabs per agent/terminal/file-watch |
+| Debug / web-auth | ✅ | Read-only snapshots; sockets, channels by kind, ring bytes, gaps and drops, addresses and browser tabs |
 | app-update | ✅ | Configurable release source (`PI_STAR_UPDATE_URL`), 12h cache, supports `PI_STAR_SKIP_VERSION_CHECK=1` |
 | Embedded frontend assets | ✅ | Release embeds `ui/dist` with `rust-embed`; debug reads from disk; `--ui-dir` overrides; health response exposes `assets` |
 | Desktop runtime contract | ✅ | stdout `assets`/`listening`/`bind-failed` events, stderr logs, bind exit code 2, `--exit-on-stdin-eof` |

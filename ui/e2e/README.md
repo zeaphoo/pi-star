@@ -9,6 +9,7 @@ cd .. && cargo build
 cd ui && npm run test:e2e
 npm run test:terminal
 npm run test:dock
+npm run test:bus
 ```
 
 The runner starts and stops its own `target/{debug,release}/pi-star` on an
@@ -32,6 +33,9 @@ Coverage:
 - Interface/chat and monospace font lists and weights apply live, survive
   refresh, sync between tabs and reset independently without changing width or
   font size. Headings and Markdown emphasis retain their weights.
+- The stream bus (`stream-bus.mjs`): one `/api/stream` WebSocket for two tabs and a terminal
+  view, every channel multiplexed on it, no per-feature SSE request, and the server reports a
+  single connection with per-kind channel counts.
 - A project terminal keeps its shell across sessions and reloads, restarts on
   demand, and swaps its own theme (`terminal.mjs`).
 - The right dock (`dock.mjs`): independent Code/Terminal leaves beside the

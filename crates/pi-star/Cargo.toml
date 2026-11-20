@@ -12,7 +12,7 @@ path = "src/main.rs"
 pi-star-core = { path = "../pi-star-core" }
 anyhow.workspace = true
 async-stream.workspace = true
-axum = { version = "0.8", features = ["multipart", "macros"] }
+axum = { version = "0.8", features = ["multipart", "macros", "ws"] }
 base64.workspace = true
 chrono.workspace = true
 clap = { version = "4", features = ["derive", "env"] }
@@ -38,3 +38,4 @@ uuid.workspace = true
 http-body-util = "0.1"
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+tokio-tungstenite = "0.29"

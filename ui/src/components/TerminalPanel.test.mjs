@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { setImmediate } from "node:timers/promises";
-import { createTerminalWriter, terminalRequest } from "../lib/terminal-client.ts";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url, { interopDefault: true, moduleCache: false });
+const { createTerminalWriter, terminalRequest } = await jiti.import("../lib/terminal-client.ts");
 
 test("terminal errors preserve server diagnostics and explain non-JSON responses", async (t) => {
   const fetch = t.mock.method(globalThis, "fetch");

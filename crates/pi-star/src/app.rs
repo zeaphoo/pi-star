@@ -17,6 +17,7 @@ use crate::state::AppState;
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route("/stream", get(crate::stream::ws::handler))
         .route("/sessions", get(routes::sessions::list))
         .route(
             "/sessions/{id}",
@@ -212,6 +213,9 @@ async fn cache_headers(
     let path = request.uri().path().to_string();
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
+    if path.starts_with("/api/") && path.ends_with("/events") {
+        headers.insert("Deprecation", axum::http::HeaderValue::from_static("true"));
+    }
     if path.starts_with("/assets/") {
         headers.insert(
             axum::http::header::CACHE_CONTROL,

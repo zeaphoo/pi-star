@@ -1,3 +1,5 @@
+import { busReady, sendCommand } from "./stream-bus";
+
 export class TerminalRequestError extends Error {
   readonly status: number;
 
@@ -27,6 +29,7 @@ export async function terminalRequest(path: string, options?: RequestInit): Prom
 }
 
 export function createTerminalWriter(id: string, onError: (error: Error) => void) {
+  const channel = `terminal:${id}`;
   let pending = Promise.resolve();
   let stopped = false;
   let bufferedInput: { type: "input"; data: string } | null = null;
@@ -50,6 +53,14 @@ export function createTerminalWriter(id: string, onError: (error: Error) => void
     write(data: string) {
       if (stopped) return;
       for (const chunk of data.match(/[\s\S]{1,32768}/gu) ?? []) {
+        if (busReady()) {
+          if (!sendCommand(channel, { type: "input", data: chunk })) {
+            stopped = true;
+            onError(new Error("The terminal stream is not available"));
+            return;
+          }
+          continue;
+        }
         if (bufferedInput && bufferedInput.data.length + chunk.length <= 65536) bufferedInput.data += chunk;
         else {
           bufferedInput = { type: "input", data: chunk };
@@ -59,6 +70,10 @@ export function createTerminalWriter(id: string, onError: (error: Error) => void
     },
     resize(cols: number, rows: number) {
       bufferedInput = null;
+      if (busReady()) {
+        sendCommand(channel, { type: "resize", cols, rows });
+        return;
+      }
       enqueue({ type: "resize", cols, rows });
     },
     stop() { stopped = true; bufferedInput = null; return pending; },

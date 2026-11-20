@@ -14,7 +14,7 @@ import {
   terminalFontStack,
 } from "@/lib/terminal-appearance";
 import { createTerminalWriter, TerminalRequestError, terminalRequest } from "@/lib/terminal-client";
-import { pageId, trackEventSource } from "@/lib/page-debug";
+import { subscribe } from "@/lib/stream-bus";
 import {
   applyTerminalModifiers,
   NO_TERMINAL_MODIFIERS,
@@ -136,7 +136,7 @@ export function TerminalPanel({
     const container = containerRef.current;
     if (!container) return;
     let disposed = false;
-    let events: EventSource | null = null;
+    let unsubscribe: (() => void) | null = null;
     let offset: number | undefined;
     let connected = false;
     let exited = false;
@@ -232,38 +232,12 @@ export function TerminalPanel({
     const resizeObserver = new ResizeObserver(fitAndResize);
     resizeObserver.observe(container);
 
-    let verifying = false;
-    let verifyTimer: ReturnType<typeof setTimeout> | null = null;
-    const verifyTerminal = async () => {
-      if (disposed || exited || verifying) return;
-      verifying = true;
-      try {
-        await terminalRequest(`/api/terminal/${encodeURIComponent(id)}`);
-        if (!disposed && !exited) connect();
-      } catch (reason) {
-        if (disposed || exited) return;
-        if (reason instanceof TerminalRequestError && reason.status === 404) {
-          // The server forgot this PTY (a restart or a long-lived page). The
-          // parent replaces the id and creates a shell in the saved cwd.
-          callbacksRef.current.onExpired();
-        } else {
-          setError(reason instanceof Error ? reason.message : String(reason));
-          setStatus("error");
-        }
-      } finally {
-        verifying = false;
-      }
-    };
-
     const connect = () => {
-      if (disposed || exited || !navigator.onLine) return;
-      events?.close();
-      // `holder`: the page, for the Debug panel's connected pages.
-      const query = new URLSearchParams({ holder: pageId() });
-      if (offset !== undefined) query.set("after", String(offset));
-      events = trackEventSource("terminal", new EventSource(`/api/terminal/${encodeURIComponent(id)}/events?${query}`), cwdRef.current);
-      events.onmessage = (message) => {
-        const event = JSON.parse(message.data) as TerminalEvent;
+      if (disposed || exited) return;
+      unsubscribe?.();
+      unsubscribe = subscribe(`terminal:${id}`, (data) => {
+        if ((data as { type?: string }).type === "resync") return; // The bus resubscribes; a reset baseline follows.
+        const event = data as TerminalEvent;
         if (event.type === "cwd") {
           callbacksRef.current.onCwdChange?.(event.cwd);
           return;
@@ -277,33 +251,39 @@ export function TerminalPanel({
           exited = true;
           connected = false;
           terminal.options.disableStdin = true;
-          events?.close();
+          unsubscribe?.();
+          unsubscribe = null;
           setExitCode(event.type === "exit" ? event.exitCode : null);
           setStatus("exited");
           if (event.type === "exit") callbacksRef.current.onExit?.(event.exitCode);
         }
-      };
-      events.onopen = () => {
-        connected = true;
-        if (inputFailed) return;
-        terminal.options.disableStdin = false;
-        setStatus("ready");
-        fitAndResize();
-        writer.resize(Math.max(2, terminal.cols), Math.max(2, terminal.rows));
-        if (container.offsetWidth && container.offsetHeight) terminal.focus();
-      };
-      events.onerror = () => {
-        if (disposed || exited) return;
-        connected = false;
-        terminal.options.disableStdin = true;
-        setStatus("connecting");
-        if (events?.readyState !== EventSource.CLOSED) return;
-        if (verifyTimer) clearTimeout(verifyTimer);
-        verifyTimer = setTimeout(() => {
-          verifyTimer = null;
-          void verifyTerminal();
-        }, 500);
-      };
+      }, {
+        // The bus's `ack` (and the terminal channel's first snapshot) is the
+        // old EventSource `open`.
+        onOpen: () => {
+          if (disposed || exited) return;
+          connected = true;
+          if (inputFailed) return;
+          terminal.options.disableStdin = false;
+          setStatus("ready");
+          fitAndResize();
+          writer.resize(Math.max(2, terminal.cols), Math.max(2, terminal.rows));
+          if (container.offsetWidth && container.offsetHeight) terminal.focus();
+        },
+        onError: (error) => {
+          if (disposed || exited) return;
+          connected = false;
+          terminal.options.disableStdin = true;
+          if (error.code === "unknown_channel") {
+            // The PTY is gone (a server restart or a long-lived page): the
+            // parent replaces the id and restores the shell.
+            callbacksRef.current.onExpired();
+            return;
+          }
+          setStatus("connecting");
+          setError(error.message);
+        },
+      });
     };
 
     const create = (targetCwd: string) => terminalRequest("/api/terminal", {
@@ -344,30 +324,14 @@ export function TerminalPanel({
       setStatus("error");
     });
 
-    const pageHide = () => {
-      connected = false;
-      terminal.options.disableStdin = true;
-      events?.close();
-      if (!exited && !inputFailed) setStatus("connecting");
-    };
-    const pageShow = (event: PageTransitionEvent) => { if (event.persisted) connect(); };
-    window.addEventListener("pagehide", pageHide);
-    window.addEventListener("pageshow", pageShow);
-    window.addEventListener("offline", pageHide);
-    window.addEventListener("online", connect);
     return () => {
       disposed = true;
-      if (verifyTimer) clearTimeout(verifyTimer);
-      events?.close();
+      unsubscribe?.();
       osc7.dispose();
       void writer.stop();
       resizeObserver.disconnect();
       onData.dispose();
       onResize.dispose();
-      window.removeEventListener("pagehide", pageHide);
-      window.removeEventListener("pageshow", pageShow);
-      window.removeEventListener("offline", pageHide);
-      window.removeEventListener("online", connect);
       terminal.dispose();
       terminalRef.current = null;
       refitRef.current = () => {};

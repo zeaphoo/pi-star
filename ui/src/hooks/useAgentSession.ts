@@ -39,7 +39,8 @@ import {
 } from "@/lib/agent-event-connection";
 import { HIDDEN_PAGE_GRACE_MS } from "@/hooks/usePageHidden";
 import type { DebugClientLease, DebugClientSession, DebugEventConnectionSnapshot, DebugStreamCloseReason } from "@/lib/debug-types";
-import { pageId, peekPageId, trackEventSource } from "@/lib/page-debug";
+import { peekPageId } from "@/lib/page-debug";
+import { subscribe as subscribeBus } from "@/lib/stream-bus";
 import type { TranslationParams } from "@/lib/i18n/types";
 import { AGENT_EVENT_HEARTBEAT_MS, isNestedToolExecutionEvent, isSystemMessageEvent } from "@/lib/agent-event-wire";
 import { runStatePhase } from "@/lib/chat-phase-label";
@@ -283,7 +284,6 @@ const EVENT_STREAM_READY_TIMEOUT_MS = 60_000;
 const EVENT_STREAM_RECONNECT_DELAY_MS = 1_000;
 const SESSION_LEASE_RENEW_INTERVAL_MS = 30_000;
 // A ready stream silent for two and a half heartbeats is dead (AgentEventConnection reconnects).
-const EVENT_STREAM_STALE_MS = AGENT_EVENT_HEARTBEAT_MS * 2.5;
 type SessionLeaseOutcome = SessionLeaseReply | "unanswered" | null;
 // This page's id, the `?holder=` of its event streams: lib/page-debug.ts.
 export { peekPageId };
@@ -632,16 +632,44 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   if (!eventConnectionRef.current) {
     eventConnectionRef.current = new AgentEventConnection({
-      createSource: (sid) => trackEventSource(
-        "agent",
-        new EventSource(`/api/agent/${encodeURIComponent(sid)}/events?holder=${encodeURIComponent(pageId())}`),
-        sid,
-      ),
+      // The connection state machine only sees an EventSource-shaped object;
+      // the bytes come from the bus's `agent:<sid>` channel, so the page never
+      // opens a connection of its own.
+      createSource: (sid) => {
+        let readyState = 0;
+        let unsubscribe: () => void = () => {};
+        const source = {
+          get readyState() {
+            return readyState;
+          },
+          onmessage: null as ((event: MessageEvent<string>) => void) | null,
+          onerror: null as ((event: Event) => void) | null,
+          close() {
+            readyState = 2;
+            unsubscribe();
+          },
+        };
+        unsubscribe = subscribeBus(`agent:${sid}`, (data) => {
+          if (readyState === 2) return;
+          readyState = 1;
+          source.onmessage?.({ data: JSON.stringify(data) } as MessageEvent<string>);
+        }, {
+          onError: (error) => {
+            if (readyState === 2) return;
+            if (error.code === "unknown_channel") readyState = 2;
+            // The connection state machine owns reconnects; report every
+            // failure and let it decide whether to retry.
+            source.onerror?.(new Event("error"));
+          },
+        });
+        return source;
+      },
       onEvent: (event) => handleAgentEventRef.current?.(event as AgentEvent),
       shouldMaintain: wantsEventStream,
       readinessTimeoutMs: EVENT_STREAM_READY_TIMEOUT_MS,
       reconnectDelayMs: EVENT_STREAM_RECONNECT_DELAY_MS,
-      staleAfterMs: EVENT_STREAM_STALE_MS,
+      // The bus's WebSocket ping/pong is the liveness check now: the agent
+      // channel has no heartbeat frames of its own.
       onUnexpectedError: (error) => {
         console.error("Failed to maintain the agent event stream:", error);
       },

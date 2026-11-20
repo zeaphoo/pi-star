@@ -1,3 +1,4 @@
+import { listBusChannels } from "./stream-bus";
 import type {
   DebugPageVisibility,
   DebugRunningPoll,
@@ -70,7 +71,7 @@ function pruneClosed(): void {
 
 /**
  * Registers an EventSource the page just created and returns it unchanged, so a call site reads
- * `const es = trackEventSource("terminal", new EventSource(url))`. `open` and `error` are counted
+ * `const es = trackEventSource("terminal", source)`. `open` and `error` are counted
  * through extra listeners; the source's own `onopen` / `onerror` / `onmessage` are untouched.
  */
 export function trackEventSource<T extends EventSourceLike>(kind: DebugTrackedEventSourceKind, source: T, label: string | null = null): T {
@@ -101,6 +102,32 @@ export function trackEventSource<T extends EventSourceLike>(kind: DebugTrackedEv
   return source;
 }
 
+/** The bus channels this page holds, rendered as sources by the Debug panel. */
+const busChannelSince = new Map<string, number>();
+
+function busSources(): DebugTrackedEventSource[] {
+  const now = Date.now();
+  return listBusChannels().map((channel, index) => {
+    let since = busChannelSince.get(channel.channel);
+    if (since === undefined) {
+      since = now;
+      busChannelSince.set(channel.channel, since);
+    }
+    const kind = channel.kind === "agent" ? "agent" : channel.kind === "terminal" ? "terminal" : "file-watch";
+    return {
+      id: 1_000_000 + index,
+      kind,
+      label: channel.channel,
+      state: "open",
+      createdAt: since,
+      opens: 1,
+      errors: 0,
+      lastOpenAt: since,
+      lastErrorAt: null,
+    };
+  });
+}
+
 /** The page's sources that are open or reconnecting, oldest first. */
 export function listTrackedEventSources(): DebugTrackedEventSource[] {
   const list: DebugTrackedEventSource[] = [];
@@ -122,7 +149,7 @@ export function listTrackedEventSources(): DebugTrackedEventSource[] {
       lastErrorAt: entry.lastErrorAt,
     });
   }
-  return list;
+  return list.concat(busSources());
 }
 
 const visibility = {

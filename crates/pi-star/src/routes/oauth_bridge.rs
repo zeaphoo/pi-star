@@ -5,19 +5,21 @@
 //! flows in a short-lived Node process, so the subscription list in the Models
 //! panel matches pi-web instead of hiding the providers pi-star cannot
 //! hand-code yet.
+//!
+//! The same flow backs the deprecated SSE route and the `auth:<provider>`
+//! stream-bus channel.
 
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::sync::Arc;
 
 use axum::http::StatusCode;
-use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::sync::{Mutex, oneshot};
 
 use crate::pi_runtime;
-use crate::routes;
+use crate::routes::auth::{Flow, spawn_flow};
 use crate::state::{AppState, PendingOAuth};
 
 const BRIDGE_SCRIPT: &str = include_str!("oauth_bridge.mjs");
@@ -27,12 +29,8 @@ fn bridge_runtime() -> Option<(PathBuf, PathBuf)> {
     Some((pi_runtime::node_command()?, pi_runtime::package_dir()?))
 }
 
-fn sse(data: Value) -> axum::response::sse::Event {
-    axum::response::sse::Event::default().data(data.to_string())
-}
-
-/// Remove prompt tokens this flow registered, including when the browser
-/// closes the SSE stream before the login finishes.
+/// Remove prompt tokens this flow registered, including when the consumer goes
+/// away before the login finishes.
 struct PromptCleanup {
     state: Arc<AppState>,
     tokens: Arc<parking_lot::Mutex<Vec<String>>>,
@@ -51,24 +49,28 @@ impl Drop for PromptCleanup {
     }
 }
 
-pub async fn login(state: Arc<AppState>, provider: String) -> Response {
+/// Starts the Node bridge and returns the flow the bus and the SSE route read.
+pub async fn start_flow(
+    state: Arc<AppState>,
+    provider: String,
+) -> Result<Flow, (StatusCode, String)> {
     let Some(definition) = pi_star_core::models::builtin_provider(&provider) else {
-        return routes::json_error(
+        return Err((
             StatusCode::NOT_IMPLEMENTED,
             format!("OAuth login for {provider} is not implemented yet"),
-        );
+        ));
     };
     if definition.oauth_name.is_none() {
-        return routes::json_error(
+        return Err((
             StatusCode::NOT_IMPLEMENTED,
             format!("OAuth login for {provider} is not implemented yet"),
-        );
+        ));
     }
     let Some((node, package_dir)) = bridge_runtime() else {
-        return routes::json_error(
+        return Err((
             StatusCode::NOT_IMPLEMENTED,
             format!("OAuth login for {provider} requires the bundled pi runtime"),
-        );
+        ));
     };
 
     let mut command = tokio::process::Command::new(node);
@@ -86,19 +88,23 @@ pub async fn login(state: Arc<AppState>, provider: String) -> Response {
         command.env("PI_STAR_DEVICE_ID", device_id);
     }
 
-    let mut child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return routes::internal(format!(
-                "Could not start OAuth login for {provider}: {error}"
-            ));
-        }
-    };
+    let mut child = command.spawn().map_err(|error| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("Could not start OAuth login for {provider}: {error}"),
+        )
+    })?;
     let Some(stdout) = child.stdout.take() else {
-        return routes::internal("OAuth login process has no stdout");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OAuth login process has no stdout".into(),
+        ));
     };
     let Some(stdin) = child.stdin.take() else {
-        return routes::internal("OAuth login process has no stdin");
+        return Err((
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "OAuth login process has no stdin".into(),
+        ));
     };
     let stdin = Arc::new(Mutex::new(stdin));
     let mut lines = BufReader::new(stdout).lines();
@@ -111,7 +117,7 @@ pub async fn login(state: Arc<AppState>, provider: String) -> Response {
         tokens: prompt_tokens.clone(),
     };
 
-    let stream = async_stream::stream! {
+    Ok(spawn_flow(move |tx| async move {
         let mut child = child;
         let _cleanup = cleanup;
         loop {
@@ -121,17 +127,15 @@ pub async fn login(state: Arc<AppState>, provider: String) -> Response {
                     Err(_) => continue,
                 },
                 Ok(None) => {
-                    yield Ok::<_, std::convert::Infallible>(sse(json!({
-                        "type": "error",
-                        "message": "OAuth login ended unexpectedly",
-                    })));
+                    let _ = tx
+                        .send(json!({"type": "error", "message": "OAuth login ended unexpectedly"}))
+                        .await;
                     break;
                 }
                 Err(error) => {
-                    yield Ok::<_, std::convert::Infallible>(sse(json!({
-                        "type": "error",
-                        "message": format!("OAuth login failed: {error}"),
-                    })));
+                    let _ = tx
+                        .send(json!({"type": "error", "message": format!("OAuth login failed: {error}")}))
+                        .await;
                     break;
                 }
             };
@@ -156,44 +160,40 @@ pub async fn login(state: Arc<AppState>, provider: String) -> Response {
                             if let Ok(code) = receiver.await {
                                 let payload = json!({"token": token, "code": code});
                                 let mut stdin = stdin.lock().await;
-                                let _ = stdin
-                                    .write_all(format!("{payload}\n").as_bytes())
-                                    .await;
+                                let _ = stdin.write_all(format!("{payload}\n").as_bytes()).await;
                                 let _ = stdin.flush().await;
                             }
                         });
                     }
-                    yield Ok::<_, std::convert::Infallible>(sse(event));
+                    if tx.send(event).await.is_err() {
+                        break;
+                    }
                 }
                 Some("success") => {
                     let credential = event.get("credential").cloned().unwrap_or(Value::Null);
-                    match write_credential(&config, &provider, credential) {
+                    let reply = match write_credential(&config, &provider, credential) {
                         Ok(()) => {
                             stream_state.invalidate_models();
-                            yield Ok::<_, std::convert::Infallible>(sse(json!({"type": "success"})));
+                            json!({"type": "success"})
                         }
-                        Err(error) => {
-                            yield Ok::<_, std::convert::Infallible>(sse(json!({
-                                "type": "error",
-                                "message": error,
-                            })));
-                        }
-                    }
+                        Err(error) => json!({"type": "error", "message": error}),
+                    };
+                    let _ = tx.send(reply).await;
                     break;
                 }
                 Some("error") => {
-                    yield Ok::<_, std::convert::Infallible>(sse(event));
+                    let _ = tx.send(event).await;
                     break;
                 }
-                _ => yield Ok::<_, std::convert::Infallible>(sse(event)),
+                _ => {
+                    if tx.send(event).await.is_err() {
+                        break;
+                    }
+                }
             }
         }
         let _ = child.start_kill();
-    };
-
-    axum::response::sse::Sse::new(stream)
-        .keep_alive(axum::response::sse::KeepAlive::default())
-        .into_response()
+    }))
 }
 
 fn write_credential(

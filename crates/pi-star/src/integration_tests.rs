@@ -3153,3 +3153,96 @@ async fn git_tab_scans_status_history_and_commit_detail() {
     assert_eq!(status, StatusCode::OK);
     assert!(body["patch"].as_str().unwrap().contains("diff --git"));
 }
+
+#[tokio::test]
+async fn stream_bus_carries_file_watch_events_over_one_websocket() {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+
+    let fixture = write_fixture();
+    let state = crate::state::AppState::new_with_password(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+        "127.0.0.1",
+        None,
+    )
+    .await
+    .unwrap();
+    let app = axum::Router::new()
+        .route(
+            "/api/stream",
+            axum::routing::get(crate::stream::ws::handler),
+        )
+        .with_state(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(format!("ws://{addr}/api/stream?holder=test-page"))
+            .await
+            .unwrap();
+
+    async fn next_json<S>(socket: &mut S) -> Value
+    where
+        S: futures_util::Stream<Item = Result<Message, tokio_tungstenite::tungstenite::Error>>
+            + Unpin,
+    {
+        loop {
+            let message = tokio::time::timeout(std::time::Duration::from_secs(5), socket.next())
+                .await
+                .expect("a frame before the timeout")
+                .expect("a frame")
+                .expect("no websocket error");
+            match message {
+                Message::Text(text) => return serde_json::from_str(&text).unwrap(),
+                Message::Ping(_) | Message::Pong(_) => continue,
+                other => panic!("unexpected frame: {other:?}"),
+            }
+        }
+    }
+
+    let ready = next_json(&mut socket).await;
+    assert_eq!(ready["op"], "ready");
+    assert_eq!(ready["protocol"], 1);
+
+    let file = fixture.cwd.join("hello.txt");
+    let channel = format!("file:{}", file.to_string_lossy());
+    socket
+        .send(Message::Text(
+            json!({"op": "sub", "id": 1, "channel": channel})
+                .to_string()
+                .into(),
+        ))
+        .await
+        .unwrap();
+
+    let mut saw_connected = false;
+    let mut saw_change = false;
+    for _ in 0..12 {
+        let frame = next_json(&mut socket).await;
+        match frame["op"].as_str() {
+            Some("sub_ok") => assert_eq!(frame["channel"], channel),
+            Some("ev") if frame["channel"] == channel => {
+                match frame["data"]["type"].as_str() {
+                    Some("connected") if !saw_connected => {
+                        saw_connected = true;
+                        // The watch has its baseline now; a later write must
+                        // arrive as a change, not as part of the snapshot.
+                        std::fs::write(&file, "hello again\n").unwrap();
+                    }
+                    Some("change") if saw_connected => {
+                        saw_change = true;
+                        break;
+                    }
+                    _ => {}
+                }
+            }
+            _ => {}
+        }
+    }
+    assert!(saw_connected, "the file channel greeted the subscriber");
+    assert!(saw_change, "a write to the file reached the socket");
+}

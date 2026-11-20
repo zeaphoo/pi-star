@@ -14,6 +14,7 @@
     "test": "node --experimental-strip-types --test \"src/**/*.test.mjs\" \"public/**/*.test.mjs\"",
     "test:e2e": "node e2e/run.mjs",
     "test:terminal": "node e2e/terminal.mjs",
+    "test:bus": "node e2e/stream-bus.mjs",
     "test:dock": "node e2e/dock.mjs"
   },
   "dependencies": {

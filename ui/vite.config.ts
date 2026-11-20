@@ -62,6 +62,8 @@ export default defineConfig({
       "/api": {
         target: "http://127.0.0.1:30151",
         changeOrigin: false,
+        // /api/stream upgrades to a WebSocket.
+        ws: true,
       },
     },
   },
