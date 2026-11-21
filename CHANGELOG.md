@@ -8,6 +8,10 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.4] - 2026-11-21
+
+第四个预发布版本：单连接实时流、请求超时保护，以及原生 PI 引擎的上下文占用显示。
+
 ### Fixed
 
 - **原生 PI 引擎显示上下文占用**：`pi --mode rpc` 的 `get_state` 不返回 context usage，
@@ -228,7 +232,8 @@
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
 
-[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.3...HEAD
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.4...HEAD
+[0.1.0-rc.4]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.2
 [0.1.0-rc.1]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.1
