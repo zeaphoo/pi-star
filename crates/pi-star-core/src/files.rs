@@ -10,7 +10,6 @@ use serde_json::{Value, json};
 
 pub const TEXT_PREVIEW_MAX_BYTES: u64 = 256 * 1024;
 pub const IMAGE_PREVIEW_MAX_BYTES: u64 = 10 * 1024 * 1024;
-pub const MAX_UPLOAD_FILE_BYTES: usize = 25 * 1024 * 1024;
 pub const MAX_UPLOAD_TOTAL_BYTES: usize = 100 * 1024 * 1024;
 const MAX_INDEX_FILES: usize = 5000;
 const MAX_INDEX_WALK: usize = 50_000;
@@ -164,12 +163,29 @@ pub fn file_meta(path: &Path) -> Result<FileMeta> {
     })
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum TextEncoding {
+    Utf8,
+    Utf16Le,
+    Utf16Be,
+}
+
+fn text_encoding(header: &[u8]) -> TextEncoding {
+    match header {
+        [0xff, 0xfe, ..] => TextEncoding::Utf16Le,
+        [0xfe, 0xff, ..] => TextEncoding::Utf16Be,
+        _ => TextEncoding::Utf8,
+    }
+}
+
 pub fn read_text_chunk(path: &Path, offset: u64) -> Result<TextChunk> {
     let mut file = fs::File::open(path)?;
     let metadata = file.metadata()?;
     if offset > metadata.len() {
         return Err(anyhow!("Invalid text preview offset"));
     }
+    let mut header = [0u8; 2];
+    let _ = file.read(&mut header);
     file.seek(SeekFrom::Start(offset))?;
     let mut buffer =
         vec![0u8; TEXT_PREVIEW_MAX_BYTES.min(metadata.len().saturating_sub(offset)) as usize];
@@ -191,8 +207,24 @@ pub fn read_text_chunk(path: &Path, offset: u64) -> Result<TextChunk> {
                 .unwrap_or_default(),
         });
     }
+    let encoding = text_encoding(&header);
+    let at_end = offset + buffer.len() as u64 >= metadata.len();
     let mut end = buffer.len();
-    if offset + (end as u64) < metadata.len() {
+    if encoding != TextEncoding::Utf8 {
+        // UTF-16 code units are two bytes. At a cut, consume whole units and
+        // leave a high surrogate for the next chunk rather than splitting it.
+        end -= end % 2;
+        if !at_end && end >= 2 {
+            let last = match encoding {
+                TextEncoding::Utf16Le => u16::from_le_bytes([buffer[end - 2], buffer[end - 1]]),
+                TextEncoding::Utf16Be => u16::from_be_bytes([buffer[end - 2], buffer[end - 1]]),
+                TextEncoding::Utf8 => unreachable!(),
+            };
+            if (0xd800..=0xdbff).contains(&last) {
+                end -= 2;
+            }
+        }
+    } else if !at_end {
         while end > 0 && (buffer[end - 1] & 0xc0) == 0x80 {
             end -= 1;
         }
@@ -212,8 +244,28 @@ pub fn read_text_chunk(path: &Path, offset: u64) -> Result<TextChunk> {
             }
         }
     }
-    let next_offset = offset + end as u64;
-    let content = String::from_utf8_lossy(&buffer[..end]).into_owned();
+    let content = match encoding {
+        TextEncoding::Utf8 => String::from_utf8_lossy(&buffer[..end]).into_owned(),
+        TextEncoding::Utf16Le | TextEncoding::Utf16Be => {
+            // The byte order mark is not text; skip it on the first chunk.
+            let start = if offset == 0 && end >= 2 { 2 } else { 0 };
+            let units = buffer[start..end]
+                .chunks_exact(2)
+                .map(|pair| match encoding {
+                    TextEncoding::Utf16Le => u16::from_le_bytes([pair[0], pair[1]]),
+                    TextEncoding::Utf16Be => u16::from_be_bytes([pair[0], pair[1]]),
+                    TextEncoding::Utf8 => unreachable!(),
+                })
+                .collect::<Vec<u16>>();
+            String::from_utf16_lossy(&units)
+        }
+    };
+    let next_offset = if at_end {
+        // A malformed final odd byte is consumed but not shown.
+        metadata.len()
+    } else {
+        offset + end as u64
+    };
     Ok(TextChunk {
         language: language_for_content(path, &content).to_string(),
         content,
@@ -517,7 +569,8 @@ fn list_index(cwd: &Path) -> Result<Vec<String>> {
 }
 
 fn list_with_git(cwd: &Path) -> Option<Vec<String>> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(cwd)
         .args([
@@ -527,9 +580,9 @@ fn list_with_git(cwd: &Path) -> Option<Vec<String>> {
             "--exclude-standard",
             "-z",
         ])
-        .env("LC_ALL", "C")
-        .output()
-        .ok()?;
+        .env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -782,5 +835,56 @@ mod tests {
             language_for_content(Path::new("LICENSE"), "plain text"),
             "text"
         );
+    }
+
+    fn write_utf16(path: &Path, text: &str, little_endian: bool) {
+        let mut bytes = if little_endian {
+            vec![0xff, 0xfe]
+        } else {
+            vec![0xfe, 0xff]
+        };
+        for unit in text.encode_utf16() {
+            bytes.extend(if little_endian {
+                unit.to_le_bytes()
+            } else {
+                unit.to_be_bytes()
+            });
+        }
+        fs::write(path, bytes).unwrap();
+    }
+
+    #[test]
+    fn decodes_bom_marked_utf16_text_previews() {
+        let dir = tempfile::tempdir().unwrap();
+        let little = dir.path().join("little.txt");
+        write_utf16(&little, "héllo 世界", true);
+        let chunk = read_text_chunk(&little, 0).unwrap();
+        assert_eq!(chunk.content, "héllo 世界");
+        assert!(!chunk.binary);
+        assert_eq!(chunk.next_offset, fs::metadata(&little).unwrap().len());
+
+        let big = dir.path().join("big.txt");
+        write_utf16(&big, "héllo 世界", false);
+        let chunk = read_text_chunk(&big, 0).unwrap();
+        assert_eq!(chunk.content, "héllo 世界");
+        assert!(!chunk.binary);
+        assert_eq!(chunk.next_offset, fs::metadata(&big).unwrap().len());
+    }
+
+    #[test]
+    fn utf16_chunks_never_split_a_surrogate_pair() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("boundary.txt");
+        // BOM + 131070 'a' fills one chunk with the emoji's high surrogate last.
+        write_utf16(&path, &format!("{}💡tail", "a".repeat(131_070)), true);
+
+        let first = read_text_chunk(&path, 0).unwrap();
+        assert_eq!(first.content, "a".repeat(131_070));
+        assert!(first.truncated);
+        assert_eq!(first.next_offset, 2 + 131_070 * 2);
+
+        let second = read_text_chunk(&path, first.next_offset).unwrap();
+        assert_eq!(second.content, "💡tail");
+        assert!(!second.truncated);
     }
 }

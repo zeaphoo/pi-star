@@ -73,7 +73,8 @@ Agent 回合中的 MCP 工具注册、完整 skill resource loader）见 [`statu
 模型/thinking、压缩、重试、会话统计、fork/clone、命令、扩展 UI 和事件流；`get_tools`、
 `set_tools`、`navigate_tree`、`fork_branch`、`reload` 由 `agent-extension/` 通过 pi 扩展 API
 补偿。该扩展还注册基础的 `Agent`、`get_subagent_result`、`steer_subagent` 工具，子代理是
-独立的 pi RPC 会话。
+独立的 pi RPC 会话，默认复用父进程的运行时（`PI_STAR_PI_NODE` + `PI_STAR_PI_JS`，或
+`node <argv[1]>`），两者都不可用时才退回 `PATH` 上的 `pi`。
 
 QuickPI 的系统提示按 pi 的 sections（preamble/tools/rules/docs/addendum/project_context/skills/cwd）渲染，
 并读取 `SYSTEM.md`、`APPEND_SYSTEM.md`、`AGENTS.md`/`CLAUDE.md` 与 `settings.json` 的 `defaultTools`；

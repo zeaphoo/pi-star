@@ -156,11 +156,13 @@ fn install_skill(
         format!("https://github.com/{source}.git")
     };
     let clone_dir = std::env::temp_dir().join(format!("pi-star-skill-{}", uuid::Uuid::new_v4()));
-    let output = std::process::Command::new("git")
+    let mut command = std::process::Command::new("git");
+    command
         .args(["clone", "--depth", "1", "--filter=blob:none", &repo_url])
         .arg(&clone_dir)
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .output()?;
+        .env("GIT_TERMINAL_PROMPT", "0");
+    pi_star_core::sanitize_std_command(&mut command);
+    let output = command.output()?;
     if !output.status.success() {
         let _ = std::fs::remove_dir_all(&clone_dir);
         return Err(anyhow::anyhow!(

@@ -16,6 +16,14 @@ Copied from the read-only pi-web checkout at `/home/ubuntu/workspace/pi-star/pi-
 
 These are intentional and must be re-applied after a re-sync:
 
+- **Draft persistence is forward-ported from pi-web 0.18.** `lib/draft-store.ts` writes through to
+  `pi-star:draft:<session id>` instead of upstream's `pi-web:` prefix; `useAgentSession`'s
+  history-edit hold and `SettingsPanel`'s clear-on-sign-out are local integration. Re-apply these
+  when the sync script would bring the 0.15 in-memory version back.
+- **0.16–0.18 fixes live in otherwise-upstream modules.** `MessageView`, `message-display`, `ansi`,
+  `markdown-blocks`, `markdown`, `file-types`, `delimited-table` and `file-links` carry the
+  streaming-reference/fence, ANSI-strip, MIME allow-list, quoted-empty-CSV and line-range fixes.
+  They must survive a re-sync, not be replaced by the 0.15 files.
 - **Side chats (`/side`) are not ported.** Upstream v0.15's `SessionChatPanel`, `side-tab-state`,
   `side-chat-client`, `session-family` side helpers, and the side-chat branches in `AppShell`,
   `ChatWindow`, `ChatInput`, `useAgentSession`, `AgentSessionPanel`, `SessionSidebar`, `TabBar`

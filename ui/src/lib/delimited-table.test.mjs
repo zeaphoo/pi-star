@@ -38,6 +38,11 @@ test("keeps empty fields, skips blank lines and a byte order mark", () => {
   assert.deepEqual(records, [["a", "", "c"], ["", ""], ["d", "e", ""]]);
 });
 
+test("keeps a record whose only field is a quoted empty string", () => {
+  const { records } = parseDelimitedRecords('a,b\n""\nc,d\n', ",");
+  assert.deepEqual(records, [["a", "b"], [""], ["c", "d"]]);
+});
+
 test("a last record without a line break still counts at the end of the file", () => {
   assert.deepEqual(parseDelimitedRecords("a,b\nc,d", ",").records, [["a", "b"], ["c", "d"]]);
   assert.deepEqual(parseDelimitedRecords("a,b\nc,", ",").records, [["a", "b"], ["c", ""]]);

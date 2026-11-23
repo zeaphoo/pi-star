@@ -107,3 +107,15 @@ test("raw HTML and front matter stop the splitting", () => {
   const frontMatter = "---\ntitle: x\n\nother: y\n---\n\nBody";
   assert.deepEqual(splitMarkdownBlocks(frontMatter), [frontMatter]);
 });
+
+test("a reference definition or a fence with trailing text keeps the streamed reply whole", () => {
+  const definition = "See [guide][g].\n\n[g]: https://example.com\n\nAfter";
+  assert.deepEqual(splitMarkdownBlocks(definition), [definition]);
+
+  const fenced = "```\n$$ not math $$\n``` trailing\n$$\n```\n\nAfter";
+  assert.ok(splitMarkdownBlocks(fenced)[0].includes("``` trailing"), "the fence stays whole");
+  assert.deepEqual(renderSplit(fenced), render(fenced));
+
+  const codeLike = "if items[0]:\n\nprint(items)";
+  assert.ok(splitMarkdownBlocks(codeLike).length > 1, "ordinary `]:` still splits");
+});

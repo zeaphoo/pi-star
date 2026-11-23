@@ -8,6 +8,56 @@
 
 ## [Unreleased]
 
+### Added
+
+- **未发送草稿跨刷新保留**：会话草稿写入 `pi-star:draft:<session id>`（停止输入 300ms 后写，
+  `pagehide`/隐藏时立即写，清空或发送立即删除），刷新或被 WebView 重载后恢复文本；图片、
+  超过 20,000 字符的文本和新建会话的临时 key 只留内存，最多保留最近 50 条。历史编辑的待发送
+  文本和正在运行的内置命令会暂时不落盘，避免刷新后语义错乱；退出登录时清除全部已存草稿。
+
+- **单文件上传上限放到 100MB**：取消 25MB 的单文件限制，请求总量仍为 100MB；上传写入继续在
+  阻塞线程池中执行，不会卡住实时流和其他请求。
+
+- **项目子进程不再继承宿主密钥**：git status/diff/worktree、npm 安装与 `npm view`、git clone、
+  Skills 安装以及 QuickPI 的 shell 都会去掉 `PI_WEB_PASSWORD`、provider API Key、GitHub/npm
+  Token、云厂商密钥，以及 `PORT`/`NODE_ENV`/`NEXT_*` 等宿主运行时变量。项目里的
+  `core.fsmonitor`、diff driver、worktree hook 和 npm 生命周期脚本因此无法再读到这些凭据。
+
+### Changed
+
+- **内置 pi 升级到 1.6.0**：`packaging/pi-runtime.json` 的 `pi` 由 1.4.0 改为 1.6.0，Node 仍为
+  22.20.0，重新暂存 `pi-runtime` 即可。已在 1.6.0 下验证宿主扩展的 `get_tools`/`set_tools`/
+  `get_system_prompt`/`get_context_usage`/`reload`，以及 `get_state`/`get_messages`/
+  `get_entries`/`get_session_stats`/`set_session_name` 等 RPC 命令和既有 v3 会话的读取。
+  `scripts/prepare-pi-runtime.mjs` 同时修复了 `--node` 指向输出目录内文件时
+  “src and dest cannot be the same”的报错。
+
+### Fixed
+
+- **UTF-16 文本预览**：带 BOM 的 UTF-16LE/BE 文件按编码解码，分块读取不再拆开代理对。
+
+- **文件字节范围**：拒绝 `bytes=-` 这类没有任何边界的请求，支持 `bytes=-N` 后缀范围，空文件
+  不再返回 416。
+
+- **CSV 空记录**：单个带引号的空字段 `""` 不再被当成空行丢弃。
+
+- **文件类型判定**：MIME 查找只认明确声明的扩展名，`constructor`、`__proto__` 等名字不再被
+  误判为图片/音频/视频。
+
+- **Markdown 流式渲染**：链接引用/脚注定义行会让整条回复作为一个块渲染；带尾随文本的
+  fence 行不再提前关闭代码块，代码块内的 `$$` 示例保持原样。
+
+- **对话中的终端转义**：模型写入正文或思考里的 ANSI 转义不再显示为 `[38;5;5m` 等原始文本，
+  复制时也只复制可见内容。
+
+- **Markdown 文件链接**：`path:12-34` 形式的行范围链接能正确解析到文件。
+
+- **内置运行时的子代理可以启动了**：`agent-extension/subagent.js` 之前用 `PI_STAR_PI_CLI || "pi"`
+  从 PATH 起子代理；安装包只带 `pi-runtime/node` + `pi/dist/bundle/cli.js`，没有 `pi` 命令，
+  干净机器上会 `spawn pi ENOENT`。现在按 `PI_STAR_PI_CLI` → `PI_STAR_PI_NODE`+`PI_STAR_PI_JS`
+  → 父进程的 `execPath`+`argv[1]` → `"pi"` 依次解析，并新增
+  `agent-extension/subagent.test.mjs` 与 CI 步骤。
+
 ## [0.1.0-rc.4] - 2026-11-21
 
 第四个预发布版本：单连接实时流、请求超时保护，以及原生 PI 引擎的上下文占用显示。

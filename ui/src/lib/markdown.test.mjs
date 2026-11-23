@@ -77,6 +77,11 @@ describe("normalizeDisplayMath", () => {
       assert.equal(normalizeDisplayMath(input), input);
     });
 
+    it("a fence with trailing text does not close the block", () => {
+      const input = "```\n$$ not math $$\n``` trailing\n$$a + b$$\n```";
+      assert.equal(normalizeDisplayMath(input), input);
+    });
+
     it("leaves content inside fenced code blocks untouched", () => {
       const input = "```\n$$ not math $$\n$$\n```\n\nreal $$x = 1$$ end";
       const normalized = normalizeDisplayMath(input);

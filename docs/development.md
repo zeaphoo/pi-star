@@ -83,7 +83,9 @@ one backend at a time.
 queues, model/thinking, compaction, retry, session stats, fork/clone, commands, extension UI, and the
 event stream; `get_tools`, `set_tools`, `navigate_tree`, `fork_branch`, and `reload` are filled in by
 `agent-extension/` through the pi extension API. That extension also registers basic `Agent`,
-`get_subagent_result`, and `steer_subagent` tools; subagents are separate pi RPC sessions.
+`get_subagent_result`, and `steer_subagent` tools; subagents are separate pi RPC sessions started
+with the parent's runtime (`PI_STAR_PI_NODE` + `PI_STAR_PI_JS`, or `node <argv[1]>`), falling back
+to `pi` on `PATH` only when neither is available.
 
 QuickPI renders the system prompt by pi's sections
 (preamble/tools/rules/docs/addendum/project_context/skills/cwd) and reads `SYSTEM.md`,

@@ -173,15 +173,15 @@ pub async fn add_worktree(
         if let Err(error) = std::fs::create_dir_all(&base) {
             return Err(internal(error));
         }
-        let branch_exists = Command::new("git")
-            .arg("-C")
-            .arg(&repo_root)
-            .args([
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("refs/heads/{branch_for_work}"),
-            ])
+        let mut command = Command::new("git");
+        command.arg("-C").arg(&repo_root).args([
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("refs/heads/{branch_for_work}"),
+        ]);
+        pi_star_core::sanitize_std_command(&mut command);
+        let branch_exists = command
             .output()
             .map(|output| output.status.success())
             .unwrap_or(false);

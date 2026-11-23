@@ -10,10 +10,40 @@ import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { readFileSync, readdirSync, existsSync, mkdirSync, writeFileSync, unlinkSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 const KEY = Symbol.for("pi-star.subagent.runs");
 const TERMINAL = new Set(["completed", "failed", "aborted", "interrupted"]);
 const DEFAULT_WAIT_MS = 30 * 60 * 1000;
+function isGenericRuntime(execPath) {
+    return /^(node|bun)(\.exe)?$/.test(basename(execPath).toLowerCase());
+}
+function isBunVirtualScript(script) {
+    return typeof script === "string" && (script.startsWith("/$bunfs/root/") || /^[A-Za-z]:[\\/]~BUN[\\/]root[\\/]/.test(script));
+}
+/**
+ * How to start a child pi with the runtime the parent pi is using.
+ *
+ * The desktop installer bundles pi as `pi-runtime/pi` plus a Node binary; there
+ * is no `pi` executable on PATH. pi-star starts it as `node .../cli.js` and
+ * exposes `PI_STAR_PI_NODE` / `PI_STAR_PI_JS` to the extension, so spawning a
+ * bare `pi` only worked on machines with a separate global install.
+ */
+export function resolvePiInvocation(args, env = process.env, runtime = { execPath: process.execPath, script: process.argv[1] }) {
+    if (env.PI_STAR_PI_CLI)
+        return { command: env.PI_STAR_PI_CLI, args: [...args] };
+    if (env.PI_STAR_PI_NODE && env.PI_STAR_PI_JS) {
+        return { command: env.PI_STAR_PI_NODE, args: [env.PI_STAR_PI_JS, ...args] };
+    }
+    const script = runtime.script;
+    if (isGenericRuntime(runtime.execPath)) {
+        if (script && !isBunVirtualScript(script) && existsSync(script)) {
+            return { command: runtime.execPath, args: [script, ...args] };
+        }
+        return { command: "pi", args: [...args] };
+    }
+    // A standalone pi binary (including a Bun-compiled one): re-run it directly.
+    return { command: runtime.execPath, args: [...args] };
+}
 function runs() {
     const global = globalThis;
     if (!global[KEY])
@@ -175,12 +205,12 @@ function startChild(pi, params, runInBackground) {
     const profile = String(params.subagent_type || "general-purpose");
     const description = String(params.description || "Subagent");
     const prompt = profilePrompt(profile);
-    const cli = process.env.PI_STAR_PI_CLI || "pi";
     const args = ["--mode", "rpc", "--session-id", id, "--name", description.slice(0, 80)];
     if (typeof params.model === "string" && params.model.trim()) {
         args.push("--model", params.model.trim());
     }
-    const proc = spawn(cli, args, {
+    const invocation = resolvePiInvocation(args);
+    const proc = spawn(invocation.command, invocation.args, {
         cwd: process.cwd(),
         env: process.env,
         stdio: ["pipe", "pipe", "pipe"],

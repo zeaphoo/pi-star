@@ -255,13 +255,14 @@ fn classify(index: &str, worktree: &str) -> (&'static str, &'static str) {
 }
 
 fn read_porcelain(root: &Path) -> Vec<PorcelainEntry> {
-    let Ok(output) = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(root)
         .args(["status", "--porcelain=v1", "-z"])
-        .env("LC_ALL", "C")
-        .output()
-    else {
+        .env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let Ok(output) = command.output() else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -318,13 +319,14 @@ fn numstat(root: &Path) -> (u64, u64) {
 }
 
 pub fn repository_root(dir: &Path) -> Option<PathBuf> {
-    let output = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(dir)
         .args(["rev-parse", "--show-toplevel"])
-        .env("LC_ALL", "C")
-        .output()
-        .ok()?;
+        .env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }
@@ -333,12 +335,10 @@ pub fn repository_root(dir: &Path) -> Option<PathBuf> {
 }
 
 fn git_text(root: &Path, args: &[String]) -> Result<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .env("LC_ALL", "C")
-        .output()?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(root).args(args).env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output()?;
     if !output.status.success() {
         return Err(anyhow!("git command failed"));
     }
@@ -412,12 +412,10 @@ pub fn add_worktree(cwd: &Path, path: &Path, branch: &str, create_branch: bool) 
     } else {
         args.push(branch.to_string());
     }
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(&args)
-        .env("LC_ALL", "C")
-        .output()?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(cwd).args(&args).env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output()?;
     if !output.status.success() {
         return Err(anyhow!(
             String::from_utf8_lossy(&output.stderr).trim().to_string()
@@ -432,12 +430,10 @@ pub fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> Result<()> {
         args.push("--force".to_string());
     }
     args.push(path.to_string_lossy().into_owned());
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(&args)
-        .env("LC_ALL", "C")
-        .output()?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(cwd).args(&args).env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output()?;
     if !output.status.success() {
         return Err(anyhow!(
             String::from_utf8_lossy(&output.stderr).trim().to_string()
@@ -542,7 +538,8 @@ fn count_entry(result: &mut PorcelainV2, entry: &PorcelainEntry) {
 
 fn read_porcelain_v2(root: &Path) -> PorcelainV2 {
     let mut result = PorcelainV2::default();
-    let Ok(output) = Command::new("git")
+    let mut command = Command::new("git");
+    command
         .arg("-C")
         .arg(root)
         .args([
@@ -552,9 +549,9 @@ fn read_porcelain_v2(root: &Path) -> PorcelainV2 {
             "--untracked-files=all",
             "-z",
         ])
-        .env("LC_ALL", "C")
-        .output()
-    else {
+        .env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let Ok(output) = command.output() else {
         return result;
     };
     if !output.status.success() {

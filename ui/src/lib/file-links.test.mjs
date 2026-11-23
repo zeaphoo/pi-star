@@ -48,6 +48,20 @@ test("resolves absolute markdown file links and strips line suffixes", async () 
     ),
     "/home/me/project/components/MarkdownBody.tsx",
   );
+  assert.equal(
+    resolveLocalFileHref(
+      "/home/me/project/components/MarkdownBody.tsx:36-42",
+      "/home/me/project",
+    ),
+    "/home/me/project/components/MarkdownBody.tsx",
+  );
+  assert.equal(
+    resolveLocalFileHref(
+      "/home/me/project/components/MarkdownBody.tsx:36:5",
+      "/home/me/project",
+    ),
+    "/home/me/project/components/MarkdownBody.tsx",
+  );
 });
 
 test("resolves absolute file links outside cwd", async () => {

@@ -15,7 +15,7 @@ pi-star、哪些需要 Rust 后端配套、哪些不适用。
   `side-tab-state.ts`、`side-chat-client.ts`、`favicon-badge.ts`、`html-sandbox-polyfill.ts`、
   `panel-tab-order.ts`，删除 `SubagentViewer.tsx`、`subagent-viewer-state.ts`。
 - 0.15 同时把依赖从 pi 1.4.0 升到 **pi 1.5.0**（Next 16.3.8 → 16.4.4，与 pi-star 无关）。
-  pi-star 打包的是 pi 1.4.0（`packaging/pi-runtime.json`），见文末「pi 1.5.0」一节。
+  pi-star 现在打包 **pi 1.6.0**（`packaging/pi-runtime.json`），见文末「pi 1.5.0 → 1.6.0」一节。
 - 复核方式：把 sync 脚本复制到临时目录，用 `PI_WEB_DIR` 指向 `v0.13.0` / `v0.15.0` 的
   worktree 各跑一次，再 `diff -rq`。结论不依赖上游 git 历史。
 
@@ -143,7 +143,7 @@ live state 同步模型/thinking，运行结束后再以文件为准。pi-star �
 `agentStatusUrl`，这段可以几乎原样落。
 
 Rust 侧：`POST /api/agent/:id` 的 `set_model` 现在直接透传给 RPC/QuickPI，未见运行中拒绝；
-需要实测两点：pi 1.4.0 的 `--mode rpc` 在 run 中接受 `set_model`；QuickPI 的 agent loop
+需要实测两点：pi 的 `--mode rpc` 在 run 中接受 `set_model`；QuickPI 的 agent loop
 在每次请求时读当前模型。两者都通过就能启用，不需要新接口。
 
 ### 3. Windows 终端 shell
@@ -167,7 +167,8 @@ JS API。
   `running`），而且 pi-star 的子代理面板仍是只读的 `SubagentViewer`，用户无法「在子会话里
   发一轮」——该场景不存在。等子代理运行期生命周期补齐或有可交互面板时再做。
 - `lib/subagent-extension.ts` 在 0.15 改为从 `typebox` 取 `Type`（pi 1.5），pi-star 该文件
-  不在客户端同步范围，跟着 pi 1.5 升级再处理。
+  不在客户端同步范围。agent 侧的 `agent-extension/` 用的是普通 JSON Schema，不受 pi-schema
+  校验切换影响。
 
 ### 5. 工具顺序与 prompt cache
 
@@ -253,18 +254,37 @@ pi-star 落地要点：
 - **`lib/extension-ui-theme.ts` 服务端一半**：需要进程内执行 pi 的 TS 扩展；pi-star 的
   `docs/status.zh-CN.md` 已把「Node/TS 扩展执行」列为运行时边界。客户端配色（A.11）可以先上。
 
-## pi 1.5.0
+## pi 1.5.0 → 1.6.0（已完成）
 
-pi-web 0.15 依赖 pi 1.5.0；pi-star 打包 1.4.0。是否跟进要单独评估：
+pi-web 0.15 依赖 pi 1.5.0；pi-star 现在打包 **pi 1.6.0**（`packaging/pi-runtime.json`）。本次升级
+只改 pins、重跑 `scripts/prepare-pi-runtime.mjs`（顺带修了 `--node` 指向输出目录内文件时的
+`cpSync` 报错）；Release 工作流以该文件做 `pi-runtime` 缓存键，版本一改缓存自动失效。
 
-- 打包只需改 `packaging/pi-runtime.json` 的 `pi` 版本，然后跑
-  `scripts/prepare-pi-runtime.mjs` 与三平台安装包校验。
-- 需要回归：pi-star 的 `agent-extension/`（依赖 pi 扩展 API）、RPC 协议（`pi --mode rpc` 的
-  命令与事件）、`pi --export`、QuickPI 与 pi 1.5 的会话格式兼容性。
-- pi 1.5 还带来：MCP OAuth 的 `clientRegistration: "auto"` 默认值（pi-star 的 Rust MCP OAuth
-  需要认识这个值）、`typebox` 取代 pi-ai 的 `Type`、Sign in with ChatGPT 需要传 device ID
-  （pi-star 目前只内置 Anthropic / GitHub Copilot OAuth，暂不受影响）。
-- 侧聊本身**不要求** pi 1.5：它用到的 `getCurrentTools` 在 1.4.0 就有。
+已用暂存后的 1.6.0 运行时验证：
+
+- `agent-extension/` 在 `pi --mode rpc` 下的宿主命令：`get_tools`、`get_system_prompt`、
+  `get_context_usage`、`set_tools`、`reload`（含 reload 后控制通道重连）。
+- pi-star 发送的 RPC 命令：`get_state`、`get_messages`、`get_entries`、`get_session_stats`、
+  `get_last_assistant_text`、`set_session_name`，响应结构未变。
+- 读取 pi-star/QuickPI 写出的既有 session v3 文件（含自定义 entry）。
+- 加载真实的 `~/.pi/agent` 配置：59 个可用模型、当前模型与 thinking levels。
+
+本次未覆盖：真实的模型流式对话、会话导出路径、Windows/macOS 安装包；发版前需手工跑一遍。
+
+与 pi-star 相关的版本差异：
+
+- 1.5 起工具参数校验改由 pi-schema 负责。`agent-extension/` 的工具都是普通 JSON Schema，
+  不依赖 TypeBox 专有特性，因此不受影响。
+- 1.5.1 起关闭全部工具时，OpenAI 兼容请求不再发送 `"tools": []`。pi-star 的 Rust provider
+  自己序列化请求，只影响内置 CLI 路径。
+- `agent_settled` 增加 `aborted`（`pi_rpc.rs` 已处理）；RPC
+  `new_session`/`switch_session`/`fork` 不再重复执行 `session_start`，但会转发扩展产生的
+  `entry_appended` 等事件（纯增量）。
+- 1.6.0 起扩展的 `render()` 返回 `readonly string[]` 并复用缓存容器；`agent-extension/` 没有
+  注册 TUI 渲染器，不受影响。
+- pi 1.5+ 把 MCP OAuth 默认改为 `clientRegistration: "auto"` / CIMD。pi-star 的 Rust 登录
+  始终走动态注册，服务器没有 registration endpoint 时会报错；该差异早于本次升级，单独跟进。
+- 侧聊本身**不要求**升级 pi：它用到的 `getCurrentTools` 在 1.4.0 就有。
 
 ## 同步流程建议
 
@@ -322,7 +342,22 @@ f6c8699 feat(models) provider 名称    8d2fb36 fix(chat) 粘贴
   `/side`、`SessionChatPanel`、侧聊标签等创建/交互 UI 未移植。
 - **暂缓**：`98ad390` 子代理 run 收敛（pi-star 没有可交互的子会话，见 B.4）、`c319c85`
   工具顺序（客户端路径，收益是 prompt cache，见 B.5）。
-- **未动**：pi 1.5.0 升级（`packaging/pi-runtime.json` 仍是 1.4.0）。本次移植不依赖它：
+- **pi 升级**：已完成，`packaging/pi-runtime.json` 固定 pi 1.6.0。本次移植本身不依赖它：
   侧聊没做，`getCurrentTools` 之外用到的都是 pi-star 自己实现的 Rust 路径。
 
 重新同步时的本地差异见 [`ui/UPSTREAM.md`](../ui/UPSTREAM.md)。
+
+
+## pi-web 0.16–0.18 第一批（已完成）
+
+0.16–0.18 中风险最低的一批已落地：
+
+- **单文件 100MB 上传**：取消 `MAX_UPLOAD_FILE_BYTES`，请求总量仍为 100MB。
+- **草稿跨刷新**：`lib/draft-store.ts` 通过 `pi-star:draft:<session id>` 持久化未发送文本。
+- **项目子进程环境清洗**：git、npm、git clone 和 QuickPI shell 在启动前去掉宿主密钥与
+  `PORT`/`NODE_ENV`/`NEXT_*`。
+- **文件/聊天小修复**：UTF-16 BOM 预览、字节范围边界、带引号空 CSV 记录、MIME 白名单、
+  Markdown 流式引用定义/fence 关闭、回复里的 ANSI 转义、`path:12-34` 链接。
+
+其余 0.16–0.18 项（多词搜索与缓存、后台子代理报告 steer、目录丢失 Fork、PlantUML、长会话
+选择、Agents 条）仍未做，取舍理由见本轮评审记录，不再扩展这份 0.13→0.15 文档。

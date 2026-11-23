@@ -17,6 +17,7 @@ import {
   useChatAppearance,
 } from "@/hooks/useChatAppearance";
 import { useEnterSendMode, setEnterSendMode } from "@/hooks/useEnterSendMode";
+import { clearStoredDrafts } from "@/lib/draft-store";
 import { useFileIconStyle } from "@/hooks/useFileIconStyle";
 import { useFileIconTheme } from "@/hooks/useFileIconTheme";
 import { TerminalSettings } from "./TerminalSettings";
@@ -139,6 +140,8 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     try {
       const response = await fetch("/api/web-auth", { method: "DELETE" });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      // Unsent text stays in this browser's storage otherwise.
+      clearStoredDrafts();
       window.location.replace("/login");
     } catch {
       setLogoutError(t("auth.logoutFailed"));

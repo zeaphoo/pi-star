@@ -204,8 +204,12 @@ async function stage() {
   // Node runtime
   if (localNode) {
     const target = join(outDir, platform === "win32" ? "node.exe" : "node");
-    cpSync(localNode, target);
-    console.log(`node runtime copied from ${localNode}`);
+    if (resolve(localNode) !== resolve(target)) {
+      cpSync(localNode, target);
+      console.log(`node runtime copied from ${localNode}`);
+    } else {
+      console.log(`node runtime already at ${target}`);
+    }
   } else {
     const archive = join(work, nodeArchiveName());
     downloadSync(`https://nodejs.org/dist/v${nodeVersion}/${nodeArchiveName()}`, archive);
@@ -261,7 +265,10 @@ async function stage() {
 
   // host extension (TypeScript source is loaded by pi's extension loader)
   rmSync(join(outDir, "agent-extension"), { recursive: true, force: true });
-  cpSync(join(root, "agent-extension"), join(outDir, "agent-extension"), { recursive: true });
+  cpSync(join(root, "agent-extension"), join(outDir, "agent-extension"), {
+    recursive: true,
+    filter: (source) => !source.endsWith(".test.mjs"),
+  });
 
   // MinGit: Windows target machines may not have Git Bash. MinGit ships the
   // same bash binary as PortableGit under the name sh.exe, so copy it to

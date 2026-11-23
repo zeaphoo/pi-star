@@ -155,12 +155,13 @@ pub async fn install(
                 crate::routes::blocking_result(move || std::fs::remove_dir_all(&remove_target))
                     .await?;
             }
-            let output = tokio::process::Command::new("git")
+            let mut command = tokio::process::Command::new("git");
+            command
                 .args(["clone", "--depth", "1", url])
                 .arg(&target)
-                .env("GIT_TERMINAL_PROMPT", "0")
-                .output()
-                .await?;
+                .env("GIT_TERMINAL_PROMPT", "0");
+            pi_star_core::sanitize_tokio_command(&mut command);
+            let output = command.output().await?;
             if !output.status.success() {
                 return Err(anyhow!(
                     "{}",
@@ -267,6 +268,7 @@ async fn run(program: &str, args: &[&str], cwd: Option<&Path>) -> Result<()> {
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
+    pi_star_core::sanitize_tokio_command(&mut command);
     let output = command.output().await?;
     if !output.status.success() {
         return Err(anyhow!(

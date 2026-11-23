@@ -37,6 +37,15 @@ test("detects video preview paths and treats webm as video", async () => {
   assert.equal(getAudioMime("/tmp/voice.weba"), "audio/webm");
 });
 
+test("only declared extensions map to a media type", async () => {
+  const { getAudioMime, getDocumentMime, getImageMime, getVideoMime } = await loadSubject();
+
+  assert.equal(getImageMime("/tmp/constructor"), null);
+  assert.equal(getAudioMime("/tmp/toString"), null);
+  assert.equal(getVideoMime("/tmp/hasOwnProperty"), null);
+  assert.equal(getDocumentMime("/tmp/__proto__"), null);
+});
+
 test("extracts extensions from mixed path styles", async () => {
   const { documentPreviewKind, getFileExt } = await loadSubject();
 

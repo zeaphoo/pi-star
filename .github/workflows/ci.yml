@@ -58,6 +58,8 @@ jobs:
         run: cd ui && npm run typecheck
       - name: Unit tests
         run: cd ui && npm test
+      - name: Agent extension tests
+        run: node --test agent-extension/*.test.mjs
       - name: Build
         run: |
           version="$(./scripts/check-desktop-version.sh)"

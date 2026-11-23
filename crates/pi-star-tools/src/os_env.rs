@@ -119,6 +119,83 @@ pub fn is_host_private_env(name: &str) -> bool {
     HOST_PRIVATE_ENV.contains(&name) || SUBAGENT_PARENT_ENV.contains(&name)
 }
 
+/// Names that carry credentials a project-scoped child has no business
+/// reading: the host's provider keys, Git/NPM tokens, cloud secrets and the
+/// remote-access password. Project content can run code through `git status`
+/// (`core.fsmonitor`), diff drivers, worktree hooks and npm lifecycle scripts,
+/// so inheriting these would turn "open a checkout" into credential theft.
+const PROJECT_SECRET_ENV: &[&str] = &[
+    "PI_WEB_PASSWORD",
+    "PGPASSWORD",
+    "MYSQL_PWD",
+    "GOOGLE_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "VAULT_TOKEN",
+    "HF_TOKEN",
+    "HUGGING_FACE_HUB_TOKEN",
+    "NPM_TOKEN",
+    "NODE_AUTH_TOKEN",
+    "GITHUB_TOKEN",
+    "GH_TOKEN",
+    "GITLAB_TOKEN",
+];
+
+/// Host runtime variables that describe this process rather than the project
+/// command. `NEXT_*` is matched by prefix.
+fn is_host_runtime_env(name: &str) -> bool {
+    name.eq_ignore_ascii_case("PORT")
+        || name.eq_ignore_ascii_case("NODE_ENV")
+        || name
+            .get(..5)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("NEXT_"))
+}
+
+/// Whether a project-scoped child must not inherit `name`.
+///
+/// The exact list covers names that do not end in a credential suffix; the
+/// suffix match covers the long tail of provider keys and tokens.
+pub fn is_project_command_env_private(name: &str) -> bool {
+    if is_host_runtime_env(name) {
+        return true;
+    }
+    let upper = name.to_ascii_uppercase();
+    if PROJECT_SECRET_ENV.contains(&upper.as_str()) {
+        return true;
+    }
+    upper.ends_with("_API_KEY")
+        || upper.ends_with("_TOKEN")
+        || upper.ends_with("_SECRET")
+        || upper.ends_with("_PASSWORD")
+        || upper.ends_with("_ACCESS_KEY")
+}
+
+/// Environment names to drop from a project-scoped child.
+pub fn project_command_env_removals() -> Vec<std::ffi::OsString> {
+    std::env::vars_os()
+        .filter_map(|(name, _)| {
+            let secret = name.to_str().is_some_and(is_project_command_env_private);
+            secret.then_some(name)
+        })
+        .collect()
+}
+
+/// Drops the host's runtime and credential variables from a std child.
+pub fn sanitize_std_command(command: &mut std::process::Command) {
+    for name in project_command_env_removals() {
+        command.env_remove(name);
+    }
+}
+
+/// Drops the host's runtime and credential variables from a tokio child.
+pub fn sanitize_tokio_command(command: &mut tokio::process::Command) {
+    for name in project_command_env_removals() {
+        command.env_remove(name);
+    }
+}
+
 /// Real-OS `ExecutionEnv`. Clone shares the tracked-pid set + registry.
 pub struct OsExecutionEnv {
     cwd: PathBuf,
@@ -996,7 +1073,7 @@ impl Shell for OsExecutionEnv {
         // below (those are applied after this loop and win).
         if options.inherit_env {
             for (k, v) in std::env::vars() {
-                if is_host_private_env(&k) {
+                if is_host_private_env(&k) || is_project_command_env_private(&k) {
                     continue;
                 }
                 cmd.env(k, v);
@@ -1327,5 +1404,40 @@ mod shell_tests {
         assert!(!is_legacy_wsl_bash_path(Path::new(
             r"D:\tools\msys64\usr\bin\bash.exe"
         )));
+    }
+
+    #[test]
+    fn project_children_do_not_inherit_host_secrets() {
+        for name in [
+            "PI_WEB_PASSWORD",
+            "OPENAI_API_KEY",
+            "ANTHROPIC_API_KEY",
+            "GEMINI_API_KEY",
+            "GOOGLE_API_KEY",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "NPM_TOKEN",
+            "AWS_ACCESS_KEY_ID",
+            "AWS_SECRET_ACCESS_KEY",
+            "AZURE_CLIENT_SECRET",
+            "PORT",
+            "NODE_ENV",
+            "NEXT_PUBLIC_API_URL",
+        ] {
+            assert!(is_project_command_env_private(name), "{name}");
+        }
+        for name in [
+            "PATH",
+            "HOME",
+            "LANG",
+            "LC_ALL",
+            "GIT_TERMINAL_PROMPT",
+            "PI_STAR_PI_NODE",
+            "PI_STAR_PI_JS",
+            "PI_STAR_AGENT_EXTENSION",
+            "TERM",
+        ] {
+            assert!(!is_project_command_env_private(name), "{name}");
+        }
     }
 }

@@ -16,8 +16,8 @@ can be ported directly to pi-star, which need matching Rust backend work, and wh
   `side-tab-state.ts`, `side-chat-client.ts`, `favicon-badge.ts`, `html-sandbox-polyfill.ts`,
   `panel-tab-order.ts`, and removes `SubagentViewer.tsx`, `subagent-viewer-state.ts`.
 - 0.15 also bumps the dependency from pi 1.4.0 to **pi 1.5.0** (Next 16.3.8 → 16.4.4, irrelevant to
-  pi-star). pi-star packages pi 1.4.0 (`packaging/pi-runtime.json`); see the "pi 1.5.0" section at
-  the end.
+  pi-star). pi-star now packages **pi 1.6.0** (`packaging/pi-runtime.json`); see the
+  "pi 1.5.0 → 1.6.0" section at the end.
 - How this was verified: copy the sync script to a temporary directory, point `PI_WEB_DIR` at
   worktrees of `v0.13.0` / `v0.15.0`, run it against each, then `diff -rq`. The conclusion does not
   depend on upstream git history.
@@ -161,7 +161,7 @@ the file after the run ends. pi-star already has `syncLiveModel` and `agentStatu
 adopted almost verbatim.
 
 Rust side: `set_model` in `POST /api/agent/:id` is currently passed straight through to RPC/QuickPI
-with no visible running-state rejection. Two things need testing: pi 1.4.0's `--mode rpc` accepting
+with no visible running-state rejection. Two things need testing: pi's `--mode rpc` accepting
 `set_model` during a run, and QuickPI's agent loop reading the current model on each request. If both
 pass, it can be enabled without a new endpoint.
 
@@ -188,7 +188,8 @@ upstream order without depending on pi's JS API.
   scenario does not exist yet. Revisit once the subagent runtime lifecycle is complete or there is an
   interactive panel.
 - `lib/subagent-extension.ts` changed in 0.15 to take `Type` from `typebox` (pi 1.5); that file is
-  not in pi-star's client sync scope, so handle it with the pi 1.5 upgrade.
+  not in pi-star's client sync scope. The agent-side `agent-extension/` uses plain JSON Schema, so it
+  is unaffected by the pi-schema switch.
 
 ### 5. Tool order and prompt cache
 
@@ -287,22 +288,40 @@ Key implementation points for pi-star:
   pi-star's `docs/status.md` already lists "Node/TS extension execution" as a runtime boundary. The
   client palette (A.11) can land first.
 
-## pi 1.5.0
+## pi 1.5.0 → 1.6.0 (done)
 
-pi-web 0.15 depends on pi 1.5.0; pi-star packages 1.4.0. Whether to follow should be evaluated
-separately:
+pi-web 0.15 depends on pi 1.5.0; pi-star now packages **pi 1.6.0** (`packaging/pi-runtime.json`).
+The upgrade changed only the pins file and re-ran `scripts/prepare-pi-runtime.mjs`; the release
+workflow caches `pi-runtime` on that file, so the bump invalidates the cache automatically.
 
-- Packaging only needs the `pi` version in `packaging/pi-runtime.json` changed, then run
-  `scripts/prepare-pi-runtime.mjs` and the three-platform installer checks.
-- Regressions to cover: pi-star's `agent-extension/` (depends on the pi extension API), the RPC
-  protocol (commands and events of `pi --mode rpc`), `pi --export`, and QuickPI's session-format
-  compatibility with pi 1.5.
-- pi 1.5 also brings: the `clientRegistration: "auto"` default for MCP OAuth (pi-star's Rust MCP
-  OAuth must recognize this value), `typebox` replacing pi-ai's `Type`, and a device ID requirement
-  for Sign in with ChatGPT (pi-star only bundles Anthropic / GitHub Copilot OAuth today, so it is
-  unaffected for now).
-- Side chats themselves do **not** require pi 1.5: the `getCurrentTools` they use already exists in
-  1.4.0.
+What was checked against the staged 1.6.0 runtime:
+
+- `agent-extension/` host commands over `pi --mode rpc`: `get_tools`, `get_system_prompt`,
+  `get_context_usage`, `set_tools`, and `reload` (including reconnecting after the reload).
+- RPC commands pi-star sends: `get_state`, `get_messages`, `get_entries`, `get_session_stats`,
+  `get_last_assistant_text`, and `set_session_name`, with unchanged response shapes.
+- Reading an existing session v3 file written by pi-star/QuickPI, including its custom entries.
+- Loading the real `~/.pi/agent` config: 59 available models, current model and thinking levels.
+
+Not covered by this upgrade check: an actual streamed model turn, the session export path, and the
+Windows/macOS installers; run those before a release.
+
+Version-specific points that touch pi-star:
+
+- Tool argument validation moved to pi-schema in 1.5. `agent-extension/` tools are plain JSON
+  Schema, so no TypeBox-only features are lost.
+- OpenAI-compatible requests omit `"tools": []` when tools are disabled (1.5.1). pi-star's Rust
+  provider code serializes its own requests, so this only affects the bundled CLI path.
+- `agent_settled` gained `aborted` (already handled by `pi_rpc.rs`), and RPC
+  `new_session`/`switch_session`/`fork` no longer run `session_start` twice but now forward
+  extension events such as `entry_appended` (additive).
+- 1.6.0 makes extension `render()` return `readonly string[]` and reuse cached containers.
+  `agent-extension/` registers no TUI renderers, so it is unaffected.
+- pi 1.5+ defaults MCP OAuth to `clientRegistration: "auto"` / CIMD. pi-star's Rust sign-in always
+  does dynamic registration and errors when a server advertises no registration endpoint; this gap
+  predates the bump and is tracked separately.
+- Side chats themselves do **not** require a pi bump: the `getCurrentTools` they use already exists
+  in 1.4.0.
 
 ## Suggested sync process
 
@@ -368,8 +387,24 @@ Group A + B are implemented (side chats C are not):
   `SessionChatPanel`, side-chat tabs) is not ported.
 - **Deferred**: `98ad390` subagent run reconciliation (pi-star has no interactive child sessions, see
   B.4) and `c319c85` tool order (client path; the benefit is prompt caching, see B.5).
-- **Not touched**: the pi 1.5.0 upgrade (`packaging/pi-runtime.json` is still 1.4.0). This round does
+- **pi upgrade**: done — `packaging/pi-runtime.json` pins pi 1.6.0. This porting round itself does
   not depend on it: side chats are not implemented, and everything besides `getCurrentTools` uses
   pi-star's own Rust paths.
 
 Local divergences for the next re-sync are in [`ui/UPSTREAM.md`](../ui/UPSTREAM.md).
+
+
+## pi-web 0.16–0.18 batch 1 (implemented)
+
+The first low-risk batch from 0.16–0.18 is in:
+
+- 100MB single-file uploads (`MAX_UPLOAD_FILE_BYTES` removed; the request total stays 100MB).
+- Draft text survives a WebView reload through `pi-star:draft:<session id>` (`lib/draft-store.ts`).
+- Project-scoped children drop host secrets and `PORT`/`NODE_ENV`/`NEXT_*` before they run
+  (`pi-star-tools` sanitizer; git, npm, git clone and QuickPI shell paths).
+- UTF-16 BOM previews, byte-range bounds, quoted empty CSV records, MIME allow-list, streaming
+  Markdown reference definitions/fence closes, ANSI escapes in replies, and `path:12-34` links.
+
+The remaining 0.16–0.18 items (multi-term search and its cache, background subagent report
+steering, missing-cwd fork, PlantUML, long-transcript selection, Agents strip) are still open; the
+selection criteria are in the review notes rather than this 0.13→0.15 document.

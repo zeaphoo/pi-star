@@ -2950,10 +2950,10 @@ pub async fn plugins_check(
             .unwrap_or("unknown")
             .to_string();
         if kind == "npm" {
-            let output = tokio::process::Command::new("npm")
-                .args(["view", &name, "version"])
-                .output()
-                .await;
+            let mut command = tokio::process::Command::new("npm");
+            command.args(["view", &name, "version"]);
+            pi_star_core::sanitize_tokio_command(&mut command);
+            let output = command.output().await;
             let latest = output
                 .ok()
                 .filter(|output| output.status.success())

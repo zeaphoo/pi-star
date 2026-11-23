@@ -51,19 +51,23 @@ export function getFileExt(filePath: string): string {
 }
 
 export function getImageMime(filePath: string): string | null {
-  return IMAGE_EXT_TO_MIME[getFileExt(filePath)] ?? null;
+  const ext = getFileExt(filePath);
+  return Object.prototype.hasOwnProperty.call(IMAGE_EXT_TO_MIME, ext) ? IMAGE_EXT_TO_MIME[ext] : null;
 }
 
 export function getAudioMime(filePath: string): string | null {
-  return AUDIO_EXT_TO_MIME[getFileExt(filePath)] ?? null;
+  const ext = getFileExt(filePath);
+  return Object.prototype.hasOwnProperty.call(AUDIO_EXT_TO_MIME, ext) ? AUDIO_EXT_TO_MIME[ext] : null;
 }
 
 export function getVideoMime(filePath: string): string | null {
-  return VIDEO_EXT_TO_MIME[getFileExt(filePath)] ?? null;
+  const ext = getFileExt(filePath);
+  return Object.prototype.hasOwnProperty.call(VIDEO_EXT_TO_MIME, ext) ? VIDEO_EXT_TO_MIME[ext] : null;
 }
 
 export function getDocumentMime(filePath: string): string | null {
-  return DOCUMENT_EXT_TO_MIME[getFileExt(filePath) as DocumentPreviewKind] ?? null;
+  const ext = getFileExt(filePath) as DocumentPreviewKind;
+  return Object.prototype.hasOwnProperty.call(DOCUMENT_EXT_TO_MIME, ext) ? DOCUMENT_EXT_TO_MIME[ext] : null;
 }
 
 export function documentPreviewKind(filePath: string): DocumentPreviewKind | null {

@@ -2,6 +2,8 @@ const FENCE = /^ {0,3}(`{3,}|~{3,})/;
 const LIST_ITEM = /^(?:[*+-]|\d{1,9}[.)])(?:[ \t]|$)/;
 const HTML_TAG = /<[A-Za-z!/?]/;
 const INLINE_CODE = /`[^`]*`/g;
+// A link reference or footnote definition (`[guide]: https://…`, `[^1]: …`).
+const DEFINITION = /^ {0,3}\[[^\]]+\]:/;
 
 /**
  * Splits markdown before top-level blocks that cannot belong to the block
@@ -43,8 +45,9 @@ export function splitMarkdownBlocks(markdown: string): string[] {
       const marker = fenceMatch[1][0];
       const size = fenceMatch[1].length;
       if (!fence) fence = { marker, size };
-      else if (marker === fence.marker && size >= fence.size) fence = null;
+      else if (marker === fence.marker && size >= fence.size && /^[ \t]*\r?$/.test(line.slice(fenceMatch[0].length))) fence = null;
     } else if (!fence) {
+      if (DEFINITION.test(line)) return [markdown];
       const prose = line.replace(INLINE_CODE, "");
       if (HTML_TAG.test(prose)) rawHtml = true;
       if ((prose.match(/\$\$/g)?.length ?? 0) % 2 === 1) inMath = !inMath;

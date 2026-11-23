@@ -86,13 +86,10 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
 }
 
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(cwd)
-        .args(args)
-        .env("LC_ALL", "C")
-        .output()
-        .ok()?;
+    let mut command = Command::new("git");
+    command.arg("-C").arg(cwd).args(args).env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = command.output().ok()?;
     if !output.status.success() {
         return None;
     }

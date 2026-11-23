@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createJiti } from "jiti";
+
+const jiti = createJiti(import.meta.url, { tsconfigPaths: true });
 
 async function loadSubject() {
-  return import("./message-display.ts");
+  return jiti.import("./message-display.ts");
 }
 
 function assistant(content) {
@@ -20,6 +23,10 @@ test("bounds thinking previews to the first nonblank line without splitting Unic
   assert.equal(getThinkingPreview("First\rSecond"), "First");
   assert.equal(getThinkingPreview(" \n\t"), "");
   assert.equal(getThinkingPreview("\u{1F4A1}".repeat(300)), "\u{1F4A1}".repeat(240));
+  assert.equal(
+    getThinkingPreview("\x1b[38;5;5mThinking:\x1b[39m\x1b[2m ..."),
+    "Thinking: ...",
+  );
 });
 
 // The text back from its pieces: a line break cut left its "\n" out.

@@ -119,6 +119,45 @@ pub async fn get_file(
     }
 }
 
+/// A single `bytes=` range. `Ok(None)` means no range; `Err(())` means the
+/// header must not be answered with the whole file (RFC 9110 wants 416).
+fn parse_byte_range(range: Option<&str>, size: u64) -> Result<Option<(u64, u64)>, ()> {
+    let Some(range) = range else {
+        return Ok(None);
+    };
+    let Some(spec) = range.strip_prefix("bytes=") else {
+        return Err(());
+    };
+    let Some((from, to)) = spec.split_once('-') else {
+        return Err(());
+    };
+    if from.is_empty() && to.is_empty() {
+        return Err(());
+    }
+    if from.is_empty() {
+        let suffix = to.parse::<u64>().map_err(|_| ())?;
+        let start = size.saturating_sub(suffix);
+        let end = size.saturating_sub(1);
+        if start > end || start >= size {
+            return Err(());
+        }
+        return Ok(Some((start, end)));
+    }
+    let start = from.parse::<u64>().map_err(|_| ())?;
+    if start >= size {
+        return Err(());
+    }
+    let end = if to.is_empty() {
+        size - 1
+    } else {
+        to.parse::<u64>().map_err(|_| ())?.min(size - 1)
+    };
+    if end < start {
+        return Err(());
+    }
+    Ok(Some((start, end)))
+}
+
 async fn file_response(path: &Path, mime: &str, headers: &HeaderMap, attachment: bool) -> Response {
     let meta_path = path.to_path_buf();
     let metadata = match blocking(move || std::fs::metadata(&meta_path)).await {
@@ -130,32 +169,36 @@ async fn file_response(path: &Path, mime: &str, headers: &HeaderMap, attachment:
         return bad_request("Not a file");
     }
     let size = metadata.len();
-    let mut start = 0u64;
-    let mut end = size.saturating_sub(1);
-    let mut status = StatusCode::OK;
-    if let Some(range) = headers
+    let range_header = headers
         .get(header::RANGE)
-        .and_then(|value| value.to_str().ok())
-    {
-        if let Some(range) = range.strip_prefix("bytes=") {
-            if let Some((from, to)) = range.split_once('-') {
-                if let Ok(from) = from.parse::<u64>() {
-                    start = from;
-                    if let Ok(to) = to.parse::<u64>() {
-                        end = to.min(size.saturating_sub(1));
-                    }
-                    status = StatusCode::PARTIAL_CONTENT;
-                }
-            }
+        .and_then(|value| value.to_str().ok());
+    if size == 0 {
+        if range_header.is_some() {
+            return (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [(header::CONTENT_RANGE, "bytes */0".to_string())],
+            )
+                .into_response();
         }
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, mime)
+            .header(header::ACCEPT_RANGES, "bytes")
+            .header(header::CONTENT_LENGTH, 0)
+            .body(Body::empty())
+            .unwrap_or_else(|error| internal(error));
     }
-    if start > end || start >= size {
-        return (
-            StatusCode::RANGE_NOT_SATISFIABLE,
-            [(header::CONTENT_RANGE, format!("bytes */{size}"))],
-        )
-            .into_response();
-    }
+    let (start, end, status) = match parse_byte_range(range_header, size) {
+        Ok(None) => (0, size - 1, StatusCode::OK),
+        Ok(Some((start, end))) => (start, end, StatusCode::PARTIAL_CONTENT),
+        Err(()) => {
+            return (
+                StatusCode::RANGE_NOT_SATISFIABLE,
+                [(header::CONTENT_RANGE, format!("bytes */{size}"))],
+            )
+                .into_response();
+        }
+    };
     let open_path = path.to_path_buf();
     let file = match blocking(move || std::fs::File::open(&open_path)).await {
         Ok(Ok(file)) => file,
@@ -320,10 +363,6 @@ pub async fn post_file(
                 continue;
             }
         };
-        if data.len() > files::MAX_UPLOAD_FILE_BYTES {
-            errors.push(json!({"name": file_name, "error": "Each upload must be 25MB or smaller"}));
-            continue;
-        }
         total += data.len();
         if total > files::MAX_UPLOAD_TOTAL_BYTES {
             return (
@@ -406,5 +445,33 @@ fn api_path_to_path(path: &str) -> PathBuf {
         PathBuf::from(path)
     } else {
         PathBuf::from(format!("/{path}"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_byte_range;
+
+    #[test]
+    fn parses_single_byte_ranges() {
+        assert_eq!(parse_byte_range(None, 100), Ok(None));
+        assert_eq!(parse_byte_range(Some("bytes=0-9"), 100), Ok(Some((0, 9))));
+        assert_eq!(parse_byte_range(Some("bytes=90-"), 100), Ok(Some((90, 99))));
+        assert_eq!(parse_byte_range(Some("bytes=-10"), 100), Ok(Some((90, 99))));
+        assert_eq!(
+            parse_byte_range(Some("bytes=0-999"), 100),
+            Ok(Some((0, 99)))
+        );
+    }
+
+    #[test]
+    fn rejects_ranges_with_no_usable_bounds() {
+        assert_eq!(parse_byte_range(Some("bytes=-"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("bytes=abc-def"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("items=0-1"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("bytes=100-"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("bytes=20-10"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("bytes=-0"), 100), Err(()));
+        assert_eq!(parse_byte_range(Some("bytes=0-0"), 0), Err(()));
     }
 }
