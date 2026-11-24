@@ -9,7 +9,7 @@ import type {
   GitFileDiffResponse,
   GitFileStatus,
   GitHistoryCommit,
-  GitRepoSummary,
+  GitRepo,
   GitStatusResponse,
 } from "@/lib/git-types";
 import type { GitTab, GitWorkspaceState } from "@/lib/git-workspace";
@@ -37,6 +37,12 @@ const DIFF_CONTEXT_MAX = 200;
 function isChanged(value: string | undefined): boolean {
   const text = (value ?? "").trim();
   return text !== "" && text !== "." && text !== "?";
+}
+
+function sameRepoPath(a: string | null | undefined, b: string | null | undefined): boolean {
+  if (!a || !b) return false;
+  const normalize = (value: string) => value.replace(/\\/g, "/").replace(/\/+$/, "");
+  return normalize(a) === normalize(b);
 }
 
 function relativePath(root: string | null, path: string): string {
@@ -614,7 +620,7 @@ function HistoryView({
 /** The project-scoped Git browser shown in the centre column. */
 export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }: Props) {
   const { t } = useI18n();
-  const [repos, setRepos] = useState<GitRepoSummary[]>([]);
+  const [repos, setRepos] = useState<GitRepo[]>([]);
   const [reposLoading, setReposLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshToken, setRefreshToken] = useState(0);
@@ -675,7 +681,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     setReposLoading(true);
     setError(null);
     fetch(`/api/git/repos?root=${encodeURIComponent(root)}`, { signal: controller.signal })
-      .then((response) => readJson<{ repos: GitRepoSummary[] }>(response, t("git.loadReposFailed")))
+      .then((response) => readJson<{ repos: GitRepo[] }>(response, t("git.loadReposFailed")))
       .then((data) => {
         const list = data.repos ?? [];
         scannedRootRef.current = root;
@@ -833,8 +839,17 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
   }, [active]);
 
   const selectedRepo = repos.find((repo) => repo.path === state.selectedRepoPath) ?? null;
-  const dirtyCount = selectedRepo
-    ? selectedRepo.staged + selectedRepo.unstaged + selectedRepo.untracked + selectedRepo.conflicts
+  // The scan only discovers repositories; branch and dirty counts arrive with
+  // the selected repository's status, and this guards the frame where the
+  // previous repository's status is still in state.
+  const selectedStatus = status && selectedRepo && sameRepoPath(status.repositoryRoot, selectedRepo.path)
+    ? status
+    : null;
+  const dirtyCount = selectedStatus
+    ? (selectedStatus.stagedCount ?? 0)
+      + (selectedStatus.unstagedCount ?? 0)
+      + (selectedStatus.untrackedCount ?? 0)
+      + (selectedStatus.conflictsCount ?? 0)
     : 0;
 
   if (!projectRoot) {
@@ -929,23 +944,22 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
           >
             {repos.length === 0 && <option value="">{reposLoading ? t("git.loading") : t("git.noRepos")}</option>}
             {repos.map((repo) => {
-              const count = repo.staged + repo.unstaged + repo.untracked + repo.conflicts;
-              const label = `${repo.name}${repo.relativePath && repo.relativePath !== repo.name ? ` (${repo.relativePath})` : ""}${count ? ` · ${count}` : ""}`;
+              const label = `${repo.name}${repo.relativePath && repo.relativePath !== repo.name ? ` (${repo.relativePath})` : ""}`;
               return <option key={repo.path} value={repo.path}>{label}</option>;
             })}
           </select>
 
-          {!isMobile && selectedRepo && (
+          {!isMobile && selectedRepo && selectedStatus && (
             <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, color: "var(--text-muted)", fontSize: 10, fontFamily: "var(--font-mono)" }}>
               <span style={{ display: "inline-flex", alignItems: "center", gap: 4, maxWidth: 220, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                   <circle cx="6" cy="6" r="2.5" /><circle cx="6" cy="18" r="2.5" /><circle cx="18" cy="6" r="2.5" />
                   <path d="M6 8.5v7M8.5 6h4a5.5 5.5 0 0 1 5.5 5.5v.5" />
                 </svg>
-                {selectedRepo.branch ?? t("git.detached")}
+                {selectedStatus.branch ?? t("git.detached")}
               </span>
-              {selectedRepo.ahead > 0 && <span style={{ color: "#4ade80" }}>↑{selectedRepo.ahead}</span>}
-              {selectedRepo.behind > 0 && <span style={{ color: "#f87171" }}>↓{selectedRepo.behind}</span>}
+              {(selectedStatus.ahead ?? 0) > 0 && <span style={{ color: "#4ade80" }}>↑{selectedStatus.ahead}</span>}
+              {(selectedStatus.behind ?? 0) > 0 && <span style={{ color: "#f87171" }}>↓{selectedStatus.behind}</span>}
               {dirtyCount > 0 && <span style={{ color: "var(--text)" }}>● {dirtyCount}</span>}
             </div>
           )}

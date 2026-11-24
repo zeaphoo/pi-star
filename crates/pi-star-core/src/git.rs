@@ -2,8 +2,6 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use std::sync::Mutex;
-use std::thread;
 
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -446,20 +444,11 @@ pub fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> Result<()> {
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub struct GitRepoSummary {
+pub struct GitRepo {
     pub path: String,
     pub name: String,
     pub relative_path: String,
     pub is_current: bool,
-    pub branch: Option<String>,
-    pub head: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
-    pub staged: u32,
-    pub unstaged: u32,
-    pub untracked: u32,
-    pub conflicts: u32,
-    pub dirty: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -639,20 +628,6 @@ fn read_porcelain_v2(root: &Path) -> PorcelainV2 {
     result
 }
 
-fn short_head(root: &Path) -> Option<String> {
-    git_text(
-        root,
-        &[
-            "rev-parse".to_string(),
-            "--short".to_string(),
-            "HEAD".to_string(),
-        ],
-    )
-    .ok()
-    .map(|text| text.trim().to_string())
-    .filter(|text| !text.is_empty())
-}
-
 fn should_skip_repo_scan_dir(name: &str) -> bool {
     name.starts_with('.')
         || matches!(
@@ -727,17 +702,14 @@ fn collect_git_dirs(
     }
 }
 
-fn repo_summary(root: &Path, scan_root: &Path, is_current: bool) -> GitRepoSummary {
-    let porcelain = read_porcelain_v2(root);
+fn repo_entry(root: &Path, scan_root: &Path, is_current: bool) -> GitRepo {
     let relative = root
         .strip_prefix(scan_root)
         .ok()
         .map(|path| path.to_string_lossy().replace('\\', "/"))
         .filter(|path| !path.is_empty())
         .unwrap_or_default();
-    let dirty =
-        porcelain.staged + porcelain.unstaged + porcelain.untracked + porcelain.conflicts > 0;
-    GitRepoSummary {
+    GitRepo {
         path: root.to_string_lossy().into_owned(),
         name: root
             .file_name()
@@ -746,19 +718,10 @@ fn repo_summary(root: &Path, scan_root: &Path, is_current: bool) -> GitRepoSumma
             .to_string(),
         relative_path: relative,
         is_current,
-        branch: porcelain.branch,
-        head: short_head(root),
-        ahead: porcelain.ahead,
-        behind: porcelain.behind,
-        staged: porcelain.staged,
-        unstaged: porcelain.unstaged,
-        untracked: porcelain.untracked,
-        conflicts: porcelain.conflicts,
-        dirty,
     }
 }
 
-pub fn scan_repositories(root: &Path, max_depth: usize) -> Vec<GitRepoSummary> {
+pub fn scan_repositories(root: &Path, max_depth: usize) -> Vec<GitRepo> {
     const LIMIT: usize = 20;
     let max_depth = max_depth.clamp(1, 5);
     let current_repo = repository_root(root);
@@ -772,50 +735,24 @@ pub fn scan_repositories(root: &Path, max_depth: usize) -> Vec<GitRepoSummary> {
     }
     collect_git_dirs(root, 1, max_depth, &mut found, &mut seen, LIMIT);
 
+    // Discovery must stay cheap: it only answers "is this a repository?" and
+    // leaves branch/dirty details to `/api/git/status` when one is opened.
     let current = current_repo
         .as_deref()
         .or_else(|| root.join(".git").exists().then_some(root));
-    let mut repos = summarize_repositories(found, current, root);
+    let mut repos: Vec<GitRepo> = found
+        .into_iter()
+        .map(|path| {
+            let is_current = current.is_some_and(|repo| same_repo_path(repo, &path));
+            repo_entry(&path, root, is_current)
+        })
+        .collect();
     repos.sort_by(|a, b| {
         b.is_current
             .cmp(&a.is_current)
             .then_with(|| a.relative_path.cmp(&b.relative_path))
     });
     repos
-}
-
-/// Each summary shells out to `git status` and `git rev-parse`, so a workspace
-/// with many repositories pays for two processes per repository. Four workers
-/// keep the first paint of the Changes tab bounded by the slowest repository
-/// instead of the sum of all of them; the git processes are independent.
-fn summarize_repositories(
-    found: Vec<PathBuf>,
-    current: Option<&Path>,
-    scan_root: &Path,
-) -> Vec<GitRepoSummary> {
-    const WORKERS: usize = 4;
-    if found.is_empty() {
-        return Vec::new();
-    }
-    let workers = WORKERS.min(found.len());
-    let chunk_size = found.len().div_ceil(workers);
-    let summaries = Mutex::new(Vec::with_capacity(found.len()));
-    thread::scope(|scope| {
-        for chunk in found.chunks(chunk_size) {
-            let summaries = &summaries;
-            scope.spawn(move || {
-                let local: Vec<GitRepoSummary> = chunk
-                    .iter()
-                    .map(|path| {
-                        let is_current = current.is_some_and(|repo| same_repo_path(repo, path));
-                        repo_summary(path, scan_root, is_current)
-                    })
-                    .collect();
-                summaries.lock().unwrap().extend(local);
-            });
-        }
-    });
-    summaries.into_inner().unwrap()
 }
 
 pub fn history(cwd: &Path, limit: usize, skip: usize) -> Vec<GitHistoryCommit> {

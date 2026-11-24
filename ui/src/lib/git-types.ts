@@ -30,20 +30,11 @@ export interface GitStatusResponse {
   deletions: number;
 }
 
-export interface GitRepoSummary {
+export interface GitRepo {
   path: string;
   name: string;
   relativePath: string;
   isCurrent: boolean;
-  branch: string | null;
-  head: string | null;
-  ahead: number;
-  behind: number;
-  staged: number;
-  unstaged: number;
-  untracked: number;
-  conflicts: number;
-  dirty: boolean;
 }
 
 export interface GitHistoryCommit {
