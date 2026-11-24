@@ -304,7 +304,10 @@ pub async fn repos(
     if !root.is_dir() {
         return not_found("Directory not found");
     }
-    let depth = query.depth.unwrap_or(3).clamp(1, 5);
+    // Two levels below the project root are enough for the sibling-repo
+    // layouts the Changes tab targets; deeper recursion mostly walks
+    // directories that hold no repositories and makes the first open slower.
+    let depth = query.depth.unwrap_or(2).clamp(1, 5);
     let roots = state.roots.clone();
     let index_root = root.clone();
     let repositories = match blocking(move || {

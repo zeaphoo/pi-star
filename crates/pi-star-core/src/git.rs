@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::thread;
 
 use anyhow::{Result, anyhow};
 use serde::Serialize;
@@ -773,21 +775,47 @@ pub fn scan_repositories(root: &Path, max_depth: usize) -> Vec<GitRepoSummary> {
     let current = current_repo
         .as_deref()
         .or_else(|| root.join(".git").exists().then_some(root));
-    let mut repos: Vec<GitRepoSummary> = found
-        .into_iter()
-        .map(|path| {
-            let is_current = current
-                .as_ref()
-                .is_some_and(|repo| same_repo_path(repo, &path));
-            repo_summary(&path, root, is_current)
-        })
-        .collect();
+    let mut repos = summarize_repositories(found, current, root);
     repos.sort_by(|a, b| {
         b.is_current
             .cmp(&a.is_current)
             .then_with(|| a.relative_path.cmp(&b.relative_path))
     });
     repos
+}
+
+/// Each summary shells out to `git status` and `git rev-parse`, so a workspace
+/// with many repositories pays for two processes per repository. Four workers
+/// keep the first paint of the Changes tab bounded by the slowest repository
+/// instead of the sum of all of them; the git processes are independent.
+fn summarize_repositories(
+    found: Vec<PathBuf>,
+    current: Option<&Path>,
+    scan_root: &Path,
+) -> Vec<GitRepoSummary> {
+    const WORKERS: usize = 4;
+    if found.is_empty() {
+        return Vec::new();
+    }
+    let workers = WORKERS.min(found.len());
+    let chunk_size = found.len().div_ceil(workers);
+    let summaries = Mutex::new(Vec::with_capacity(found.len()));
+    thread::scope(|scope| {
+        for chunk in found.chunks(chunk_size) {
+            let summaries = &summaries;
+            scope.spawn(move || {
+                let local: Vec<GitRepoSummary> = chunk
+                    .iter()
+                    .map(|path| {
+                        let is_current = current.is_some_and(|repo| same_repo_path(repo, path));
+                        repo_summary(path, scan_root, is_current)
+                    })
+                    .collect();
+                summaries.lock().unwrap().extend(local);
+            });
+        }
+    });
+    summaries.into_inner().unwrap()
 }
 
 pub fn history(cwd: &Path, limit: usize, skip: usize) -> Vec<GitHistoryCommit> {

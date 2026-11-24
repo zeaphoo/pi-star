@@ -647,24 +647,39 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     setCommitDiffContext(DIFF_CONTEXT_START);
   }, [state.selectedRepoPath, state.selectedCommitSha, state.selectedCommitFilePath]);
 
+  // Keep `onChange` in a ref: callers (the right dock) pass an inline arrow, so
+  // depending on it would make `update` — and the scan effect below — restart
+  // on every parent render.
+  const onChangeRef = useRef(onChange);
+  onChangeRef.current = onChange;
   const update = useCallback((next: Partial<GitWorkspaceState>) => {
-    const current = stateRef.current;
-    onChange({ ...current, ...next });
-  }, [onChange]);
+    onChangeRef.current({ ...stateRef.current, ...next });
+  }, []);
+
+  // A tab switch must not re-scan the workspace. Remember what the current
+  // list covers and only pay for a scan when the project or refresh changes.
+  const scannedRootRef = useRef<string | null>(null);
+  const scannedRefreshRef = useRef(0);
 
   // Scan repositories whenever the project or refresh button changes.
   useEffect(() => {
-    if (!active || !projectRoot) {
+    if (!projectRoot) {
+      scannedRootRef.current = null;
       setRepos([]);
       return;
     }
+    if (!active) return;
+    if (scannedRootRef.current === projectRoot && scannedRefreshRef.current === refreshToken) return;
+    const root = projectRoot;
     const controller = new AbortController();
     setReposLoading(true);
     setError(null);
-    fetch(`/api/git/repos?root=${encodeURIComponent(projectRoot)}&depth=3`, { signal: controller.signal })
+    fetch(`/api/git/repos?root=${encodeURIComponent(root)}`, { signal: controller.signal })
       .then((response) => readJson<{ repos: GitRepoSummary[] }>(response, t("git.loadReposFailed")))
       .then((data) => {
         const list = data.repos ?? [];
+        scannedRootRef.current = root;
+        scannedRefreshRef.current = refreshToken;
         setRepos(list);
         const current = stateRef.current;
         const selected = current.selectedRepoPath && list.some((repo) => repo.path === current.selectedRepoPath)
