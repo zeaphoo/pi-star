@@ -1109,6 +1109,12 @@ export function AppShell() {
 
   const handleNewSession = useCallback((sessionId: string, cwd: string, projectKey?: string | null, options?: NewSessionOptions) => {
     invalidateWorkspaceRestore();
+    // Starting a conversation is a chat action: bring the fresh composer into
+    // view even when the workspace was left on Code/Diff/Trace/Terminal.
+    if (mainView !== "chat") {
+      setMainView("chat");
+      saveMainView("chat");
+    }
     const draftKey = `new:${sessionId}:${cwd}`;
     // Leaving a fresh composer for another cwd parks its draft there, as a
     // workspace switch does; New in the same cwd still starts empty. The bar
@@ -1157,7 +1163,7 @@ export function AppShell() {
         chatInputRef.current?.focus();
       });
     }
-  }, [activeCwd, invalidateWorkspaceRestore, isMobile, newSessionCwd, router, selectedSession]);
+  }, [activeCwd, invalidateWorkspaceRestore, isMobile, mainView, newSessionCwd, router, selectedSession]);
 
   // Global keyboard shortcuts (handles Esc, Ctrl+Alt+N etc.)
   useGlobalKeyboardShortcuts({
