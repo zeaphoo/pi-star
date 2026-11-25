@@ -20,6 +20,9 @@ These are intentional and must be re-applied after a re-sync:
   `pi-star:draft:<session id>` instead of upstream's `pi-web:` prefix; `useAgentSession`'s
   history-edit hold and `SettingsPanel`'s clear-on-sign-out are local integration. Re-apply these
   when the sync script would bring the 0.15 in-memory version back.
+- **`lib/session-search.ts` is gone.** Search now runs in Rust (`crates/pi-star-core/src/session_search.rs`);
+  the UI keeps only the response types in `components/SessionSearch.tsx`. The sync script already
+  excludes the old server-only module, so a re-sync will not bring it back.
 - **0.16–0.18 fixes live in otherwise-upstream modules.** `MessageView`, `message-display`, `ansi`,
   `markdown-blocks`, `markdown`, `file-types`, `delimited-table` and `file-links` carry the
   streaming-reference/fence, ANSI-strip, MIME allow-list, quoted-empty-CSV and line-range fixes.

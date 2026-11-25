@@ -141,6 +141,14 @@ export function TerminalPanel({
     let connected = false;
     let exited = false;
     let inputFailed = false;
+    // While xterm draws replayed history it answers the queries in it (cursor
+    // position, device attributes). Those programs are gone, so the answers
+    // must not reach the shell as typed input. A shell this panel just created
+    // is the exception: nothing has answered its startup queries yet.
+    let replaying = false;
+    // Only the very first snapshot of a shell this panel created may send
+    // xterm's answers back; later resyncs replay history whose programs are gone.
+    let allowReplayInput = !restored && reconnectKey === 0;
     setStatus("connecting");
     setError(null);
     setExitCode(null);
@@ -218,7 +226,12 @@ export function TerminalPanel({
     });
     writerRef.current = writer;
     const onData = terminal.onData((data) => {
-      if (connected && !exited && !inputFailed) writer.write(applyTerminalModifiers(data, consumeModifiers()));
+      // The first snapshot may arrive before the bus's sub_ok, so the new
+      // shell is allowed to answer its startup queries while not `connected`
+      // yet. Replayed history never is (`replaying`).
+      if (!exited && !inputFailed && !replaying && (connected || allowReplayInput)) {
+        writer.write(applyTerminalModifiers(data, consumeModifiers()));
+      }
     });
     const fitAndResize = () => {
       if (!container.offsetWidth || !container.offsetHeight) return;
@@ -243,9 +256,17 @@ export function TerminalPanel({
           return;
         }
         if (event.type === "output") {
-          if (event.reset) terminal.reset();
-          else if (offset !== undefined && event.offset <= offset) return;
-          terminal.write(event.data);
+          const history = event.reset === true;
+          if (history) {
+            terminal.reset();
+            if (!allowReplayInput) replaying = true;
+            allowReplayInput = false;
+          } else if (offset !== undefined && event.offset <= offset) {
+            return;
+          }
+          terminal.write(event.data, () => {
+            if (history) replaying = false;
+          });
           offset = event.offset;
         } else {
           exited = true;

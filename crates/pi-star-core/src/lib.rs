@@ -15,6 +15,7 @@ pub mod prompt;
 pub mod resources;
 pub mod session;
 pub mod session_index;
+pub mod session_search;
 pub mod session_title;
 pub mod settings;
 pub mod skills;

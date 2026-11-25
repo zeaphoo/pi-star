@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use axum::Json;
@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 use pi_star_core::models;
 use pi_star_core::session::{
     self, append_lines, append_session_info, build_context, build_tree, compute_stats,
-    create_session_file, entry_id, entry_type, message_text, read_session, slice_active_branch,
-    total_active_ms,
+    create_session_file, entry_id, entry_type, read_session, slice_active_branch, total_active_ms,
 };
+use pi_star_core::session_search;
 
 use pi_star_core::agent::backend::BackendKind;
 
@@ -315,7 +315,7 @@ pub async fn search(
     Query(query): Query<SearchQuery>,
 ) -> Response {
     let query = query.q.unwrap_or_default().trim().to_string();
-    if query.len() > 200 {
+    if query.chars().count() > 200 {
         return bad_request("Search query exceeds 200 characters");
     }
     if query.is_empty() {
@@ -323,69 +323,20 @@ pub async fn search(
     }
     let config = state.config.clone();
     let index = state.session_index.clone();
-    let (results, truncated) = match blocking(move || {
-        let needle = query.to_lowercase();
-        let mut results = Vec::new();
-        let mut truncated = false;
-        for info in index.scan(&config, false) {
-            if results.len() >= 30 {
-                truncated = true;
-                break;
-            }
-            let Ok(session) = read_session(Path::new(&info.path)) else {
-                continue;
-            };
-            let title_hit = info
-                .name
-                .as_deref()
-                .is_some_and(|name| name.to_lowercase().contains(&needle))
-                || info.first_message.to_lowercase().contains(&needle);
-            if title_hit {
-                results.push(json!({
-                    "session": info,
-                    "blockIndex": 0,
-                    "titleMatch": true,
-                    "before": "",
-                    "match": query,
-                    "after": "",
-                }));
-                continue;
-            }
-            for entry in &session.entries {
-                let text = message_text(entry);
-                let lower = text.to_lowercase();
-                if let Some(index) = lower.find(&needle) {
-                    let start = text[..index]
-                        .char_indices()
-                        .rev()
-                        .nth(60)
-                        .map(|(i, _)| i)
-                        .unwrap_or(0);
-                    let end = text[index + needle.len()..]
-                        .char_indices()
-                        .nth(60)
-                        .map(|(i, _)| index + needle.len() + i)
-                        .unwrap_or(text.len());
-                    results.push(json!({
-                        "session": info,
-                        "entryId": entry_id(entry),
-                        "blockIndex": 0,
-                        "before": &text[start..index],
-                        "match": &text[index..index + needle.len()],
-                        "after": &text[index + needle.len()..end],
-                    }));
-                    break;
-                }
-            }
-        }
-        (results, truncated)
+    let query_for_search = query.clone();
+    let response = match blocking(move || {
+        let sessions = index.scan(&config, false);
+        session_search::search_sessions(sessions, &query_for_search)
     })
     .await
     {
         Ok(result) => result,
         Err(response) => return response,
     };
-    no_store(json!({ "results": results, "truncated": truncated }))
+    match response {
+        Ok(response) => no_store(json!(response)),
+        Err(error) => internal(error),
+    }
 }
 
 pub async fn ui_state_get(State(state): State<Arc<AppState>>) -> Response {
@@ -415,11 +366,13 @@ pub struct ForkBody {
     #[serde(rename = "sessionId")]
     session_id: Option<String>,
     id: Option<String>,
+    /// Copy the whole session into this folder instead of forking in place.
+    cwd: Option<String>,
 }
 
 pub async fn fork_body(State(state): State<Arc<AppState>>, Json(body): Json<ForkBody>) -> Response {
     let id = body.session_id.or(body.id).unwrap_or_default();
-    fork_session_inner(&state, &id, body.entry_id.as_deref()).await
+    fork_session_inner(&state, &id, body.entry_id.as_deref(), body.cwd.as_deref()).await
 }
 
 pub async fn fork_session(
@@ -427,10 +380,150 @@ pub async fn fork_session(
     AxumPath(id): AxumPath<String>,
     Json(body): Json<ForkBody>,
 ) -> Response {
-    fork_session_inner(&state, &id, body.entry_id.as_deref()).await
+    fork_session_inner(&state, &id, body.entry_id.as_deref(), body.cwd.as_deref()).await
 }
 
-async fn fork_session_inner(state: &Arc<AppState>, id: &str, entry_id: Option<&str>) -> Response {
+fn fork_refusal(status: StatusCode, code: &str, error: impl Into<String>) -> Response {
+    (status, Json(json!({"error": error.into(), "code": code}))).into_response()
+}
+
+/// pi's whole-session Fork when the session's folder is gone: copy every
+/// branch into a new session filed under `target`, whose header points at the
+/// source. The source stays untouched, so the old project keeps its history.
+async fn fork_session_into_cwd(state: &Arc<AppState>, source_id: &str, target: &str) -> Response {
+    let target_path = PathBuf::from(target);
+    if target.trim().is_empty() || !target_path.is_absolute() {
+        return fork_refusal(
+            StatusCode::BAD_REQUEST,
+            "cwd-invalid",
+            "The selected folder must be an absolute path",
+        );
+    }
+    let target_for_meta = target_path.clone();
+    match blocking(move || -> Result<bool, String> {
+        std::fs::metadata(&target_for_meta)
+            .map(|metadata| metadata.is_dir())
+            .map_err(|error| error.to_string())
+    })
+    .await
+    {
+        Ok(Ok(true)) => {}
+        Ok(Ok(false)) => {
+            return fork_refusal(
+                StatusCode::BAD_REQUEST,
+                "cwd-invalid",
+                "The selected folder is not a directory",
+            );
+        }
+        _ => {
+            return fork_refusal(
+                StatusCode::BAD_REQUEST,
+                "cwd-invalid",
+                format!("Directory does not exist: {target}"),
+            );
+        }
+    }
+
+    let Some(path) = session_path(state.config.clone(), source_id.to_string()).await else {
+        return fork_refusal(StatusCode::NOT_FOUND, "not_found", "Session not found");
+    };
+    let config = state.config.clone();
+    let source_path = path.clone();
+    let target_owned = target_path.clone();
+    let source_id_owned = source_id.to_string();
+    let result = match blocking(
+        move || -> Result<Value, (StatusCode, &'static str, String)> {
+            let session = read_session(&source_path)
+                .map_err(|error| (StatusCode::NOT_FOUND, "not_found", error.to_string()))?;
+            let info = session.info();
+            if !info.cwd.is_empty() && Path::new(&info.cwd).exists() {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "cwd-exists",
+                    format!("The session's folder still exists: {}", info.cwd),
+                ));
+            }
+            if matches!(
+                info.relation,
+                Some(pi_star_core::session::SessionRelation::Subagent { .. })
+            ) {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "subagent",
+                    "A subagent session cannot be forked".into(),
+                ));
+            }
+            if !session
+                .entries
+                .iter()
+                .any(|entry| entry_type(entry) == Some("message"))
+            {
+                return Err((
+                    StatusCode::CONFLICT,
+                    "empty",
+                    "Nothing to fork: the session has no messages".into(),
+                ));
+            }
+
+            let new_path = pi_star_core::session::create_session_file_with_parent(
+                &config,
+                &target_owned,
+                Some(&source_path),
+            )
+            .map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed",
+                    error.to_string(),
+                )
+            })?;
+            append_lines(&new_path, &session.entries).map_err(|error| {
+                (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "failed",
+                    error.to_string(),
+                )
+            })?;
+            let mut new_info = read_session(&new_path)
+                .map(|session| serde_json::to_value(session.info()))
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or(Value::Null);
+            if new_info.is_object() {
+                new_info["parentSessionId"] = Value::String(source_id_owned.clone());
+                new_info["relation"] = json!({"kind": "fork", "originSessionId": source_id_owned});
+            }
+            let new_id = new_info
+                .get("id")
+                .and_then(Value::as_str)
+                .unwrap_or_default()
+                .to_string();
+            Ok(json!({"sessionId": new_id, "session": new_info}))
+        },
+    )
+    .await
+    {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+    match result {
+        Ok(value) => {
+            state.roots.add(&target_path);
+            no_store(value)
+        }
+        Err((status, code, error)) => fork_refusal(status, code, error),
+    }
+}
+
+async fn fork_session_inner(
+    state: &Arc<AppState>,
+    id: &str,
+    entry_id: Option<&str>,
+    cwd: Option<&str>,
+) -> Response {
+    if let Some(target) = cwd.filter(|target| !target.trim().is_empty()) {
+        return fork_session_into_cwd(state, id, target).await;
+    }
     if state.route_backend_async(id).await == BackendKind::Rpc {
         if let Some(active) = state.pi_rpc.get(id) {
             // With an entry, pi forks before that user message. Without one the

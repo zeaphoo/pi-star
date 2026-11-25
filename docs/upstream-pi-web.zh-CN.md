@@ -359,5 +359,14 @@ f6c8699 feat(models) provider 名称    8d2fb36 fix(chat) 粘贴
 - **文件/聊天小修复**：UTF-16 BOM 预览、字节范围边界、带引号空 CSV 记录、MIME 白名单、
   Markdown 流式引用定义/fence 关闭、回复里的 ANSI 转义、`path:12-34` 链接。
 
-其余 0.16–0.18 项（多词搜索与缓存、后台子代理报告 steer、目录丢失 Fork、PlantUML、长会话
-选择、Agents 条）仍未做，取舍理由见本轮评审记录，不再扩展这份 0.13→0.15 文档。
+第二批也已落地：
+
+- 会话搜索支持多词（含引号短语）、结果带项目名、按 size/mtime 缓存未变会话，并按字符
+  安全截取；
+- missing-folder 横幅可把整份会话 Fork 到另一个已存在文件夹；
+- 运行中发送的用户消息在 run 结束前拿到 entry id，New session 立即可用；
+- 工具结束结果先留在卡片上，等规范 tool-result 消息到达再替换；
+- 终端回放不再把 xterm 的应答发给 shell，同时新 shell 首次连接仍会应答启动查询。
+
+仍未做：后台子代理报告 steer、PlantUML、长会话选择、Agents 条。取舍理由见本轮评审记录，
+不再扩展这份 0.13→0.15 文档。

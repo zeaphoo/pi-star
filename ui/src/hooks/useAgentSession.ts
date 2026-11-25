@@ -24,6 +24,7 @@ import {
   snapshotCoversLoadedEntries,
 } from "@/lib/session-view-cache";
 import { clearDraft, getDraft, holdStoredDraft, parkedNewSessionDraftKey, rekeyDraft, restoreDraftSubmission } from "@/lib/draft-store";
+import { forkFailureMessage } from "@/lib/sidebar-actions";
 import { getPreferredToolPreset, setPreferredToolPreset } from "@/lib/tool-preset-preference";
 import { CONFIGURED_TOOL_PRESET, getPresetFromToolNames, getToolNamesForPreset, type ToolEntry, type ToolPreset } from "@/lib/tool-presets";
 import type { SessionStatsInfo } from "@/lib/pi-types";
@@ -451,6 +452,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
   const [messages, setMessages] = useState<AgentMessage[]>([]);
   const [activeToolResults, setActiveToolResults] = useState<Map<string, ToolResultMessage>>(new Map());
   const [entryIds, setEntryIds] = useState<string[]>([]);
+  // Entry ids for user messages the run has not read back yet, keyed by the
+  // message's userMessageKey (or `ts:` timestamp): the mid-run New session button.
+  const [liveUserEntryIds, setLiveUserEntryIds] = useState<ReadonlyMap<string, string>>(() => new Map());
   // Entry ids that took over a run's message keys when the file was read again (lib/message-keys.ts).
   const [messageKeyAliases, setMessageKeyAliases] = useState<ReadonlyMap<string, string>>(() => new Map());
   const [historyCursor, setHistoryCursor] = useState<string | null>(null);
@@ -877,6 +881,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           setActiveLeafId(null);
           setMessages([]);
           setEntryIds([]);
+          setLiveUserEntryIds(new Map());
           setHistoryCursor(null);
           setHasEarlierMessages(false);
           setEarlierTurnCount(0);
@@ -941,6 +946,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         setMessageKeyAliases((aliases) => carryMessageKeys({ ...previous, aliases }, next));
         setMessages(next.messages);
         setEntryIds(next.entryIds);
+        setLiveUserEntryIds(new Map());
         setHistoryCursor(d.context.oldestEntryId);
         setHasEarlierMessages(d.context.hasMore);
         setEarlierTurnCount(d.context.turnsBefore ?? 0);
@@ -1936,6 +1942,21 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           message: (event.error as string | undefined) ?? "Extension command failed",
         });
         break;
+      case "user_message_entry": {
+        const entryId = event.entryId as string | undefined;
+        const message = event.message as AgentMessage | undefined;
+        if (!entryId) break;
+        setLiveUserEntryIds((prev) => {
+          const next = new Map(prev);
+          if (message) next.set(`m:${userMessageKey(message)}`, entryId);
+          const timestamp = event.timestamp;
+          if (timestamp !== undefined && timestamp !== null) {
+            next.set(`ts:${String(timestamp)}`, entryId);
+          }
+          return next;
+        });
+        break;
+      }
       case "message_start":
       case "message_update": {
         // Ignore streaming events arriving after this run already finished
@@ -2003,6 +2024,16 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             return [...prev, delivered];
           });
         } else if (completed) {
+          // The canonical result replaces the early display copy of the same
+          // call; keeping it would pin a second payload per tool call.
+          if (completed.role === "toolResult") {
+            setActiveToolResults((prev) => {
+              if (!prev.has(completed.toolCallId)) return prev;
+              const next = new Map(prev);
+              next.delete(completed.toolCallId);
+              return next;
+            });
+          }
           // pi's showCacheMissNotices (#1265): the wrapper sends them beside the message.
           const notices = Array.isArray(event.transcriptNotices) ? event.transcriptNotices as TranscriptNotice[] : undefined;
           setMessages((prev) => [...prev, withTranscriptNotices(normalizeToolCalls(completed), notices)]);
@@ -2071,11 +2102,28 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       case "tool_execution_end": {
         if (isNestedToolExecutionEvent(event)) break;
         const id = event.toolCallId as string;
-        onToolEnd?.(event.toolName as string);
+        const name = event.toolName as string;
+        onToolEnd?.(name);
+        // Show the completed result on the running card until its canonical
+        // tool-result message arrives, instead of blanking the card. The
+        // message then replaces it and removes this early copy.
+        const result = event.result as Partial<ToolResultMessage> | undefined;
         setActiveToolResults((prev) => {
-          if (!prev.has(id)) return prev;
           const next = new Map(prev);
-          next.delete(id);
+          if (result && Array.isArray(result.content)) {
+            next.set(id, {
+              role: "toolResult",
+              toolCallId: id,
+              toolName: name,
+              content: result.content,
+              isError: result.isError ?? (event.isError as boolean | undefined),
+              details: result.details,
+              usage: result.usage,
+              durationMs: (event.durationMs as number | undefined) ?? result.durationMs,
+            });
+          } else {
+            next.delete(id);
+          }
           return next;
         });
         setAgentPhase((prev) => {
@@ -2398,6 +2446,37 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setForkingEntryId(null);
     }
   }, [addNotice, onSessionForked]);
+
+  /**
+   * pi's Fork for a session whose folder is gone: the whole session copied
+   * into `cwd`, a folder that exists (POST /api/sessions/[id]/fork `{ cwd }`).
+   * The draft follows the new session. Resolves to an error to show, or null.
+   */
+  const forkIntoCwd = useCallback(async (cwd: string): Promise<string | null> => {
+    const sid = sessionIdRef.current;
+    if (!sid) return translate("sidebar.forkNotFound");
+    try {
+      const res = await fetch(`/api/sessions/${encodeURIComponent(sid)}/fork`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd }),
+      });
+      const data = await res.json().catch(() => ({})) as { sessionId?: string; code?: string; error?: string };
+      if (!res.ok || !data.sessionId) {
+        const { key, params } = forkFailureMessage(data.code, data.error ?? `HTTP ${res.status}`);
+        return translate(key, params);
+      }
+      const input = opts.chatInputRef?.current;
+      if (input) input.rekeyDraft(sid, data.sessionId);
+      else rekeyDraft(sid, data.sessionId);
+      onSessionForked?.(data.sessionId);
+      return null;
+    } catch (e) {
+      return translate("sidebar.forkFailed", { error: e instanceof Error ? e.message : String(e) });
+    }
+  }, [onSessionForked, opts.chatInputRef, translate]);
+  const canForkMissingCwd = Boolean(missingCwd) && !isNew && Boolean(session?.id)
+    && session?.relation?.kind !== "subagent";
 
   const handleNavigate = useCallback(async (entryId: string): Promise<boolean> => {
     if (bashRunningRef.current) return false;
@@ -3422,8 +3501,8 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
 
   return {
     // State
-    data, loading, error, activeLeafId, messages, activeToolResults, entryIds, messageKeys, historyCursor, hasEarlierMessages, earlierTurnCount, streamingStore,
-    agentRunning, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
+    data, loading, error, activeLeafId, messages, activeToolResults, entryIds, liveUserEntryIds, messageKeys, historyCursor, hasEarlierMessages, earlierTurnCount, streamingStore,
+    agentRunning, modelNames, modelList, modelError, missingCwd, canForkMissingCwd, modelScopeWarnings, isModelScopeActive, allModelList, modelThinkingLevels, modelThinkingLevelMaps, newSessionModel, toolPreset, thinkingLevel,
     retryInfo, contextUsage, systemPrompt, forkingEntryId,
     isCompacting, compactError, compactResult, currentModel, displayModel, modelSwitching, sessionStats, autoCompactionEnabled,
     slashCommands, slashCommandsLoading, queuedMessages,
@@ -3443,7 +3522,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     sessionIdRef, scrollContainerRef,
     lastUserMsgRef, pendingScrollToUserRef, initialScrollDoneRef,
     // Actions
-    handleSend, handleAbort, handleFork, handleNavigate, handleModelChange,
+    handleSend, handleAbort, handleFork, forkIntoCwd, handleNavigate, handleModelChange,
     handleCompact, handleSteer, handleFollowUp, handlePromptWithStreamingBehavior, handleAbortCompaction,
     dismissCompactError,
     handleRecallQueue,

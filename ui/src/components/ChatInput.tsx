@@ -1,6 +1,6 @@
 "use client";
 
-import React, { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent } from "react";
+import React, { memo, useRef, useState, useCallback, useEffect, useLayoutEffect, useImperativeHandle, forwardRef, KeyboardEvent, type ReactNode } from "react";
 import type { BuiltinSlashCommandResult, CompactResultInfo, QueuedMessages, SlashCommandInfo } from "@/hooks/useAgentSession";
 import type { SkillsResponse } from "@/lib/api-types";
 import type { TextContent, UserMessage } from "@/lib/types";
@@ -62,6 +62,8 @@ interface Props {
   modelError?: string | null;
   /** The session's folder, when it no longer exists (moved or renamed): said instead of a model error (#1422). */
   missingCwd?: string | null;
+  /** Fork the session into another folder: offered while `missingCwd` is shown. */
+  onForkMissingCwd?: () => void;
   /** Diagnostics from resolving `enabledModels`, e.g. a pattern that matched nothing. */
   modelScopeWarnings?: string[];
   /** Every available model, once loaded for the selector's "all" scope. */
@@ -584,7 +586,7 @@ function QueuedMessageRow({ kind, text }: { kind: "steer" | "follow-up"; text: s
   );
 }
 
-function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "warning"; title: string; body: string; onClose?: () => void }) {
+function ModelNoticeBanner({ tone, title, body, onClose, action }: { tone: "error" | "warning"; title: string; body: string; onClose?: () => void; action?: ReactNode }) {
   const { t } = useI18n();
   const color = tone === "error" ? "239,68,68" : "234,179,8";
   return (
@@ -625,6 +627,7 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
       <div style={{ minWidth: 0, flex: 1 }}>
         <div style={{ fontWeight: 600 }}>{title}</div>
         <div style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{body}</div>
+        {action}
       </div>
       {onClose && (
         <button
@@ -651,10 +654,35 @@ function ModelNoticeBanner({ tone, title, body, onClose }: { tone: "error" | "wa
 }
 
 /** The session's folder no longer exists: nothing was sent, and no model was asked (#1422). */
-export function MissingCwdBanner({ cwd }: { cwd?: string | null }) {
+export function MissingCwdBanner({ cwd, onFork }: { cwd?: string | null; onFork?: () => void }) {
   const { t } = useI18n();
   if (!cwd) return null;
-  return <ModelNoticeBanner tone="error" title={t("chat.cwdMissingTitle")} body={t("chat.cwdMissingBody", { cwd })} />;
+  return (
+    <ModelNoticeBanner
+      tone="error"
+      title={t("chat.cwdMissingTitle")}
+      body={t("chat.cwdMissingBody", { cwd })}
+      action={onFork && (
+        <button
+          type="button"
+          onClick={onFork}
+          style={{
+            marginTop: 6,
+            padding: "4px 10px",
+            border: "1px solid currentColor",
+            borderRadius: 5,
+            background: "none",
+            color: "inherit",
+            cursor: "pointer",
+            fontSize: 11,
+            fontWeight: 600,
+          }}
+        >
+          {t("chat.cwdMissingFork")}
+        </button>
+      )}
+    />
+  );
 }
 
 export function ModelErrorBanner({ error }: { error?: string | null }) {
@@ -690,7 +718,7 @@ export function ModelScopeWarningBanner({ warnings }: { warnings?: string[] }) {
 // Memoized: its props hold still while a reply streams or a tool runs, and the
 // chat around it re-renders through both.
 export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatInput({
-  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching,
+  onSend, onAbort, onSteer, onFollowUp, isStreaming, model, isAutoModelSelection, modelNames, modelList, modelError, missingCwd, onForkMissingCwd, modelScopeWarnings, allModelList, onLoadAllModels, onModelChange, modelSwitching,
   defaultModel, onSetDefaultModel,
   onCompact, onAbortCompaction, isCompacting, compactError, onDismissCompactError, compactResult, toolPreset, onToolPresetChange,
   backend, backendOptions, onBackendChange,
@@ -1795,7 +1823,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
         onChange={handleFilePick}
       />}
       <div style={{ ...(compact ? undefined : { display: "flex", flexDirection: "column", minHeight: 0, width: "100%" }), maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
-        <MissingCwdBanner cwd={missingCwd} />
+        <MissingCwdBanner cwd={missingCwd} onFork={onForkMissingCwd} />
         <ModelErrorBanner error={modelError} />
         <ModelScopeWarningBanner warnings={modelScopeWarnings} />
         {showImageUnsupportedWarning && (() => {

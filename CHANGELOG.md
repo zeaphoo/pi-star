@@ -23,6 +23,17 @@
   Token、云厂商密钥，以及 `PORT`/`NODE_ENV`/`NEXT_*` 等宿主运行时变量。项目里的
   `core.fsmonitor`、diff driver、worktree hook 和 npm 生命周期脚本因此无法再读到这些凭据。
 
+- **会话搜索支持多词与引号**：空格/全角空格分隔的每个词都要命中，双引号保留短语；
+  结果带项目显示名；搜索文本按文件 size/mtime 缓存，未变化的会话不再每次按键重读。
+  Unicode 大小写与截取不再按字节切分，避免 `İ` 等字符导致切片错误。
+
+- **目录丢失时 Fork 到其他文件夹**：missing-folder 横幅新增“分叉到其他文件夹…”，
+  经目录选择器把整份会话复制到新 cwd，更新 header 的 cwd/parentSession、加入文件访问
+  根并保留 composer 草稿；拒绝目标无效、源目录仍存在、子代理和空会话。
+
+- **运行中的 New session**：user `message_end` 后由事件流补发 `user_message_entry`，
+  运行中已发送的用户消息也能立刻使用 New session；历史编辑仍只在运行结束后可用。
+
 ### Changed
 
 - **内置 pi 升级到 1.6.0**：`packaging/pi-runtime.json` 的 `pi` 由 1.4.0 改为 1.6.0，Node 仍为
@@ -49,6 +60,12 @@
 
 - **对话中的终端转义**：模型写入正文或思考里的 ANSI 转义不再显示为 `[38;5;5m` 等原始文本，
   复制时也只复制可见内容。
+
+- **工具结果提前显示**：`tool_execution_end` 带回的结果直接留在工具卡片上，等规范
+  tool-result 消息到达后再替换，避免卡片在两者之间短暂空白。
+
+- **终端回放不再向 shell 发送应答**：重连或恢复标签页时，xterm 对回放历史中光标/设备
+  查询的应答不会再被当成输入；新建 shell 的首次连接仍会正常应答启动查询。
 
 - **Markdown 文件链接**：`path:12-34` 形式的行范围链接能正确解析到文件。
 

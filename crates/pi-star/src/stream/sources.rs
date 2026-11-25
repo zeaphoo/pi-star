@@ -75,6 +75,7 @@ pub async fn open(state: &Arc<AppState>, key: &str) -> Result<Arc<dyn Source>, S
 struct AgentSource {
     receiver: Mutex<Option<broadcast::Receiver<Value>>>,
     snapshot: Option<Arc<str>>,
+    session_path: std::path::PathBuf,
 }
 
 fn connected(streaming: bool, pending: Vec<String>) -> Arc<str> {
@@ -102,6 +103,7 @@ async fn agent_source(state: &Arc<AppState>, id: &str) -> Result<Arc<dyn Source>
         Ok(Arc::new(AgentSource {
             receiver: Mutex::new(Some(session.subscribe())),
             snapshot: Some(connected(streaming, session.pending_extension_ui_ids())),
+            session_path: session.path(),
         }))
     } else {
         let runtime = match state.agents.get(id) {
@@ -127,6 +129,7 @@ async fn agent_source(state: &Arc<AppState>, id: &str) -> Result<Arc<dyn Source>
         Ok(Arc::new(AgentSource {
             receiver: Mutex::new(Some(receiver)),
             snapshot: Some(connected(streaming, runtime.pending_extension_ui_ids())),
+            session_path: runtime.path.clone(),
         }))
     }
 }
@@ -151,6 +154,27 @@ impl Source for AgentSource {
             loop {
                 match receiver.recv().await {
                     Ok(event) => {
+                        let user_message = (event.get("type").and_then(Value::as_str)
+                            == Some("message_end"))
+                        .then(|| event.get("message").cloned())
+                        .flatten()
+                        .filter(|message| {
+                            message.get("role").and_then(Value::as_str) == Some("user")
+                        });
+                        if let Some(message) = user_message {
+                            let path = self.session_path.clone();
+                            let hub_for_entry = hub.clone();
+                            let key_for_entry = key.clone();
+                            tokio::spawn(async move {
+                                announce_user_message_entry(
+                                    hub_for_entry,
+                                    key_for_entry,
+                                    path,
+                                    message,
+                                )
+                                .await;
+                            });
+                        }
                         if let Some(event) = agent::filter_event(event) {
                             hub.publish(&key, event.to_string().into(), Cursor::Num(0));
                         }
@@ -171,6 +195,64 @@ impl Source for AgentSource {
             }
         })
     }
+}
+
+/// pi appends a user message only after emitting its `message_end` and announces
+/// the entry id to no one. The chat's New session on that message needs it
+/// before the run's end reads the file, so read the file just written and send
+/// the id back. Retries cover the short gap between the event and the write.
+async fn announce_user_message_entry(
+    hub: Arc<Hub>,
+    key: String,
+    path: std::path::PathBuf,
+    message: Value,
+) {
+    const ATTEMPTS: u32 = 8;
+    for _ in 0..ATTEMPTS {
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        let Ok(session) = pi_star_core::session::read_session(&path) else {
+            continue;
+        };
+        let Some(entry) = session.entries.iter().rev().find(|entry| {
+            pi_star_core::session::entry_type(entry) == Some("message")
+                && entry
+                    .get("message")
+                    .is_some_and(|candidate| same_user_message(candidate, &message))
+        }) else {
+            continue;
+        };
+        let Some(entry_id) = pi_star_core::session::entry_id(entry) else {
+            continue;
+        };
+        hub.publish(
+            &key,
+            json!({
+                "type": "user_message_entry",
+                "entryId": entry_id,
+                "timestamp": message.get("timestamp").cloned().unwrap_or(Value::Null),
+                "message": message,
+            })
+            .to_string()
+            .into(),
+            Cursor::Num(0),
+        );
+        return;
+    }
+}
+
+fn same_user_message(candidate: &Value, expected: &Value) -> bool {
+    if candidate.get("role").and_then(Value::as_str) != Some("user")
+        || expected.get("role").and_then(Value::as_str) != Some("user")
+    {
+        return false;
+    }
+    if candidate.get("timestamp").is_some()
+        && expected.get("timestamp").is_some()
+        && candidate.get("timestamp") == expected.get("timestamp")
+    {
+        return true;
+    }
+    candidate.get("content") == expected.get("content")
 }
 
 // ── Terminal ──
@@ -419,6 +501,29 @@ mod tests {
         assert_eq!(ChannelKind::Terminal.as_str(), "terminal");
         assert_eq!(ChannelKind::File.as_str(), "file");
         assert_eq!(ChannelKind::Auth.as_str(), "auth");
+    }
+
+    #[test]
+    fn matches_the_user_message_the_file_holds() {
+        let expected = json!({"role": "user", "content": "hi", "timestamp": 12});
+        assert!(same_user_message(
+            &json!({"role": "user", "content": "hi", "timestamp": 12}),
+            &expected
+        ));
+        assert!(same_user_message(
+            &json!({"role": "user", "content": "hi"}),
+            &json!({"role": "user", "content": "hi", "timestamp": 13})
+        ));
+        assert!(!same_user_message(
+            &json!({"role": "assistant", "content": "hi", "timestamp": 12}),
+            &expected
+        ));
+        // The persisted message carries the same timestamp; the file may add
+        // fields to content, so the timestamp is the primary identity.
+        assert!(same_user_message(
+            &json!({"role": "user", "content": "other", "timestamp": 12}),
+            &expected
+        ));
     }
 
     #[test]

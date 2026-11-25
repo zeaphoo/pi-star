@@ -405,6 +405,15 @@ The first low-risk batch from 0.16–0.18 is in:
 - UTF-16 BOM previews, byte-range bounds, quoted empty CSV records, MIME allow-list, streaming
   Markdown reference definitions/fence closes, ANSI escapes in replies, and `path:12-34` links.
 
-The remaining 0.16–0.18 items (multi-term search and its cache, background subagent report
-steering, missing-cwd fork, PlantUML, long-transcript selection, Agents strip) are still open; the
-selection criteria are in the review notes rather than this 0.13→0.15 document.
+A second batch is also in:
+
+- session search now matches every space-separated term (quoted phrases included), returns the
+  project name, caches unchanged transcripts by size/mtime, and uses character-safe slices;
+- the missing-folder banner can fork the whole session into another existing folder;
+- a user message sent during a run gets its entry id before the run ends, so New session works;
+- a finished tool result is shown on its card until the canonical tool-result message arrives;
+- terminal replays no longer send xterm's replies to the shell, while a new shell still answers
+  its startup queries.
+
+Still open: background subagent report steering, PlantUML, long-transcript selection and the
+Agents strip. The selection criteria live in the review notes rather than this 0.13→0.15 document.

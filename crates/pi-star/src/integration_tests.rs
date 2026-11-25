@@ -965,6 +965,78 @@ async fn real_pi_session_fixture_reads_and_forks() {
 }
 
 #[tokio::test]
+async fn fork_into_another_folder_copies_a_session_whose_cwd_is_gone() {
+    let temp = tempfile::tempdir().unwrap();
+    let agent_dir = temp.path().join("agent");
+    let ui_dir = temp.path().join("ui");
+    let cwd = temp.path().join("project");
+    let target = temp.path().join("moved");
+    std::fs::create_dir_all(&ui_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::create_dir_all(&target).unwrap();
+    std::fs::write(ui_dir.join("index.html"), "<!doctype html>").unwrap();
+    let source_text = include_str!("../../pi-star-core/tests/fixtures/session-with-tool.jsonl")
+        .replace(
+            "/home/ubuntu/workspace/pi-star/pi-star",
+            &cwd.to_string_lossy(),
+        );
+    let encoded = pi_star_core::config::encode_cwd(&cwd);
+    let dir = agent_dir.join("sessions").join(encoded);
+    std::fs::create_dir_all(&dir).unwrap();
+    let id = "d8612e2c-78c3-4929-90e9-d6b1777b46d6";
+    let source_path = dir.join(format!("2026-01-01T00-00-00.000Z_{id}.jsonl"));
+    std::fs::write(&source_path, &source_text).unwrap();
+    let fixture = Fixture {
+        _temp: temp,
+        agent_dir,
+        ui_dir,
+        session_id: id.to_string(),
+        cwd: cwd.clone(),
+    };
+    let app = router(&fixture).await;
+    std::fs::remove_dir_all(&cwd).unwrap();
+
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/sessions/{id}/fork"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(serde_json::json!({"cwd": target}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let new_id = body["sessionId"].as_str().unwrap();
+    assert_ne!(new_id, id);
+    assert_eq!(body["session"]["cwd"], target.to_string_lossy().as_ref());
+    assert_eq!(body["session"]["relation"]["kind"], "fork");
+    assert_eq!(body["session"]["relation"]["originSessionId"], id);
+    assert_eq!(std::fs::read_to_string(source_path).unwrap(), source_text);
+
+    let encoded_target = pi_star_core::config::encode_cwd(&target);
+    assert!(fixture_agent_dir_session_exists(
+        &fixture,
+        &encoded_target,
+        new_id
+    ));
+}
+
+fn fixture_agent_dir_session_exists(fixture: &Fixture, encoded: &str, id: &str) -> bool {
+    let dir = fixture.agent_dir.join("sessions").join(encoded);
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries.flatten().any(|entry| {
+                entry
+                    .file_name()
+                    .to_string_lossy()
+                    .ends_with(&format!("_{id}.jsonl"))
+            })
+        })
+        .unwrap_or(false)
+}
+
+#[tokio::test]
 async fn oauth_login_emits_an_authorization_url() {
     let fixture = write_fixture();
     let app = router(&fixture).await;
