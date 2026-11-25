@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { MessageView } from "./MessageView";
+import { SubagentTrace } from "./SubagentTrace";
 import { StatusIcon, statusColor } from "./AgentSessionPanel";
 import { buildToolResultsMap, EMPTY_TRANSCRIPT, mergeTailPage, prependOlderPage, type SubagentTranscript } from "./subagent-viewer-state";
 import { useI18n } from "@/hooks/useI18n";
@@ -57,6 +58,7 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
   const [notFound, setNotFound] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [refreshKey, setRefreshKey] = useState(0);
+  const [view, setView] = useState<"transcript" | "trace">("transcript");
 
   // Session info on open, when the run starts or ends (the persisted status
   // takes over from the live flag), and on manual refresh: label, cwd, status.
@@ -181,6 +183,7 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
   const toolResults = useMemo(() => buildToolResultsMap(messages), [messages]);
   const relation = info?.relation?.kind === "subagent" ? info.relation : null;
   const status = running ? "running" as const : relation?.status ?? "completed" as const;
+  const traceRevision = info ? `${info.modified}:${info.messageCount}` : "";
 
   return (
     <div style={{ height: "100%", display: "flex", flexDirection: "column", minWidth: 0 }}>
@@ -207,6 +210,28 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
         >
           {label}
         </strong>
+        <span role="tablist" aria-label={t("subagent.viewLabel")} style={{ display: "flex", gap: 2, flexShrink: 0 }}>
+          {(["transcript", "trace"] as const).map((tab) => (
+            <button
+              key={tab}
+              type="button"
+              role="tab"
+              aria-selected={view === tab}
+              onClick={() => setView(tab)}
+              style={{
+                padding: "2px 8px",
+                borderRadius: 4,
+                border: "1px solid var(--border)",
+                background: view === tab ? "var(--bg-selected)" : "none",
+                color: view === tab ? "var(--text)" : "var(--text-dim)",
+                cursor: "pointer",
+                fontSize: 11,
+              }}
+            >
+              {t(tab === "transcript" ? "subagent.tab.transcript" : "subagent.tab.trace")}
+            </button>
+          ))}
+        </span>
         <span
           style={{ display: "flex", alignItems: "center", gap: 5, color: statusColor(status), fontSize: 11, whiteSpace: "nowrap", flexShrink: 0 }}
           title={relation?.description}
@@ -232,6 +257,9 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
         </button>
       </div>
 
+      {view === "trace" ? (
+        <SubagentTrace sessionId={sessionId} running={running} tools={null} revision={traceRevision} />
+      ) : (
       <div
         ref={listRef}
         onScroll={handleScroll}
@@ -286,6 +314,7 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
           </>
         )}
       </div>
+      )}
     </div>
   );
 }

@@ -63,3 +63,95 @@ test("a Bun virtual script falls back to PATH like pi's own subagent example", (
     );
     assert.deepEqual(invocation, { command: "pi", args });
 });
+
+test("project profiles load only when the server says the folder is trusted", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { readProfiles } = await import("./subagent.js");
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-star-agents-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-star-project-"));
+    const previousCwd = process.cwd();
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousTrust = process.env.PI_STAR_PROJECT_TRUSTED;
+    try {
+        mkdirSync(join(project, ".pi", "agents"), { recursive: true });
+        writeFileSync(
+            join(project, ".pi", "agents", "review.md"),
+            "---\nname: review\ndescription: review\n---\n\nReview the change.\n",
+        );
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.chdir(project);
+
+        process.env.PI_STAR_PROJECT_TRUSTED = "0";
+        assert.equal(readProfiles().some((profile) => profile.name === "review"), false);
+
+        process.env.PI_STAR_PROJECT_TRUSTED = "1";
+        assert.equal(readProfiles().some((profile) => profile.name === "review"), true);
+    } finally {
+        process.chdir(previousCwd);
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        if (previousTrust === undefined) delete process.env.PI_STAR_PROJECT_TRUSTED;
+        else process.env.PI_STAR_PROJECT_TRUSTED = previousTrust;
+        rmSync(agentDir, { recursive: true, force: true });
+        rmSync(project, { recursive: true, force: true });
+    }
+});
+
+test("profile resources are read from frontmatter and default off", async () => {
+    const { mkdirSync, writeFileSync } = await import("node:fs");
+    const { readProfiles } = await import("./subagent.js");
+    const agentDir = mkdtempSync(join(tmpdir(), "pi-star-agents-"));
+    const project = mkdtempSync(join(tmpdir(), "pi-star-project-"));
+    const previousCwd = process.cwd();
+    const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+    const previousTrust = process.env.PI_STAR_PROJECT_TRUSTED;
+    try {
+        mkdirSync(join(project, ".pi", "agents"), { recursive: true });
+        writeFileSync(join(project, ".pi", "agents", "res.md"), [
+            "---",
+            "name: res",
+            "description: resources",
+            "load_skills: true",
+            "skills: [review, testing]",
+            "load_extensions: false",
+            "mcp: on",
+            "codemode: inherit",
+            "prompt_mode: replace",
+            "inherit_context: true",
+            "run_in_background: true",
+            "---",
+            "",
+            "Body.",
+        ].join("\n"));
+        process.env.PI_CODING_AGENT_DIR = agentDir;
+        process.env.PI_STAR_PROJECT_TRUSTED = "1";
+        process.chdir(project);
+
+        const res = readProfiles().find((profile) => profile.name === "res");
+        assert.ok(res);
+        assert.equal(res.loadSkills, true);
+        assert.deepEqual(res.skills, ["review", "testing"]);
+        assert.equal(res.loadExtensions, false);
+        assert.equal(res.mcp, "on");
+        assert.equal(res.codemode, "inherit");
+        assert.equal(res.promptMode, "replace");
+        assert.equal(res.inheritContext, true);
+        assert.equal(res.runInBackground, true);
+
+        const builtin = readProfiles().find((profile) => profile.name === "general-purpose");
+        assert.equal(builtin.loadSkills, false);
+        assert.equal(builtin.loadExtensions, false);
+        assert.equal(builtin.mcp, "off");
+        assert.equal(builtin.codemode, "off");
+        assert.equal(builtin.promptMode, "append");
+        assert.equal(builtin.runInBackground, false);
+    } finally {
+        process.chdir(previousCwd);
+        if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+        if (previousTrust === undefined) delete process.env.PI_STAR_PROJECT_TRUSTED;
+        else process.env.PI_STAR_PROJECT_TRUSTED = previousTrust;
+        rmSync(agentDir, { recursive: true, force: true });
+        rmSync(project, { recursive: true, force: true });
+    }
+});

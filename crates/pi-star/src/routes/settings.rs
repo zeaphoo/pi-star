@@ -1003,6 +1003,9 @@ pub async fn set_subagent_settings(
             Err(response) => return response,
         }
         state.agents.set_max_subagents(max as usize);
+        if let Some(controller) = state.agents.subagent_controller() {
+            controller.set_max_concurrent(max as usize);
+        }
     }
     subagent_settings(State(state)).await
 }

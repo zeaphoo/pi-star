@@ -183,7 +183,7 @@ ZIP_WIN="$(cygpath -w "$DIST_DIR/pi-star-app_${VERSION}_windows_${WIN_ARCH}_port
 powershell.exe -NoProfile -NonInteractive -Command \
     "Compress-Archive -Path '$PORTABLE_WIN\\*' -DestinationPath '$ZIP_WIN' -Force" >/dev/null
 
-for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.js; do
+for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.js pi-runtime/agent-extension/subagent-child.js; do
     [[ -e "$PORTABLE_DIR/$name" ]] || { echo "便携包缺少 $name" >&2; exit 1; }
 done
 rm -rf "$PORTABLE_DIR"
@@ -203,7 +203,7 @@ for file in "$DIST_DIR"/*-setup.exe; do
     fi
     # 7-Zip prints native separators inside NSIS; normalize before matching.
     listing="$("$SEVEN_ZIP" l "$file" 2>/dev/null | tr '\\' '/' || true)"
-    for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.js; do
+    for name in PiStarApp.exe pi-star.exe pi-runtime/node.exe pi-runtime/pi/package.json pi-runtime/agent-extension/index.js pi-runtime/agent-extension/subagent-child.js; do
         grep -qi "$name" <<<"$listing" || { echo "安装包 ${file##*/} 缺少 $name" >&2; exit 1; }
     done
 done

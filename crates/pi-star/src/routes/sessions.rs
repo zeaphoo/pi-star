@@ -47,6 +47,38 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
     let mut awaiting = state.agents.awaiting_input_ids();
     running.extend(state.pi_rpc.running_ids());
     awaiting.extend(state.pi_rpc.awaiting_input_ids());
+    let mut subagents_active: Vec<String> = Vec::new();
+    let mut sessions = sessions;
+    if let Some(controller) = state.agents.subagent_controller() {
+        for id in controller.live_ids() {
+            if !running.contains(&id) {
+                running.push(id.clone());
+            }
+            if let Some(info) = controller.get(&id)
+                && !info.parent_session_id.is_empty()
+                && !subagents_active.contains(&info.parent_session_id)
+            {
+                subagents_active.push(info.parent_session_id);
+            }
+        }
+        // A persisted `running`/`queued` status with no live run was cut off by a
+        // restart: report it as interrupted instead of a spinner that never ends.
+        for session in &mut sessions {
+            let Some(relation) = session.relation.as_mut() else {
+                continue;
+            };
+            let session::SessionRelation::Subagent { status, .. } = relation else {
+                continue;
+            };
+            if let Some(info) = controller.get(&session.id) {
+                if !info.status.is_terminal() {
+                    *status = info.status.as_str().to_string();
+                }
+            } else if matches!(status.as_str(), "running" | "queued" | "starting") {
+                *status = "interrupted".to_string();
+            }
+        }
+    }
     no_store(json!({
         "sessions": sessions,
         "sessionListVersion": version,
@@ -54,7 +86,7 @@ pub async fn list(State(state): State<Arc<AppState>>, Query(query): Query<ListQu
         "awaitingInputSessionIds": awaiting,
         "completionNotificationSuppressedSessionIds": [],
         "sessionUiStateRevision": state.ui_state.revision(),
-        "subagentsActiveSessionIds": [],
+        "subagentsActiveSessionIds": subagents_active,
     }))
 }
 
@@ -135,6 +167,21 @@ pub async fn get_session(
     state.roots.add(&info.cwd);
     if let Some(root) = &info.project_root {
         state.roots.add(root);
+    }
+    let mut info = info;
+    // Same settlement as the list: a live controller owns a running subagent's
+    // status; a persisted one with no live run was cut off by a restart.
+    if let Some(controller) = state.agents.subagent_controller()
+        && let Some(relation) = info.relation.as_mut()
+        && let session::SessionRelation::Subagent { status, .. } = relation
+    {
+        if let Some(live) = controller.get(&info.id) {
+            if !live.status.is_terminal() {
+                *status = live.status.as_str().to_string();
+            }
+        } else if matches!(status.as_str(), "running" | "queued" | "starting") {
+            *status = "interrupted".to_string();
+        }
     }
     let mut response = json!({
         "sessionId": id,

@@ -176,12 +176,17 @@ pub fn set_max_concurrent(config: &Config, value: u32) -> Result<()> {
     write_settings(config, &stored, 0o600)
 }
 
-fn profile_dirs(config: &Config, cwd: &Path) -> Vec<(PathBuf, &'static str)> {
-    vec![
-        (config.agent_dir.join("agents"), "global"),
-        (cwd.join(".agents").join("agents"), "workspace"),
-        (cwd.join(".pi").join("agents"), "project"),
-    ]
+fn profile_dirs(
+    config: &Config,
+    cwd: &Path,
+    include_project: bool,
+) -> Vec<(PathBuf, &'static str)> {
+    let mut dirs = vec![(config.agent_dir.join("agents"), "global")];
+    if include_project {
+        dirs.push((cwd.join(".agents").join("agents"), "workspace"));
+        dirs.push((cwd.join(".pi").join("agents"), "project"));
+    }
+    dirs
 }
 
 fn string_value(value: Option<&Value>) -> Option<String> {
@@ -440,6 +445,20 @@ fn read_dir_profiles(dir: &Path, scope: &str) -> Vec<Value> {
 }
 
 pub fn list_profiles(config: &Config, cwd: &Path) -> Vec<Value> {
+    list_profiles_inner(config, cwd, true)
+}
+
+/// The profiles a subagent run may use. Project and workspace profiles are the
+/// project's own prompt and tool grant, so they load only while the folder is
+/// trusted — the same rule pi applies to `.pi/` resources and pi-web applies to
+/// its subagent list. The Settings panel keeps listing the files regardless
+/// (`list_profiles`), as pi-web's profile sources do.
+pub fn list_runtime_profiles(config: &Config, cwd: &Path) -> Vec<Value> {
+    let trusted = settings::project_trust(config, cwd).trusted;
+    list_profiles_inner(config, cwd, trusted)
+}
+
+fn list_profiles_inner(config: &Config, cwd: &Path, include_project: bool) -> Vec<Value> {
     let disabled = disabled_builtins(config);
     let mut profiles: Vec<Value> = builtin_profiles()
         .into_iter()
@@ -453,7 +472,7 @@ pub fn list_profiles(config: &Config, cwd: &Path) -> Vec<Value> {
             profile
         })
         .collect();
-    for (dir, scope) in profile_dirs(config, cwd) {
+    for (dir, scope) in profile_dirs(config, cwd, include_project) {
         profiles.extend(read_dir_profiles(&dir, scope));
     }
     profiles.sort_by(|a, b| {

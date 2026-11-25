@@ -111,7 +111,7 @@ for file in "${debs[@]}"; do
     pkg="$(dpkg-deb -f "$out" Package)"
     [[ "$pkg" == "pi-star-app" ]] || { echo "deb 包名错误：$pkg" >&2; exit 1; }
     listing="$(dpkg-deb -c "$out")"
-    for path in usr/lib/PiStar/pi-star usr/lib/PiStar/pi-runtime/node usr/lib/PiStar/pi-runtime/pi/package.json usr/lib/PiStar/pi-runtime/agent-extension/index.js; do
+    for path in usr/lib/PiStar/pi-star usr/lib/PiStar/pi-runtime/node usr/lib/PiStar/pi-runtime/pi/package.json usr/lib/PiStar/pi-runtime/agent-extension/index.js usr/lib/PiStar/pi-runtime/agent-extension/subagent-child.js; do
         grep -q "$path$" <<<"$listing" || { echo "deb 缺少 $path" >&2; exit 1; }
     done
     rm -f "$file"

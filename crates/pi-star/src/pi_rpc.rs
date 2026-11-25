@@ -1040,6 +1040,10 @@ impl PiRpcRegistry {
         for (key, value) in &self.extra_env {
             command.env(key, value);
         }
+        // Project/workspace subagent profiles are the project's own prompt and
+        // tool grant: the extension reads them only when this folder is trusted.
+        let trusted = pi_star_core::settings::project_trust(&self.config, &cwd).trusted;
+        command.env("PI_STAR_PROJECT_TRUSTED", if trusted { "1" } else { "0" });
         if let Some(extension) = &extension {
             command.arg("--extension").arg(extension);
         }

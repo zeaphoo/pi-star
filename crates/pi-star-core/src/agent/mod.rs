@@ -31,6 +31,9 @@ pub struct AgentRegistry {
     runtimes: Mutex<HashMap<String, Arc<SessionRuntime>>>,
     completion: Mutex<Option<Arc<dyn Fn(&str, Option<&str>) + Send + Sync>>>,
     max_subagents: Mutex<usize>,
+    /// The QuickPI subagent runtime, set once by the server after the registry
+    /// exists. Tests and embedders without it simply have no `Agent` tool.
+    subagents: OnceCell<Arc<crate::subagent_runtime::SubagentController>>,
     pub config: Config,
     pub roots: Arc<AllowedRoots>,
     pub client: reqwest::Client,
@@ -46,10 +49,24 @@ impl AgentRegistry {
             runtimes: Mutex::new(HashMap::new()),
             completion: Mutex::new(None),
             max_subagents: Mutex::new(10),
+            subagents: OnceCell::new(),
             config,
             roots,
             client,
         }
+    }
+
+    /// Attach the subagent runtime. Only the first call wins, so an embedder
+    /// cannot swap the controller under running sessions.
+    pub fn set_subagent_controller(
+        &self,
+        controller: Arc<crate::subagent_runtime::SubagentController>,
+    ) {
+        let _ = self.subagents.set(controller);
+    }
+
+    pub fn subagent_controller(&self) -> Option<&Arc<crate::subagent_runtime::SubagentController>> {
+        self.subagents.get()
     }
 
     pub fn get(&self, id: &str) -> Option<Arc<SessionRuntime>> {
@@ -85,6 +102,15 @@ impl AgentRegistry {
     }
 
     pub fn open_path(self: &Arc<Self>, path: &Path) -> Result<Arc<SessionRuntime>> {
+        self.open_path_with(path, harness_backend::HarnessResources::default())
+    }
+
+    /// Open a session with a subagent profile's prompt and tool resources.
+    pub fn open_path_with(
+        self: &Arc<Self>,
+        path: &Path,
+        resources: harness_backend::HarnessResources,
+    ) -> Result<Arc<SessionRuntime>> {
         let session = read_session(path)?;
         let id = session.id().to_string();
         if let Some(runtime) = self.get(&id) {
@@ -99,6 +125,7 @@ impl AgentRegistry {
             roots: self.roots.clone(),
             client: self.client.clone(),
             registry: Arc::downgrade(self),
+            resources,
             max_subagents: Mutex::new(*self.max_subagents.lock()),
             harness: OnceCell::new(),
             last_activity: Mutex::new(Instant::now()),
@@ -168,6 +195,7 @@ pub struct SessionRuntime {
     pub roots: Arc<AllowedRoots>,
     pub client: reqwest::Client,
     registry: Weak<AgentRegistry>,
+    resources: harness_backend::HarnessResources,
     max_subagents: Mutex<usize>,
     harness: OnceCell<Arc<HarnessBackend>>,
     last_activity: Mutex<Instant>,
@@ -177,11 +205,12 @@ impl SessionRuntime {
     async fn harness(&self) -> Result<&Arc<HarnessBackend>> {
         self.harness
             .get_or_try_init(|| async {
-                HarnessBackend::open(
+                HarnessBackend::open_with(
                     &self.config,
                     self.roots.clone(),
                     &self.path,
                     self.registry.clone(),
+                    self.resources.clone(),
                 )
                 .await
             })
@@ -333,6 +362,31 @@ impl SessionRuntime {
     pub async fn send(self: &Arc<Self>, command: &Value) -> Result<Value> {
         self.touch();
         self.harness().await?.send(command).await
+    }
+
+    /// Open the harness if it is not up yet, so a caller can subscribe before
+    /// the first prompt (a subagent run waits for its own events).
+    pub async fn ensure_harness(self: &Arc<Self>) -> Result<()> {
+        self.touch();
+        self.harness().await.map(|_| ())
+    }
+
+    pub async fn queued_messages(self: &Arc<Self>) -> Result<Value> {
+        self.harness().await?.queued_messages().await
+    }
+
+    pub async fn send_custom_message(
+        self: &Arc<Self>,
+        custom_type: &str,
+        text: &str,
+        details: Value,
+        deliver_as: pi_star_harness::types::MessageDelivery,
+        trigger_turn: Option<bool>,
+    ) -> Result<Value> {
+        self.harness()
+            .await?
+            .send_custom_message(custom_type, text, details, deliver_as, trigger_turn)
+            .await
     }
 }
 

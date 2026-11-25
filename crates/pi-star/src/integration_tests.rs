@@ -2898,6 +2898,13 @@ async fn pi_rpc_backend_full_e2e_with_fake_model() {
         json!({"fake": {"type": "api_key", "key": "fake-key"}}).to_string(),
     )
     .unwrap();
+    // The `Agent` tool registers only while built-in subagents are switched on.
+    std::fs::create_dir_all(agent_dir.join("agents")).unwrap();
+    std::fs::write(
+        agent_dir.join("agents").join("settings.json"),
+        json!({"version": 1, "builtInEnabled": true}).to_string(),
+    )
+    .unwrap();
 
     let extension_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("..")
@@ -3317,4 +3324,262 @@ async fn stream_bus_carries_file_watch_events_over_one_websocket() {
     }
     assert!(saw_connected, "the file channel greeted the subscriber");
     assert!(saw_change, "a write to the file reached the socket");
+}
+
+/// The QuickPI subagent path end to end: the model calls `subagent`, a real
+/// child session runs on the fake provider, its status and result are written,
+/// and the background report reaches the parent.
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn quickpi_subagent_runs_end_to_end_with_fake_model() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let model_server = axum::Router::new().route(
+        "/v1/chat/completions",
+        axum::routing::post(|axum::Json(body): axum::Json<Value>| async move {
+            let messages = body.get("messages").and_then(Value::as_array);
+            let text_of = |message: &Value| -> String {
+                match message.get("content") {
+                    Some(Value::String(text)) => text.clone(),
+                    Some(Value::Array(blocks)) => blocks
+                        .iter()
+                        .filter_map(|block| block.get("text").and_then(Value::as_str))
+                        .collect::<Vec<_>>()
+                        .join(" "),
+                    _ => String::new(),
+                }
+            };
+            let last_user = messages
+                .and_then(|messages| {
+                    messages
+                        .iter()
+                        .rev()
+                        .find(|message| message.get("role").and_then(Value::as_str) == Some("user"))
+                })
+                .map(text_of)
+                .unwrap_or_default();
+            let has_tool_result = messages.is_some_and(|messages| {
+                messages
+                    .iter()
+                    .any(|message| message.get("role").and_then(Value::as_str) == Some("tool"))
+            });
+            let sse = if last_user.contains("TASK") {
+                "data: {\"choices\":[{\"delta\":{\"content\":\"child report\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n".to_string()
+            } else if !has_tool_result {
+                "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"call-sub\",\"type\":\"function\",\"function\":{\"name\":\"subagent\",\"arguments\":\"{\\\"prompt\\\":\\\"TASK: say hi\\\",\\\"description\\\":\\\"probe\\\",\\\"run_in_background\\\":true}\"}}]}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n".to_string()
+            } else {
+                "data: {\"choices\":[{\"delta\":{\"content\":\"parent done\"}}]}\n\ndata: {\"choices\":[{\"delta\":{},\"finish_reason\":\"stop\"}],\"usage\":{\"prompt_tokens\":10,\"completion_tokens\":3}}\n\ndata: [DONE]\n\n".to_string()
+            };
+            ([(header::CONTENT_TYPE, "text/event-stream")], sse)
+        }),
+    );
+    let model_handle = tokio::spawn(async move {
+        axum::serve(listener, model_server).await.unwrap();
+    });
+
+    let temp = tempfile::tempdir().unwrap();
+    let agent_dir = temp.path().join("agent");
+    let ui_dir = temp.path().join("ui");
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+    std::fs::create_dir_all(&ui_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(ui_dir.join("index.html"), "<!doctype html>").unwrap();
+    std::fs::write(
+        agent_dir.join("models.json"),
+        json!({
+            "providers": {
+                "fake": {
+                    "api": "openai-completions",
+                    "baseUrl": format!("http://{addr}/v1"),
+                    "apiKey": "fake-key",
+                    "models": [{"id": "fake-model", "name": "Fake Model"}]
+                }
+            }
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.join("settings.json"),
+        json!({
+            "defaultProvider": "fake",
+            "defaultModel": "fake-model",
+            "defaultThinkingLevel": "off"
+        })
+        .to_string(),
+    )
+    .unwrap();
+    std::fs::write(
+        agent_dir.join("auth.json"),
+        json!({"fake": {"type": "api_key", "key": "fake-key"}}).to_string(),
+    )
+    .unwrap();
+    std::fs::create_dir_all(agent_dir.join("agents")).unwrap();
+    std::fs::write(
+        agent_dir.join("agents").join("settings.json"),
+        json!({"version": 1, "builtInEnabled": true}).to_string(),
+    )
+    .unwrap();
+
+    let fixture = Fixture {
+        _temp: temp,
+        agent_dir: agent_dir.clone(),
+        ui_dir,
+        session_id: "unused".to_string(),
+        cwd: cwd.clone(),
+    };
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/agent/new")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "cwd": cwd,
+                    "backend": "quick",
+                    "message": "DELEGATE: investigate"
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert!(status.is_success(), "{body}");
+    let parent_id = body["sessionId"].as_str().unwrap().to_string();
+
+    // Wait for the child's result entry.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let mut child_id = None;
+    while std::time::Instant::now() < deadline {
+        for (id, entries) in session_entries(&agent_dir) {
+            let is_child = entries.iter().any(|entry| {
+                entry.get("customType").and_then(Value::as_str) == Some("pi-star:subagent")
+            });
+            if !is_child || id == parent_id {
+                continue;
+            }
+            let status = entries
+                .iter()
+                .rev()
+                .find(|entry| {
+                    entry.get("customType").and_then(Value::as_str)
+                        == Some("pi-star:subagent-status")
+                })
+                .and_then(|entry| entry.pointer("/data/status"))
+                .and_then(Value::as_str)
+                .unwrap_or("");
+            if status == "completed" {
+                child_id = Some(id);
+            }
+        }
+        if child_id.is_some() {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    let child_id = child_id.expect("the subagent should complete");
+    let entries = session_entries(&agent_dir)
+        .into_iter()
+        .find(|(id, _)| *id == child_id)
+        .map(|(_, entries)| entries)
+        .unwrap();
+    let meta = entries
+        .iter()
+        .find(|entry| entry.get("customType").and_then(Value::as_str) == Some("pi-star:subagent"))
+        .expect("subagent metadata");
+    assert_eq!(
+        meta.pointer("/data/parentSessionId")
+            .and_then(Value::as_str),
+        Some(parent_id.as_str())
+    );
+    assert_eq!(
+        meta.pointer("/data/profile").and_then(Value::as_str),
+        Some("general-purpose")
+    );
+    let result = entries
+        .iter()
+        .find(|entry| {
+            entry.get("customType").and_then(Value::as_str) == Some("pi-star:subagent-result")
+        })
+        .expect("subagent result");
+    assert_eq!(
+        result.pointer("/data/result").and_then(Value::as_str),
+        Some("child report")
+    );
+
+    // The background report reaches the parent (a steer or a follow-up run).
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+    let mut reported = false;
+    while std::time::Instant::now() < deadline && !reported {
+        for (id, entries) in session_entries(&agent_dir) {
+            if id != parent_id {
+                continue;
+            }
+            reported = entries.iter().any(|entry| {
+                // The report is a custom message, so it lives under `message`.
+                entry.pointer("/message/customType").and_then(Value::as_str)
+                    == Some("pi-star:subagent-notification")
+                    || entry.get("customType").and_then(Value::as_str)
+                        == Some("pi-star:subagent-notification")
+            });
+        }
+        if !reported {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+    assert!(reported, "the parent should receive the subagent report");
+
+    // The sidebar lists the child as a completed subagent.
+    let (status, list) = call(
+        app,
+        Request::builder()
+            .uri("/api/sessions")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let child = list["sessions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|session| session["id"] == child_id.as_str())
+        .expect("child session in the list");
+    assert_eq!(
+        child.pointer("/relation/kind").and_then(Value::as_str),
+        Some("subagent")
+    );
+    assert_eq!(
+        child.pointer("/relation/status").and_then(Value::as_str),
+        Some("completed")
+    );
+
+    model_handle.abort();
+}
+
+/// `(session id, entries)` for every session file under the agent dir.
+fn session_entries(agent_dir: &Path) -> Vec<(String, Vec<Value>)> {
+    let mut out = Vec::new();
+    let root = agent_dir.join("sessions");
+    let Ok(dirs) = std::fs::read_dir(&root) else {
+        return out;
+    };
+    for dir in dirs.flatten() {
+        let Ok(files) = std::fs::read_dir(dir.path()) else {
+            continue;
+        };
+        for file in files.flatten() {
+            let path = file.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("jsonl") {
+                continue;
+            }
+            let Ok(session) = pi_star_core::session::read_session(&path) else {
+                continue;
+            };
+            out.push((session.header.id.clone(), session.entries));
+        }
+    }
+    out
 }

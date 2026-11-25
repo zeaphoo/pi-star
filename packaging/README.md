@@ -11,7 +11,7 @@ installer contains:
 | pi-star server | `pi-star` under the resources directory (same directory as the shell on Windows) |
 | Node runtime | `pi-runtime/node` (`node.exe` on Windows) |
 | pi CLI | `pi-runtime/pi/` (`@earendil-works/pi-coding-agent` + production dependencies) |
-| pi-star extension | `pi-runtime/agent-extension/` (`index.js`, `subagent.js`, `package.json`) |
+| pi-star extension | `pi-runtime/agent-extension/` (`index.js`, `subagent.js`, `subagent-child.js`, `package.json`) |
 | MinGit (Windows only) | `pi-runtime/git/` (Git Bash, git, coreutils) |
 
 Linux installs to `/usr/lib/PiStar/`, macOS to `Contents/Resources/`, and Windows to the install

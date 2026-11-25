@@ -116,9 +116,16 @@ impl AppState {
         }
         let agents = Arc::new(AgentRegistry::new(config.clone(), roots.clone()));
         let pi_rpc = Arc::new(PiRpcRegistry::new(config.clone()));
-        agents.set_max_subagents(
-            pi_star_core::settings::subagent_settings(&config).max_concurrent as usize,
+        let subagent_settings = pi_star_core::settings::subagent_settings(&config);
+        agents.set_max_subagents(subagent_settings.max_concurrent as usize);
+        // QuickPI's subagent runtime: one per server, attached to the registry
+        // so every agent backend opens its children through the same controller.
+        let subagent_controller = pi_star_core::subagent_runtime::SubagentController::new(
+            agents.clone(),
+            config.clone(),
+            subagent_settings.max_concurrent as usize,
         );
+        agents.set_subagent_controller(subagent_controller);
         let ui_state = Arc::new(UiStateStore::new(config.ui_state_path()));
         let terminals = Arc::new(TerminalManager::new());
         let password = password

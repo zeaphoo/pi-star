@@ -154,15 +154,17 @@ impl SessionFile {
             .and_then(|entry| entry.pointer("/data/status"))
             .and_then(Value::as_str)
             .map(str::to_owned);
+        // The session file can hold other custom entries before this one (the
+        // backend choice is written at creation), so look for the type itself
+        // rather than the first custom entry.
         let subagent = self
             .entries
             .iter()
-            .find(|entry| entry_type(entry) == Some("custom"))
+            .filter(|entry| entry_type(entry) == Some("custom"))
+            .find(|entry| {
+                entry.get("customType").and_then(Value::as_str) == Some("pi-star:subagent")
+            })
             .and_then(|entry| {
-                let custom_type = entry.get("customType").and_then(Value::as_str)?;
-                if custom_type != "pi-star:subagent" {
-                    return None;
-                }
                 let data = entry.get("data")?;
                 Some(SessionRelation::Subagent {
                     parent_session_id: data

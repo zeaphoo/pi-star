@@ -280,6 +280,12 @@ pub(crate) async fn run_command(state: Arc<AppState>, id: String, body: Value) -
             }
         }
         BackendKind::Quick => {
+            // QuickPI builds its tool registry when the harness opens, so a
+            // settings change (the subagent switch included) only takes effect
+            // after the runtime is dropped and reopened.
+            if body.get("type").and_then(Value::as_str) == Some("reload") {
+                state.agents.remove(&id);
+            }
             let runtime = match state.agents.get(&id) {
                 Some(runtime) => Ok(runtime),
                 None => {
@@ -487,17 +493,50 @@ pub(crate) fn filter_event(event: Value) -> Option<Value> {
     Some(event)
 }
 
+/// Whether one of this session's subagents is still live (QuickPI only; the RPC
+/// extension tracks its own children in the browser's family rows).
+fn subagents_active_for(state: &AppState, parent_id: &str) -> bool {
+    state
+        .agents
+        .subagent_controller()
+        .map(|controller| {
+            controller.live_ids().into_iter().any(|id| {
+                controller
+                    .get(&id)
+                    .is_some_and(|info| info.parent_session_id == parent_id)
+            })
+        })
+        .unwrap_or(false)
+}
+
 pub async fn running(State(state): State<Arc<AppState>>) -> Response {
     let mut running = state.agents.running_ids();
     let mut awaiting = state.agents.awaiting_input_ids();
     running.extend(state.pi_rpc.running_ids());
     awaiting.extend(state.pi_rpc.awaiting_input_ids());
+    // QuickPI subagents run as ordinary sessions, but their parent's row shows a
+    // family "working" spinner only while one of them is live.
+    let mut subagents_active: Vec<String> = Vec::new();
+    let mut running_set: std::collections::HashSet<String> = running.iter().cloned().collect();
+    if let Some(controller) = state.agents.subagent_controller() {
+        for id in controller.live_ids() {
+            if running_set.insert(id.clone()) {
+                running.push(id.clone());
+            }
+            if let Some(info) = controller.get(&id)
+                && !info.parent_session_id.is_empty()
+                && !subagents_active.contains(&info.parent_session_id)
+            {
+                subagents_active.push(info.parent_session_id);
+            }
+        }
+    }
     no_store(json!({
         "sessionListVersion": state.started.elapsed().as_millis() as u64,
         "runningSessionIds": running,
         "awaitingInputSessionIds": awaiting,
         "completionNotificationSuppressedSessionIds": [],
-        "subagentsActiveSessionIds": [],
+        "subagentsActiveSessionIds": subagents_active,
         "sessionUiStateRevision": state.ui_state.revision(),
     }))
 }
@@ -524,7 +563,7 @@ pub async fn lease(State(state): State<Arc<AppState>>, AxumPath(id): AxumPath<St
         return no_store(json!({
             "running": runtime.is_running(),
             "awaitingInput": false,
-            "subagentsActive": false,
+            "subagentsActive": subagents_active_for(&state, &id),
             "backend": backend.id(),
             "state": with_backend(state_json, backend),
         }));

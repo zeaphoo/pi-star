@@ -19,6 +19,7 @@ pub mod session_search;
 pub mod session_title;
 pub mod settings;
 pub mod skills;
+pub mod subagent_runtime;
 pub mod subagents;
 pub mod terminal;
 pub mod transcript_notices;

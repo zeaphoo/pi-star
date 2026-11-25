@@ -10,6 +10,40 @@
 
 ### Added
 
+- **子代理运行时（QuickPI）**：`subagent`、`get_subagent_result`、`steer_subagent` 三个工具
+  由 Rust 的 `SubagentController` 驱动，支持 profile、`max_turns`、并发队列、后台运行、
+  孤儿状态收敛，以及把后台报告以 steer 送进父代理当前 run（空闲时改为 follow-up 唤醒）。
+
+- **子代理运行时（RPC）**：Node 扩展补齐同样的能力：profile（model/thinking/tools/max_turns）、
+  并发队列、子会话 `pi-star:subagent`/`status`/`result` 元数据、turn limit、结果消费去重、
+  “不是用户消息”的报告前缀；后台报告在父代理 `turn_end` 处以 steer 投递。
+
+- **子代理轨迹**：右侧子代理面板新增“对话 / 轨迹”切换，轨迹复用主 Trace 的事件模型，
+  只读 `/entries`，不会启动或干扰子代理 run。
+
+- **子代理开关生效**：内置子代理默认关闭，只有打开 Settings › Sub-agents 的开关并重载
+  会话后才注册 `Agent`/`subagent` 工具；QuickPI 的 reload 现在会重建运行时。工具在注册时
+  即启用，模型不需要先手动开启。
+
+- **子代理随父代理整体停止**：没有独立控制、没有 resume、不做 worktree 隔离；父代理 Stop
+  会同时停止它的子代理，且停止的运行不再回送完成报告。
+
+- **子代理并发按父会话隔离**：`maxConcurrent` 现在按父会话计数，一个项目排队不会阻塞另一个；
+  RPC 的后台队列会先创建子会话并写入 `queued` 状态，重启后显示为 `interrupted` 而不是消失。
+
+- **子代理 profile 遵循项目信任**：项目/工作区 profile 只在受信任目录加载（Settings 面板
+  仍然显示文件），与 pi 对 `.pi/` 资源的规则一致；`run_in_background` 在调用未指定时
+  使用 profile 的默认值。
+
+- **子代理 profile 资源**：`prompt_mode`（replace/append）、`load_skills`/`skills:` 预加载、
+  `mcp` 开关和 `inherit_context` 现在两套引擎都会应用；RPC 还支持 `load_extensions`、
+  路径或 `builtin:` 形式的 `extensions:` 列表，以及 `codemode: on/inherit`。
+  QuickPI 不执行 TypeScript 扩展、也没有 Code mode，遇到要求它们的 profile 会明确报错，
+  而不是静默忽略。
+
+- **修复子代理关系识别**：会话文件中先出现其他 custom entry（例如后端选择）时，侧栏仍能
+  把它识别为 subagent 而不是 fork。
+
 - **未发送草稿跨刷新保留**：会话草稿写入 `pi-star:draft:<session id>`（停止输入 300ms 后写，
   `pagehide`/隐藏时立即写，清空或发送立即删除），刷新或被 WebView 重载后恢复文本；图片、
   超过 20,000 字符的文本和新建会话的临时 key 只留内存，最多保留最近 50 条。历史编辑的待发送

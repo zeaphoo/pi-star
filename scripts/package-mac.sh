@@ -89,7 +89,8 @@ for path in \
     "Contents/Resources/pi-star" \
     "Contents/Resources/pi-runtime/node" \
     "Contents/Resources/pi-runtime/pi/package.json" \
-    "Contents/Resources/pi-runtime/agent-extension/index.js"; do
+    "Contents/Resources/pi-runtime/agent-extension/index.js" \
+    "Contents/Resources/pi-runtime/agent-extension/subagent-child.js"; do
     [[ -e "$APP_SRC/$path" ]] || { echo "app 缺少 $path" >&2; exit 1; }
 done
 

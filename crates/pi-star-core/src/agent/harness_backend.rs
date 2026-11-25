@@ -9,7 +9,7 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Weak};
 
 use anyhow::{Result, anyhow};
@@ -37,9 +37,9 @@ use pi_star_harness::types::{
 };
 use pi_star_tools::tools::ExecutionToolContext;
 
-use crate::agent::AgentRegistry;
 use crate::agent::harness_env::AllowedEnv;
 use crate::agent::session_store::{V3SessionRepo, message_to_v3};
+use crate::agent::{AgentRegistry, SessionRuntime};
 use crate::config::Config;
 use crate::file_access::AllowedRoots;
 use crate::models::{ModelDef, find_model, load_models};
@@ -51,6 +51,21 @@ const EVENT_BUFFER: usize = 512;
 /// Internal marker for a loadout with no tools: the harness treats an
 /// empty `active_tool_names` as "all tools".
 const NO_TOOLS: &str = "__pi_star_no_tools__";
+
+/// What a subagent's profile changes about a child's prompt and tools. The
+/// default is a plain session: no profile text, the skill catalog, MCP on.
+#[derive(Debug, Clone, Default)]
+pub struct HarnessResources {
+    pub prompt: crate::prompt::PromptResources,
+    /// `mcp: off` skips the MCP tool bridge entirely.
+    pub mcp: bool,
+}
+
+impl HarnessResources {
+    pub fn new(prompt: crate::prompt::PromptResources, mcp: bool) -> Self {
+        Self { prompt, mcp }
+    }
+}
 
 pub struct HarnessBackend {
     pub id: String,
@@ -68,6 +83,10 @@ pub struct HarnessBackend {
     system_prompt: parking_lot::RwLock<String>,
     queue: parking_lot::RwLock<(Vec<String>, Vec<String>)>,
     auto_compaction: AtomicBool,
+    /// The registry that owns this runtime, for the subagent controller (Stop
+    /// propagation) without taking it through every command.
+    registry: Weak<AgentRegistry>,
+    resources: HarnessResources,
 }
 
 impl HarnessBackend {
@@ -77,6 +96,16 @@ impl HarnessBackend {
         roots: Arc<AllowedRoots>,
         path: &Path,
         registry: Weak<AgentRegistry>,
+    ) -> Result<Arc<Self>> {
+        Self::open_with(config, roots, path, registry, HarnessResources::default()).await
+    }
+
+    pub async fn open_with(
+        config: &Config,
+        roots: Arc<AllowedRoots>,
+        path: &Path,
+        registry: Weak<AgentRegistry>,
+        resources: HarnessResources,
     ) -> Result<Arc<Self>> {
         let read_path = path.to_path_buf();
         let (header, session_file) = tokio::task::spawn_blocking(move || -> Result<_> {
@@ -100,7 +129,7 @@ impl HarnessBackend {
         .await
         .map_err(|error| anyhow!("session model task failed: {error}"))??;
         Self::build(
-            config, roots, path, cwd, header.id, model, providers, None, registry,
+            config, roots, path, cwd, header.id, model, providers, None, registry, resources,
         )
         .await
     }
@@ -140,6 +169,7 @@ impl HarnessBackend {
         providers: Vec<Arc<dyn Provider>>,
         system_prompt: Option<String>,
         registry: Weak<AgentRegistry>,
+        resources: HarnessResources,
     ) -> Result<Arc<Self>> {
         let repo = V3SessionRepo::new(config.clone(), &cwd);
         use pi_star_harness::session::types::SessionRepo;
@@ -154,7 +184,15 @@ impl HarnessBackend {
             .map_err(|error| anyhow!(error.to_string()))?;
         let session = Session::new(Arc::new(storage), None);
 
-        let tools = build_tools(&cwd, roots.clone(), config, path, registry).await;
+        let tools = build_tools(
+            &cwd,
+            roots.clone(),
+            config,
+            path,
+            registry.clone(),
+            resources.mcp,
+        )
+        .await;
         let tool_names: Vec<String> = tools
             .iter()
             .map(|tool| tool.tool.schema().name.clone())
@@ -165,6 +203,7 @@ impl HarnessBackend {
                 .await
                 .ok()
                 .flatten();
+        let has_explicit_selection = selected_tools.is_some();
         let visible_tools: Vec<String> = match selected_tools {
             Some(selected) => selected,
             None => {
@@ -180,6 +219,19 @@ impl HarnessBackend {
         .into_iter()
         .filter(|name| tool_names.iter().any(|known| known == name))
         .collect();
+        // The subagent tools are active on registration when the feature is on,
+        // as pi-web's `Agent` is: the model does not have to be told to switch
+        // them on first. An explicit tool selection still wins.
+        let mut visible_tools: Vec<String> = visible_tools;
+        if !has_explicit_selection && crate::settings::subagent_settings(config).built_in_enabled {
+            for name in ["subagent", "get_subagent_result", "steer_subagent"] {
+                if tool_names.iter().any(|known| known == name)
+                    && !visible_tools.iter().any(|known| known == name)
+                {
+                    visible_tools.push(name.to_string());
+                }
+            }
+        }
         let active_tool_names = harness_tool_names(&visible_tools);
         let system_prompt = match system_prompt {
             Some(prompt) => prompt,
@@ -187,8 +239,14 @@ impl HarnessBackend {
                 let prompt_config = config.clone();
                 let prompt_cwd = cwd.clone();
                 let prompt_tools = visible_tools.clone();
+                let prompt_resources = resources.prompt.clone();
                 tokio::task::spawn_blocking(move || {
-                    super::build_system_prompt(&prompt_config, &prompt_cwd, &prompt_tools)
+                    crate::prompt::build_system_prompt_with(
+                        &prompt_config,
+                        &prompt_cwd,
+                        &prompt_tools,
+                        &prompt_resources,
+                    )
                 })
                 .await
                 .unwrap_or_default()
@@ -267,11 +325,69 @@ impl HarnessBackend {
             system_prompt: parking_lot::RwLock::new(stored_prompt),
             queue: parking_lot::RwLock::new((Vec::new(), Vec::new())),
             auto_compaction: AtomicBool::new(true),
+            registry,
+            resources,
         }))
     }
 
     pub fn subscribe(&self) -> broadcast::Receiver<Value> {
         self.events.subscribe()
+    }
+
+    /// The lane's queued steering and follow-up messages. A subagent report is
+    /// only steered into a parent whose queue is empty, so it is never reordered
+    /// behind something the user typed.
+    pub async fn queued_messages(&self) -> Result<Value> {
+        let queued = self
+            .lane
+            .queued_messages()
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?;
+        Ok(json!({
+            "steering": queued.steering,
+            "followUp": queued.follow_up,
+        }))
+    }
+
+    /// Deliver a custom message to this session with pi's `deliverAs` semantics.
+    /// Used for a background subagent's report: steer into a running parent, or
+    /// a follow-up turn when it is idle.
+    pub async fn send_custom_message(
+        &self,
+        custom_type: &str,
+        text: &str,
+        details: Value,
+        deliver_as: pi_star_harness::types::MessageDelivery,
+        trigger_turn: Option<bool>,
+    ) -> Result<Value> {
+        let message = AgentMessage::Custom(CustomMessage {
+            role: custom_type.to_string(),
+            content: vec![pi_star_ai::types::Content::text(text)],
+            data: details,
+            timestamp: now_ms(),
+        });
+        let result = self
+            .lane
+            .send_message(
+                message,
+                pi_star_harness::types::SendMessageOptions {
+                    trigger_turn,
+                    deliver_as,
+                },
+            )
+            .await
+            .map_err(|error| anyhow!(error.to_string()))?;
+        Ok(match result {
+            pi_star_harness::agent_harness::SendMessageResult::Appended { entry_id } => {
+                json!({ "delivered": "appended", "entryId": entry_id })
+            }
+            pi_star_harness::agent_harness::SendMessageResult::Queued { entry_id, .. } => {
+                json!({ "delivered": "queued", "entryId": entry_id })
+            }
+            pi_star_harness::agent_harness::SendMessageResult::Run(_) => {
+                json!({ "delivered": "run" })
+            }
+        })
     }
 
     pub fn is_running(&self) -> bool {
@@ -640,6 +756,15 @@ impl HarnessBackend {
                 Ok(json!({ "queued": false }))
             }
             "abort" => {
+                // A subagent is part of this agent's run: stopping the parent
+                // stops its children too.
+                if let Some(controller) = self
+                    .registry
+                    .upgrade()
+                    .and_then(|registry| registry.subagent_controller().cloned())
+                {
+                    controller.abort_children_now(&self.id);
+                }
                 let result = self
                     .lane
                     .abort()
@@ -720,7 +845,14 @@ impl HarnessBackend {
                     .append_custom_entry("pi-star:tool-selection", Some(selection))
                     .await
                     .map_err(|error| anyhow!(error.to_string()))?;
-                let prompt = super::build_system_prompt(&self.config, &self.cwd, &names);
+                // A subagent's profile prompt (replace/append, skills, MCP) must
+                // survive a tool-selection change; rebuild with its resources.
+                let prompt = crate::prompt::build_system_prompt_with(
+                    &self.config,
+                    &self.cwd,
+                    &names,
+                    &self.resources.prompt,
+                );
                 self.harness
                     .set_system_prompt(Some(prompt.clone()))
                     .await
@@ -1064,6 +1196,7 @@ async fn build_tools(
     config: &Config,
     parent_path: &Path,
     registry: Weak<AgentRegistry>,
+    mcp: bool,
 ) -> Vec<HarnessTool> {
     let env = Arc::new(AllowedEnv::new(cwd.to_path_buf(), roots));
     let context = ExecutionToolContext::new(env.clone(), Some(env.clone()));
@@ -1078,7 +1211,12 @@ async fn build_tools(
     ];
 
     let bridge = Arc::new(McpBridge::new(config.clone(), cwd.to_path_buf()));
-    for (name, description, parameters) in bridge.tools().await {
+    let mcp_tools = if mcp {
+        bridge.tools().await
+    } else {
+        Vec::new()
+    };
+    for (name, description, parameters) in mcp_tools {
         tools.push(HarnessTool::new(Arc::new(McpTool {
             schema: Tool {
                 name,
@@ -1090,12 +1228,22 @@ async fn build_tools(
         })));
     }
 
-    tools.push(HarnessTool::new(Arc::new(SubagentTool::new(
-        config.clone(),
-        cwd.to_path_buf(),
-        parent_path.to_path_buf(),
-        registry,
-    ))));
+    // Same gate as the RPC extension and pi-web: no built-in subagent tools
+    // while the feature switch is off (profiles alone do not turn it on).
+    if crate::settings::subagent_settings(config).built_in_enabled {
+        tools.push(HarnessTool::new(Arc::new(AgentToolRs::new(
+            registry.clone(),
+            parent_path.to_path_buf(),
+        ))));
+        tools.push(HarnessTool::new(Arc::new(GetSubagentResultTool::new(
+            registry.clone(),
+            parent_path.to_path_buf(),
+        ))));
+        tools.push(HarnessTool::new(Arc::new(SteerSubagentTool::new(
+            registry,
+            parent_path.to_path_buf(),
+        ))));
+    }
     tools
 }
 
@@ -1189,56 +1337,92 @@ impl AgentTool for McpTool {
 }
 
 // ---------------------------------------------------------------------------
-// Subagent tool
+// Subagent tools (QuickPI)
 // ---------------------------------------------------------------------------
 
-struct SubagentTool {
-    schema: Tool,
-    config: Config,
-    cwd: PathBuf,
-    parent_path: PathBuf,
+/// Holds what a subagent tool needs: the parent runtime (created lazily, since
+/// `build_tools` runs before the runtime exists) and the shared controller.
+struct SubagentToolBase {
     registry: Weak<AgentRegistry>,
-    slots: Arc<AtomicUsize>,
+    parent_path: PathBuf,
 }
 
-impl SubagentTool {
-    fn new(
-        config: Config,
-        cwd: PathBuf,
-        parent_path: PathBuf,
-        registry: Weak<AgentRegistry>,
-    ) -> Self {
+impl SubagentToolBase {
+    async fn parent(&self) -> Result<Arc<SessionRuntime>, AgentError> {
+        let registry = self
+            .registry
+            .upgrade()
+            .ok_or_else(|| AgentError::tool("the agent registry is unavailable"))?;
+        registry
+            .open_path(&self.parent_path)
+            .map_err(|error| AgentError::tool(error.to_string()))
+    }
+
+    fn controller(&self) -> Result<Arc<crate::subagent_runtime::SubagentController>, AgentError> {
+        let registry = self
+            .registry
+            .upgrade()
+            .ok_or_else(|| AgentError::tool("the agent registry is unavailable"))?;
+        registry
+            .subagent_controller()
+            .cloned()
+            .ok_or_else(|| AgentError::tool("subagents are not available in this build"))
+    }
+}
+
+struct AgentToolRs {
+    schema: Tool,
+    base: SubagentToolBase,
+}
+
+impl AgentToolRs {
+    fn new(registry: Weak<AgentRegistry>, parent_path: PathBuf) -> Self {
         Self {
             schema: Tool {
                 name: "subagent".into(),
-                description: "Run a child coding agent and return its final answer.".into(),
+                description: "Delegate a focused task to a subagent. Each subagent runs as a separate inspectable Pi session. Use background mode for independent work and foreground mode when the result is needed immediately.".into(),
                 parameters: Schema::new(json!({
                     "type": "object",
                     "properties": {
-                        "description": {
+                        "subagent_type": {
                             "type": "string",
-                            "description": "Short label shown in the session tree"
+                            "description": "Configured agent profile name. Default: general-purpose."
                         },
                         "prompt": {
                             "type": "string",
-                            "description": "Complete instruction for the child agent"
+                            "description": "The complete task for the subagent."
+                        },
+                        "description": {
+                            "type": "string",
+                            "description": "Short activity label shown in the UI."
+                        },
+                        "run_in_background": {
+                            "type": "boolean",
+                            "description": "Return immediately and notify this session when complete."
+                        },
+                        "wait_timeout": {
+                            "type": "number",
+                            "description": "Seconds to wait for a foreground subagent. Default: 1800."
+                        },
+                        "model": {
+                            "type": "string",
+                            "description": "Optional provider/model override."
                         }
                     },
-                    "required": ["description", "prompt"]
+                    "required": ["prompt", "description"]
                 })),
                 constrained_sampling: None,
             },
-            config,
-            cwd,
-            parent_path,
-            registry,
-            slots: Arc::new(AtomicUsize::new(0)),
+            base: SubagentToolBase {
+                registry,
+                parent_path,
+            },
         }
     }
 }
 
 #[async_trait::async_trait]
-impl AgentTool for SubagentTool {
+impl AgentTool for AgentToolRs {
     fn schema(&self) -> &Tool {
         &self.schema
     }
@@ -1251,16 +1435,9 @@ impl AgentTool for SubagentTool {
         &self,
         _tool_call_id: &str,
         params: Value,
-        signal: tokio_util::sync::CancellationToken,
+        _signal: tokio_util::sync::CancellationToken,
         _on_update: Arc<dyn Fn(pi_star_agent::types::ToolResultPartial) + Send + Sync>,
     ) -> Result<AgentToolResult, AgentError> {
-        let description = params
-            .get("description")
-            .and_then(Value::as_str)
-            .unwrap_or("Subagent")
-            .chars()
-            .take(200)
-            .collect::<String>();
         let prompt = params
             .get("prompt")
             .and_then(Value::as_str)
@@ -1270,96 +1447,59 @@ impl AgentTool for SubagentTool {
         if prompt.is_empty() {
             return Err(AgentError::tool("prompt is required"));
         }
-        let registry = self
-            .registry
-            .upgrade()
-            .ok_or_else(|| AgentError::tool("the agent registry is unavailable"))?;
-        let max = registry.max_subagents();
-        let active = self.slots.fetch_add(1, Ordering::SeqCst);
-        if active >= max {
-            self.slots.fetch_sub(1, Ordering::SeqCst);
-            return Err(AgentError::tool(format!(
-                "too many subagents are already running (max {max})"
-            )));
-        }
-        let _slot = SlotGuard(self.slots.clone());
-
-        let path = crate::session::create_session_file_with_parent(
-            &self.config,
-            &self.cwd,
-            Some(&self.parent_path),
-        )
-        .map_err(|error| AgentError::tool(error.to_string()))?;
-        let child = crate::session::read_session(&path)
-            .map_err(|error| AgentError::tool(error.to_string()))?;
-        let parent_id = crate::session::read_session(&self.parent_path)
-            .map(|session| session.header.id.clone())
-            .unwrap_or_default();
-        let meta = crate::session::new_entry(
-            "custom",
-            None,
-            [
-                (
-                    "customType".to_string(),
-                    Value::String("pi-star:subagent".into()),
-                ),
-                (
-                    "data".to_string(),
-                    json!({
-                        "parentSessionId": parent_id,
-                        "profile": "default",
-                        "description": description,
-                        "status": "running",
-                    }),
-                ),
-            ]
-            .into_iter()
-            .collect(),
-        );
-        let _ = crate::session::append_lines(&path, &[meta]);
-        let child_id = child.header.id.clone();
-
-        let runtime = registry
-            .open_path(&path)
-            .map_err(|error| AgentError::tool(error.to_string()))?;
-        let mut receiver = runtime
-            .subscribe()
+        let controller = self.base.controller()?;
+        let parent = self.base.parent().await?;
+        let wait_ms = params
+            .get("wait_timeout")
+            .and_then(Value::as_f64)
+            .filter(|value| *value > 0.0)
+            .map(|seconds| (seconds * 1000.0) as u64)
+            .unwrap_or(crate::subagent_runtime::DEFAULT_WAIT_MS);
+        let request = crate::subagent_runtime::StartRequest {
+            profile: params
+                .get("subagent_type")
+                .and_then(Value::as_str)
+                .unwrap_or("general-purpose")
+                .to_string(),
+            task: prompt,
+            description: params
+                .get("description")
+                .and_then(Value::as_str)
+                .unwrap_or("Subagent")
+                .to_string(),
+            run_in_background: params.get("run_in_background").and_then(Value::as_bool),
+            model: params
+                .get("model")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
+            wait_ms,
+        };
+        let info = controller
+            .start(parent, request)
             .await
             .map_err(|error| AgentError::tool(error.to_string()))?;
-        runtime
-            .send(&json!({"type": "prompt", "message": prompt}))
-            .await
-            .map_err(|error| AgentError::tool(error.to_string()))?;
-
-        let deadline = tokio::time::sleep(std::time::Duration::from_secs(600));
-        tokio::pin!(deadline);
-        loop {
-            tokio::select! {
-                _ = signal.cancelled() => {
-                    runtime.abort();
-                    return Err(AgentError::Abort);
-                }
-                _ = &mut deadline => {
-                    runtime.abort();
-                    return Err(AgentError::tool("subagent timed out"));
-                }
-                event = receiver.recv() => {
-                    let Ok(event) = event else { break };
-                    if event.get("type").and_then(Value::as_str) == Some("prompt_done") {
-                        break;
-                    }
-                }
+        let text = info.final_text();
+        let mut details = info.details();
+        if info.run_in_background {
+            if let Some(object) = details.as_object_mut() {
+                object.insert(
+                    "result".into(),
+                    Value::String(
+                        "Its report arrives on its own when it completes; no need to poll.".into(),
+                    ),
+                );
             }
         }
-
-        let text = last_assistant_text(&path).unwrap_or_default();
+        if info.status == crate::subagent_runtime::RunStatus::Failed {
+            return Err(AgentError::tool(text));
+        }
         Ok(AgentToolResult {
             content: vec![TextContentOrImage::Text(TextContent {
                 kind: Default::default(),
                 text,
                 text_signature: None,
             })],
-            details: json!({ "subagentSessionId": child_id }),
+            details,
             usage: None,
             added_tool_names: Vec::new(),
             terminate: false,
@@ -1367,35 +1507,197 @@ impl AgentTool for SubagentTool {
     }
 }
 
-struct SlotGuard(Arc<AtomicUsize>);
+struct GetSubagentResultTool {
+    schema: Tool,
+    base: SubagentToolBase,
+}
 
-impl Drop for SlotGuard {
-    fn drop(&mut self) {
-        self.0.fetch_sub(1, Ordering::SeqCst);
+impl GetSubagentResultTool {
+    fn new(registry: Weak<AgentRegistry>, parent_path: PathBuf) -> Self {
+        Self {
+            schema: Tool {
+                name: "get_subagent_result".into(),
+                description: "Retrieve a subagent session's latest result, such as a report no longer in the conversation. A background run's report arrives on its own when it completes.".into(),
+                parameters: Schema::new(json!({
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Subagent session ID."
+                        },
+                        "wait": {
+                            "type": "boolean",
+                            "description": "Wait for completion."
+                        },
+                        "wait_timeout": {
+                            "type": "number",
+                            "description": "Seconds to wait. Default: 1800."
+                        }
+                    },
+                    "required": ["agent_id"]
+                })),
+                constrained_sampling: None,
+            },
+            base: SubagentToolBase {
+                registry,
+                parent_path,
+            },
+        }
     }
 }
 
-fn last_assistant_text(path: &Path) -> Option<String> {
-    let session = crate::session::read_session(path).ok()?;
-    session.entries.iter().rev().find_map(|entry| {
-        (entry.get("type").and_then(Value::as_str) == Some("message")
-            && entry.pointer("/message/role").and_then(Value::as_str) == Some("assistant"))
-        .then(|| {
-            entry
-                .pointer("/message/content")
-                .and_then(Value::as_array)
-                .map(|blocks| {
-                    blocks
-                        .iter()
-                        .filter_map(|block| {
-                            block.get("text").and_then(Value::as_str).map(str::to_owned)
-                        })
-                        .collect::<Vec<_>>()
-                        .join("")
-                })
-                .unwrap_or_default()
+#[async_trait::async_trait]
+impl AgentTool for GetSubagentResultTool {
+    fn schema(&self) -> &Tool {
+        &self.schema
+    }
+
+    fn label(&self) -> &str {
+        "get_subagent_result"
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        params: Value,
+        _signal: tokio_util::sync::CancellationToken,
+        _on_update: Arc<dyn Fn(pi_star_agent::types::ToolResultPartial) + Send + Sync>,
+    ) -> Result<AgentToolResult, AgentError> {
+        let id = params
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        if id.is_empty() {
+            return Err(AgentError::tool("agent_id is required"));
+        }
+        let controller = self.base.controller()?;
+        let wait = params.get("wait").and_then(Value::as_bool).unwrap_or(false);
+        let wait_ms = params
+            .get("wait_timeout")
+            .and_then(Value::as_f64)
+            .filter(|value| *value > 0.0)
+            .map(|seconds| (seconds * 1000.0) as u64)
+            .unwrap_or(crate::subagent_runtime::DEFAULT_WAIT_MS);
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(wait_ms.max(1));
+        let info = loop {
+            if let Some(info) = controller.get(&id) {
+                if info.status.is_terminal() || !wait || std::time::Instant::now() >= deadline {
+                    break Some(info);
+                }
+            } else {
+                break None;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        };
+        let Some(info) = info else {
+            return Err(AgentError::tool(format!("Subagent not found: {id}")));
+        };
+        if info.status.is_terminal() {
+            controller.mark_consumed(&info);
+        }
+        let text = info.final_text();
+        if info.status == crate::subagent_runtime::RunStatus::Failed {
+            return Err(AgentError::tool(text));
+        }
+        Ok(AgentToolResult {
+            content: vec![TextContentOrImage::Text(TextContent {
+                kind: Default::default(),
+                text,
+                text_signature: None,
+            })],
+            details: info.details(),
+            usage: None,
+            added_tool_names: Vec::new(),
+            terminate: false,
         })
-    })
+    }
+}
+
+struct SteerSubagentTool {
+    schema: Tool,
+    base: SubagentToolBase,
+}
+
+impl SteerSubagentTool {
+    fn new(registry: Weak<AgentRegistry>, parent_path: PathBuf) -> Self {
+        Self {
+            schema: Tool {
+                name: "steer_subagent".into(),
+                description: "Send a steering message to a currently running subagent session."
+                    .into(),
+                parameters: Schema::new(json!({
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {
+                            "type": "string",
+                            "description": "Subagent session ID."
+                        },
+                        "message": {
+                            "type": "string",
+                            "description": "Instruction to inject after the current tool execution."
+                        }
+                    },
+                    "required": ["agent_id", "message"]
+                })),
+                constrained_sampling: None,
+            },
+            base: SubagentToolBase {
+                registry,
+                parent_path,
+            },
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl AgentTool for SteerSubagentTool {
+    fn schema(&self) -> &Tool {
+        &self.schema
+    }
+
+    fn label(&self) -> &str {
+        "steer_subagent"
+    }
+
+    async fn execute(
+        &self,
+        _tool_call_id: &str,
+        params: Value,
+        _signal: tokio_util::sync::CancellationToken,
+        _on_update: Arc<dyn Fn(pi_star_agent::types::ToolResultPartial) + Send + Sync>,
+    ) -> Result<AgentToolResult, AgentError> {
+        let id = params
+            .get("agent_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .to_string();
+        let message = params
+            .get("message")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .trim()
+            .to_string();
+        if id.is_empty() || message.is_empty() {
+            return Err(AgentError::tool("agent_id and message are required"));
+        }
+        let controller = self.base.controller()?;
+        controller
+            .steer(&id, &message)
+            .await
+            .map_err(|error| AgentError::tool(error.to_string()))?;
+        Ok(AgentToolResult {
+            content: vec![TextContentOrImage::Text(TextContent {
+                kind: Default::default(),
+                text: format!("Steering message sent to {id}."),
+                text_signature: None,
+            })],
+            details: Value::Null,
+            usage: None,
+            added_tool_names: Vec::new(),
+            terminate: false,
+        })
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1638,6 +1940,13 @@ mod tests {
     async fn prompt_streams_pi_events_and_persists_v3() {
         let dir = tempfile::tempdir().unwrap();
         let config = Config::new(Some(dir.path().join("agent")), None).unwrap();
+        // The subagent tools register only while the feature switch is on.
+        std::fs::create_dir_all(config.agent_dir.join("agents")).unwrap();
+        std::fs::write(
+            config.agent_dir.join("agents").join("settings.json"),
+            r#"{"version":1,"builtInEnabled":true}"#,
+        )
+        .unwrap();
         let cwd = dir.path().join("proj");
         std::fs::create_dir_all(&cwd).unwrap();
         let roots = Arc::new(AllowedRoots::new());
@@ -1678,6 +1987,7 @@ mod tests {
             vec![provider as Arc<dyn Provider>],
             Some("test prompt".into()),
             Weak::new(),
+            HarnessResources::default(),
         )
         .await
         .unwrap();

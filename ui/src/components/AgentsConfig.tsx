@@ -676,6 +676,9 @@ export function AgentsConfig({
                       <span style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
                         {t("agents.codemodeHint")}
                       </span>
+                      <span style={{ color: "var(--text-dim)", fontSize: 11, lineHeight: 1.4 }}>
+                        {t("agents.quickpiUnsupported")}
+                      </span>
                     </div>
                   </Field>
 

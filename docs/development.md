@@ -44,8 +44,9 @@ The main paths that already work:
 - Agent runtime: new session, prompt, live events on the `agent:<session>` channel, abort/queue, set_model, set_thinking_level,
   set_tools, compact, navigate_tree, fork, stats, last reply, idle reclamation; OpenAI-compatible
   and Anthropic Messages streaming providers; built-in read/write/edit/bash/find/grep/ls tools.
-- Subagents: child-session creation, parent waiting, concurrency caps, profile scan/save/toggle,
-  and status display.
+- Subagents: both engines run real child sessions with the same metadata contract, a profile
+  (model, thinking, tools, `max_turns`), a concurrency queue, background runs and report delivery
+  (steer into a running parent, follow-up when idle); see [`subagents.md`](subagents.md).
 - Model catalog, models.json, default/enabled models, model cache, provider usage, API key
   save/delete, Anthropic OAuth, GitHub Copilot device-code, OAuth for other providers through the
   bundled pi/pi-ai flow, tools/cache-miss settings, project trust, MCP file read/write/test/OAuth,
@@ -291,3 +292,5 @@ from pi-web and pi-rust remain under MIT; attributions, the full MIT text, and f
 [`../NOTICE`](../NOTICE). Sources, mappings, and local changes are documented in
 [`upstream-pi-web.md`](upstream-pi-web.md), [`upstream-rpi.md`](upstream-rpi.md), and
 [`../ui/UPSTREAM.md`](../ui/UPSTREAM.md).
+
+See [`subagents.md`](subagents.md) for the subagent contract.

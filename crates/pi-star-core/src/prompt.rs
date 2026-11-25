@@ -63,6 +63,30 @@ fn escape_xml(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
+/// What a subagent's profile changes about the prompt.
+#[derive(Debug, Clone)]
+pub struct PromptResources {
+    /// `prompt_mode: replace`: this text is the whole system prompt.
+    pub replace: Option<String>,
+    /// `prompt_mode: append`: sections appended after the default prompt.
+    pub append: Vec<String>,
+    /// `load_skills: false` hides the skill catalog and preloads.
+    pub include_skills: bool,
+    /// `skills: [...]`: preload these skills' bodies instead of the catalog.
+    pub skills: Option<Vec<String>>,
+}
+
+impl Default for PromptResources {
+    fn default() -> Self {
+        Self {
+            replace: None,
+            append: Vec::new(),
+            include_skills: true,
+            skills: None,
+        }
+    }
+}
+
 fn section(name: &str, content: &str) -> String {
     format!("<{name}>\n{content}\n</{name}>")
 }
@@ -241,7 +265,7 @@ fn discover_append_system_prompt(config: &Config, cwd: &Path) -> Option<String> 
         .flatten()
 }
 
-fn skills_section(config: &Config, cwd: &Path, tools: &[String]) -> Option<String> {
+fn skills_catalog_section(config: &Config, cwd: &Path, tools: &[String]) -> Option<String> {
     let reader = if tools.iter().any(|tool| tool == "read") {
         Some("read")
     } else if tools.iter().any(|tool| tool == "bash") {
@@ -284,6 +308,36 @@ fn skills_section(config: &Config, cwd: &Path, tools: &[String]) -> Option<Strin
     }
     lines.push("</available_skills>".to_string());
     Some(lines.join("\n"))
+}
+
+/// The bodies of the skills a profile names, frontmatter stripped, in the
+/// profile's order. A missing or unreadable name becomes one warning line so
+/// the rest still load, as pi-web's preload does.
+fn preloaded_skills_section(config: &Config, cwd: &Path, names: &[String]) -> Option<String> {
+    if names.is_empty() {
+        return None;
+    }
+    let (skills, _, _) = resources::load_skills(config, cwd);
+    let mut lines = vec![
+        "The following skills were selected by this subagent's profile. Their instructions apply to this task.".to_string(),
+        String::new(),
+    ];
+    for name in names {
+        match skills.iter().find(|skill| &skill.name == name) {
+            Some(skill) => {
+                let content = std::fs::read_to_string(&skill.file_path).unwrap_or_default();
+                let body = pi_star_harness::frontmatter::parse_frontmatter(&content)
+                    .map(|(_, body)| body)
+                    .unwrap_or(content);
+                lines.push(format!("## {name}\n\n{}", body.trim()));
+                lines.push(String::new());
+            }
+            None => {
+                lines.push(format!("- Skill not found or unreadable: {name}"));
+            }
+        }
+    }
+    Some(lines.join("\n").trim_end().to_string())
 }
 
 const DEFAULT_TOOL_NAMES: [&str; 4] = ["read", "bash", "edit", "write"];
@@ -384,6 +438,20 @@ pub fn default_tool_names(config: &Config, cwd: &Path) -> Vec<String> {
 /// Render the QuickPI system prompt for a session. `active_tools` is the
 /// loadout after `pi-star:tool-selection` and `set_tools` are applied.
 pub fn build_system_prompt(config: &Config, cwd: &Path, active_tools: &[String]) -> String {
+    build_system_prompt_with(config, cwd, active_tools, &PromptResources::default())
+}
+
+/// The prompt for a subagent: a profile may replace it, append to it, hide the
+/// skill catalog, or preload named skills' bodies.
+pub fn build_system_prompt_with(
+    config: &Config,
+    cwd: &Path,
+    active_tools: &[String],
+    resources: &PromptResources,
+) -> String {
+    if let Some(exact) = &resources.replace {
+        return exact.trim().to_string();
+    }
     let custom_prompt = discover_system_prompt(config, cwd)
         .map(|prompt| prompt.trim().to_string())
         .filter(|prompt| !prompt.is_empty());
@@ -426,8 +494,25 @@ pub fn build_system_prompt(config: &Config, cwd: &Path, active_tools: &[String])
     if let Some(context) = project_context_section(&project_context_files(config, cwd)) {
         sections.push(section("project_context", &context));
     }
-    if let Some(skills) = skills_section(config, cwd, active_tools) {
-        sections.push(section("skills", &skills));
+    for extra in &resources.append {
+        let extra = extra.trim();
+        if !extra.is_empty() {
+            sections.push(extra.to_string());
+        }
+    }
+    if resources.include_skills {
+        match &resources.skills {
+            Some(names) => {
+                if let Some(skills) = preloaded_skills_section(config, cwd, names) {
+                    sections.push(section("skills", &skills));
+                }
+            }
+            None => {
+                if let Some(skills) = skills_catalog_section(config, cwd, active_tools) {
+                    sections.push(section("skills", &skills));
+                }
+            }
+        }
     }
     sections.push(section("cwd", &cwd.to_string_lossy().replace('\\', "/")));
     sections.join("\n\n")
@@ -472,5 +557,113 @@ mod tests {
         assert!(prompt.contains("<addendum>\nAPPENDED\n</addendum>"));
         assert!(prompt.contains("<project_context>"));
         assert!(prompt.contains("project notes"));
+    }
+}
+
+#[cfg(test)]
+mod subagent_prompt_tests {
+    use super::*;
+
+    fn config_for(dir: &Path) -> Config {
+        Config::new(Some(dir.join("agent")), None).unwrap()
+    }
+
+    #[test]
+    fn prompt_mode_replace_uses_only_the_profile_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let cwd = dir.path().join("proj");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let prompt = build_system_prompt_with(
+            &config,
+            &cwd,
+            &["read".to_string()],
+            &PromptResources {
+                replace: Some("Only this.".into()),
+                ..PromptResources::default()
+            },
+        );
+        assert_eq!(prompt, "Only this.");
+    }
+
+    #[test]
+    fn prompt_mode_append_keeps_the_default_prompt() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let cwd = dir.path().join("proj");
+        std::fs::create_dir_all(&cwd).unwrap();
+        let prompt = build_system_prompt_with(
+            &config,
+            &cwd,
+            &["read".to_string()],
+            &PromptResources {
+                append: vec!["Extra rules.".into()],
+                ..PromptResources::default()
+            },
+        );
+        assert!(prompt.contains(DEFAULT_PREAMBLE));
+        assert!(prompt.contains("Extra rules."));
+    }
+
+    #[test]
+    fn load_skills_off_hides_the_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let cwd = dir.path().join("proj");
+        let skill = cwd.join(".pi").join("skills").join("review");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: review\ndescription: Review code\n---\n\nReview body.\n",
+        )
+        .unwrap();
+        let tools = vec!["read".to_string()];
+        let with_skills = build_system_prompt_with(
+            &config,
+            &cwd,
+            &tools,
+            &PromptResources {
+                include_skills: true,
+                ..PromptResources::default()
+            },
+        );
+        assert!(with_skills.contains("<available_skills>"));
+        let without = build_system_prompt_with(
+            &config,
+            &cwd,
+            &tools,
+            &PromptResources {
+                include_skills: false,
+                ..PromptResources::default()
+            },
+        );
+        assert!(!without.contains("<available_skills>"));
+    }
+
+    #[test]
+    fn a_skills_list_preloads_its_body_instead_of_the_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = config_for(dir.path());
+        let cwd = dir.path().join("proj");
+        let skill = cwd.join(".pi").join("skills").join("review");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: review\ndescription: Review code\n---\n\nReview body here.\n",
+        )
+        .unwrap();
+        let prompt = build_system_prompt_with(
+            &config,
+            &cwd,
+            &["read".to_string()],
+            &PromptResources {
+                include_skills: true,
+                skills: Some(vec!["review".into(), "missing".into()]),
+                ..PromptResources::default()
+            },
+        );
+        assert!(prompt.contains("Review body here."));
+        assert!(!prompt.contains("<available_skills>"));
+        assert!(prompt.contains("Skill not found or unreadable: missing"));
     }
 }

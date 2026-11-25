@@ -60,6 +60,7 @@ const required = [
   join(outDir, "pi/dist/bundle/cli.js"),
   join(outDir, "agent-extension/index.js"),
   join(outDir, "agent-extension/subagent.js"),
+  join(outDir, "agent-extension/subagent-child.js"),
 ];
 if (platform === "win32") {
   required.push(join(outDir, "git/usr/bin/bash.exe"));
