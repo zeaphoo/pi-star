@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useId, useRef, type ButtonHTMLAttributes, type DragEvent } from "react";
 import { subscribe } from "@/lib/stream-bus";
 import { useI18n } from "@/hooks/useI18n";
+import { isImeComposing } from "@/lib/ime";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
 import type { DiscoveredModel } from "@/lib/model-discovery";
 import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
@@ -1725,7 +1726,9 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
         <SecretTextInput
           value={apiKey}
           onChange={setApiKey}
-          onKeyDown={(e) => { if (e.key === "Enter" && apiKey.trim()) handleSave(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !isImeComposing(e) && apiKey.trim()) handleSave();
+          }}
           placeholder={provider.configured ? t("models.replaceApiKey") : "sk-…"}
           style={{ flex: 1 }}
           autoComplete="off"

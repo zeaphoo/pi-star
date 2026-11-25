@@ -34,6 +34,10 @@
 - **运行中的 New session**：user `message_end` 后由事件流补发 `user_message_entry`，
   运行中已发送的用户消息也能立刻使用 New session；历史编辑仍只在运行结束后可用。
 
+- **长会话选择性能**：聊天行离开滚动容器约一个视口后使用 `content-visibility: auto`
+  跳过布局（保留 DOM 与可选性，滚动高度不跳）；引用选择弹窗的状态从 ChatWindow 拆出，
+  选择/取消选择不再重渲染整条 transcript。
+
 ### Changed
 
 - **内置 pi 升级到 1.6.0**：`packaging/pi-runtime.json` 的 `pi` 由 1.4.0 改为 1.6.0，Node 仍为
@@ -66,6 +70,9 @@
 
 - **终端回放不再向 shell 发送应答**：重连或恢复标签页时，xterm 对回放历史中光标/设备
   查询的应答不会再被当成输入；新建 shell 的首次连接仍会正常应答启动查询。
+
+- **输入法 Enter 不再误触发操作**：填写 API Key、Skills 搜索和单行设置输入时，用于确认
+  候选词的 Enter 不再保存/搜索/提交；同时识别 Safari 的 `keyCode === 229`。
 
 - **Markdown 文件链接**：`path:12-34` 形式的行范围链接能正确解析到文件。
 

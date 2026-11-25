@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback, useLayoutEffect, useRef } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { isImeComposing } from "@/lib/ime";
 import type {
   SkillContentResponse,
   SkillInfo as Skill,
@@ -478,7 +479,7 @@ function AddSkillPanel({
             value={query}
             onChange={(e) => setQuery(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter") search(query);
+              if (e.key === "Enter" && !isImeComposing(e)) search(query);
             }}
              placeholder={t("i18n.skillSearchPlaceholder")}
             style={{

@@ -413,7 +413,8 @@ A second batch is also in:
 - a user message sent during a run gets its entry id before the run ends, so New session works;
 - a finished tool result is shown on its card until the canonical tool-result message arrives;
 - terminal replays no longer send xterm's replies to the shell, while a new shell still answers
-  its startup queries.
+  its startup queries;
+- transcript rows far outside the viewport skip layout, and the quote popover keeps its own state,
+  so selecting text in long sessions stays fast.
 
-Still open: background subagent report steering, PlantUML, long-transcript selection and the
-Agents strip. The selection criteria live in the review notes rather than this 0.13→0.15 document.
+Still open: background subagent report steering, PlantUML and the Agents strip. The selection criteria live in the review notes rather than this 0.13→0.15 document.

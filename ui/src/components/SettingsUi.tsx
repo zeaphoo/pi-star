@@ -2,6 +2,7 @@
 
 import { Children, createContext, Fragment, useContext, useEffect, useId, useLayoutEffect, useRef } from "react";
 import type { ButtonHTMLAttributes, ClipboardEvent, CSSProperties, HTMLAttributes, ReactNode, Ref } from "react";
+import { isImeComposing } from "@/lib/ime";
 
 type ConfigButtonVariant = "primary" | "secondary" | "danger" | "ghost";
 type ConfigButtonSize = "small" | "default";
@@ -481,8 +482,7 @@ export function addSourceKeySubmits(event: {
   keyCode?: number;
 }): boolean {
   if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return false;
-  // Safari reports a composing Enter as keyCode 229 without isComposing.
-  return event.nativeEvent?.isComposing !== true && event.keyCode !== 229;
+  return !isImeComposing(event);
 }
 
 /** A catalog an add pane installs from: its address, its label, and an optional icon before the label. */
@@ -644,7 +644,7 @@ export function ConfigAddSourcePanel({
               if (normalizeValue) onValueChange(normalizeValue(event.currentTarget.value));
             }}
             onKeyDown={(event) => {
-              if (event.key === "Enter" && canSubmit) onSubmit();
+              if (event.key === "Enter" && !isImeComposing(event) && canSubmit) onSubmit();
             }}
           />
         )}

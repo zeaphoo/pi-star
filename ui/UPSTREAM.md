@@ -20,6 +20,10 @@ These are intentional and must be re-applied after a re-sync:
   `pi-star:draft:<session id>` instead of upstream's `pi-web:` prefix; `useAgentSession`'s
   history-edit hold and `SettingsPanel`'s clear-on-sign-out are local integration. Re-apply these
   when the sync script would bring the 0.15 in-memory version back.
+- **`useSkipOffscreenRows` and `QuoteSelectionPopover` are forward-ported from pi-web 0.18.**
+  `ChatWindow` installs the row-skipping callback ref and renders the popover instead of keeping
+  quote state inside the transcript component; the popover keeps pi-star's "Ask here" and
+  "Ask in new chat" actions.
 - **`lib/session-search.ts` is gone.** Search now runs in Rust (`crates/pi-star-core/src/session_search.rs`);
   the UI keeps only the response types in `components/SessionSearch.tsx`. The sync script already
   excludes the old server-only module, so a re-sync will not bring it back.
