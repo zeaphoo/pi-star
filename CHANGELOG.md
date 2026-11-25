@@ -8,6 +8,8 @@
 
 ## [Unreleased]
 
+## [0.1.0-rc.5] - 2026-11-25
+
 ### Added
 
 - **子代理运行时（QuickPI）**：`subagent`、`get_subagent_result`、`steer_subagent` 三个工具
@@ -340,7 +342,8 @@
 - 桌面模式跳过 service worker/PWA 注册，避免 Tauri webview 的缓存行为干扰本地服务。
 - Windows 安装包启用 long paths，避免内置 `node_modules` 路径超限。
 
-[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.4...HEAD
+[Unreleased]: https://github.com/zeaphoo/pi-star/compare/v0.1.0-rc.5...HEAD
+[0.1.0-rc.5]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.5
 [0.1.0-rc.4]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.4
 [0.1.0-rc.3]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.3
 [0.1.0-rc.2]: https://github.com/zeaphoo/pi-star/releases/tag/v0.1.0-rc.2
