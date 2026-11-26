@@ -11,6 +11,8 @@ export interface PiStarDesktopBridge {
   desktop: true;
   platform: string;
   shell: "tauri";
+  /** Debug shells keep the system context menu on surfaces without an app menu. */
+  debug?: boolean;
 }
 
 declare global {

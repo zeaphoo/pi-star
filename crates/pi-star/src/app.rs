@@ -70,7 +70,9 @@ pub fn router(state: Arc<AppState>) -> Router {
         .route("/agent/{id}/bash-output", get(routes::agent::bash_output))
         .route(
             "/files/{*path}",
-            get(routes::files::get_file).post(routes::files::post_file),
+            get(routes::files::get_file)
+                .post(routes::files::post_file)
+                .delete(routes::files::delete_file),
         )
         .route("/file-index", get(routes::files::file_index))
         .route("/git/status", get(routes::git::status))

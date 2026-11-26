@@ -15,6 +15,8 @@ import type {
 } from "@/lib/git-types";
 import type { GitTab, GitWorkspaceState } from "@/lib/git-workspace";
 import { GitDiffView } from "./GitDiffView";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { filePathMenuItems } from "@/lib/context-menu/file-menu.js";
 
 interface Props {
   projectRoot: string | null;
@@ -329,14 +331,27 @@ function ChangeRow({
   selectedFile: { path: string; scope: "staged" | "unstaged" | "all" } | null;
   onSelectFile: (path: string, scope: "staged" | "unstaged" | "all") => void;
 }) {
+  const menu = useContextMenu();
+  const { t } = useI18n();
   const path = relativePath(root, file.filePath);
   const name = getFileName(path);
   const parent = path.slice(0, Math.max(0, path.length - name.length - 1));
   const selected = selectedFile?.path === file.filePath && selectedFile.scope === scope;
   const color = statusColor(file.status);
+  const openMenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    menu.open({
+      anchor: { kind: "point", x: event.clientX, y: event.clientY },
+      items: filePathMenuItems({ absolute: file.filePath, relative: path, t }),
+      ariaLabel: name,
+    });
+  };
   return (
     <button
       type="button"
+      data-context-menu="git-file"
+      onContextMenu={openMenu}
       onClick={() => onSelectFile(file.filePath, scope)}
       title={path}
       style={{
@@ -395,6 +410,7 @@ function HistoryView({
   isMobile: boolean;
   t: ReturnType<typeof useI18n>["t"];
 }) {
+  const menu = useContextMenu();
   const selectedFile = detail?.files.find((file) => file.path === selectedFilePath) ?? detail?.files[0] ?? null;
   // Long commit bodies used to push the diff off screen. The header is capped
   // by default and gets a drag handle; double-click returns it to the cap.
@@ -592,6 +608,20 @@ function HistoryView({
                     <button
                       key={file.path}
                       type="button"
+                      data-context-menu="git-file"
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        menu.open({
+                          anchor: { kind: "point", x: event.clientX, y: event.clientY },
+                          items: filePathMenuItems({
+                            absolute: file.path,
+                            relative: relativePath(root, file.path),
+                            t,
+                          }),
+                          ariaLabel: file.path,
+                        });
+                      }}
                       onClick={() => onSelectFile(file)}
                       title={file.path}
                       style={{

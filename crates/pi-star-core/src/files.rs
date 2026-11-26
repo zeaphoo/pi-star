@@ -615,6 +615,43 @@ pub fn validate_upload_name(name: &str) -> Result<()> {
     Ok(())
 }
 
+/// Delete a file or a directory tree. Symlinks remove only the link.
+pub fn delete_entry(path: &Path) -> Result<()> {
+    let metadata = fs::symlink_metadata(path)?;
+    if metadata.file_type().is_dir() && !metadata.file_type().is_symlink() {
+        fs::remove_dir_all(path)?;
+    } else {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+/// Rename an entry inside its current directory.
+///
+/// `new_name` is a single path component: no separators, no `.`/`..`, and no
+/// existing destination. The caller has already checked the allowed roots.
+pub fn rename_entry(path: &Path, new_name: &str) -> Result<PathBuf> {
+    let name = new_name.trim();
+    if name.is_empty()
+        || name == "."
+        || name == ".."
+        || name.contains('/')
+        || name.contains('\\')
+        || name.contains('\0')
+    {
+        return Err(anyhow!("Invalid file name"));
+    }
+    let parent = path
+        .parent()
+        .ok_or_else(|| anyhow!("Cannot rename a filesystem root"))?;
+    let destination = parent.join(name);
+    if fs::symlink_metadata(&destination).is_ok() {
+        return Err(anyhow!("An entry with that name already exists"));
+    }
+    fs::rename(path, &destination)?;
+    Ok(destination)
+}
+
 pub fn inspect_upload_targets(dir: &Path, names: &[String]) -> (Vec<String>, Vec<String>) {
     let mut conflicts = Vec::new();
     let mut non_replaceable = Vec::new();

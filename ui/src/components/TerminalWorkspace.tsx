@@ -298,6 +298,9 @@ function TerminalPane({
         tab={tab}
         active={active}
         onActivate={onActivate}
+        onRestart={onRestart}
+        onClosePane={onClose}
+        canClosePane={canClose}
         onExpired={onExpired}
         onCwdChange={onCwdChange}
         onStarted={onStarted}

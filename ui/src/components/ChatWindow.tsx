@@ -1067,6 +1067,7 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
                     forkEntryId={forkEntryId}
                     searchBlock={entryIds[idx] === pendingSearchScroll?.entryId ? searchBlock : undefined}
                     onFork={bashRunning || isNew ? undefined : handleFork}
+                    onQuote={chatInputRef?.current ? (text) => chatInputRef.current?.insertQuote(text) : undefined}
                     forking={forkingEntryId === forkEntryId}
                     onEditContent={sessionBusy ? undefined : handleEditContent}
                     onCancelEdit={cancelEdit}

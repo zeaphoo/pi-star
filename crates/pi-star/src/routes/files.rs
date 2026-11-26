@@ -27,6 +27,38 @@ pub struct FileQuery {
     holder: Option<String>,
 }
 
+/// Whether `target` is one of the directories the server admits (a project/
+/// session cwd). Those may be browsed but never renamed or deleted wholesale.
+fn is_allowed_root(state: &AppState, target: &Path) -> bool {
+    let resolved = std::fs::canonicalize(target).unwrap_or_else(|_| target.to_path_buf());
+    state.roots.snapshot().iter().any(|root| root == &resolved)
+}
+
+/// `DELETE /api/files/{*path}`: remove a file, a symlink or a directory tree.
+pub async fn delete_file(
+    State(state): State<Arc<AppState>>,
+    AxumPath(path): AxumPath<String>,
+) -> Response {
+    let target = api_path_to_path(&path);
+    if !state.roots.is_allowed(&target) || !state.roots.is_allowed_existing(&target) {
+        return forbidden("Access denied");
+    }
+    if is_allowed_root(&state, &target) {
+        return bad_request("Refusing to delete a project root");
+    }
+    let path_for_delete = target.clone();
+    match blocking(move || files::delete_entry(&path_for_delete)).await {
+        Ok(Ok(())) => no_store(json!({"deleted": true})),
+        Ok(Err(error)) => internal(error),
+        Err(response) => response,
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct RenameBody {
+    name: String,
+}
+
 pub async fn get_file(
     State(state): State<Arc<AppState>>,
     AxumPath(path): AxumPath<String>,
@@ -294,6 +326,33 @@ pub async fn post_file(
         return forbidden("Access denied");
     }
     let kind = query.kind.as_deref().unwrap_or("upload");
+    if kind == "rename" {
+        if !state.roots.is_allowed(&directory) || !state.roots.is_allowed_existing(&directory) {
+            return forbidden("Access denied");
+        }
+        if is_allowed_root(&state, &directory) {
+            return bad_request("Refusing to rename a project root");
+        }
+        let body = match Json::<RenameBody>::from_request(request, &state).await {
+            Ok(body) => body.0,
+            Err(error) => return bad_request(error.to_string()),
+        };
+        let destination = directory
+            .parent()
+            .map(|parent| parent.join(body.name.trim()));
+        if let Some(destination) = &destination {
+            if !state.roots.is_allowed(destination) {
+                return forbidden("Access denied");
+            }
+        }
+        let source = directory.clone();
+        let new_name = body.name;
+        return match blocking(move || files::rename_entry(&source, &new_name)).await {
+            Ok(Ok(path)) => no_store(json!({"path": path.to_string_lossy()})),
+            Ok(Err(error)) => bad_request(error.to_string()),
+            Err(response) => response,
+        };
+    }
     if kind == "allow-link" {
         let body = match Json::<AllowLinkBody>::from_request(request, &state).await {
             Ok(body) => body.0,

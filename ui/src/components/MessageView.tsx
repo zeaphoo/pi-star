@@ -8,6 +8,9 @@ import { ThinkingIcon } from "./ThinkingIcon";
 import { copyText } from "@/lib/clipboard";
 import { useI18n } from "@/hooks/useI18n";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { hasNonEmptySelection } from "@/lib/context-menu/policy.js";
+import { messageMarkdown } from "@/lib/context-menu/message-menu.js";
 import { parseCompactionSummary } from "@/lib/compaction-summary";
 import { getAssistantErrorMessage, getThinkingPreview, hasAssistantAnswer, isAssistantTruncated, isEmptyThinkingBlock, splitThinkingPieces } from "@/lib/message-display";
 import { stripAnsi } from "@/lib/ansi";
@@ -209,6 +212,8 @@ interface Props {
   forking?: boolean;
   onEditContent?: (message: UserMessage, entryId: string) => void;
   onCancelEdit?: () => void;
+  /** Insert quoted text into the composer (the transcript owns the input). */
+  onQuote?: (text: string) => void;
   isEditing?: boolean;
   showTimestamp?: boolean;
   prevTimestamp?: number;
@@ -292,12 +297,12 @@ function haveSameRelevantToolResults(
   return true;
 }
 
-export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, missingWrittenPaths, onOpenSubagent, entryId, forkEntryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
+export const MessageView = memo(function MessageView({ message, isStreaming, toolResults, modelNames, cwd, onOpenFile, missingWrittenPaths, onOpenSubagent, entryId, forkEntryId, searchBlock, onFork, forking, onEditContent, onCancelEdit, onQuote, isEditing, showTimestamp, prevTimestamp, sessionId, writtenFiles, turnDurationMs, onCompact, isCompacting, compactError }: Props) {
   if (message.role === "user") {
-    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEntryId={forkEntryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} isEditing={isEditing} />;
+    return <UserMessageView message={message as UserMessage} cwd={cwd} onOpenFile={onOpenFile} entryId={entryId} forkEntryId={forkEntryId} onFork={onFork} forking={forking} onEditContent={onEditContent} onCancelEdit={onCancelEdit} onQuote={onQuote} isEditing={isEditing} />;
   }
   if (message.role === "assistant") {
-    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} missingWrittenPaths={missingWrittenPaths} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
+    return <AssistantMessageView message={message as AssistantMessage} isStreaming={isStreaming} toolResults={toolResults} modelNames={modelNames} cwd={cwd} onOpenFile={onOpenFile} missingWrittenPaths={missingWrittenPaths} onOpenSubagent={onOpenSubagent} showTimestamp={showTimestamp} prevTimestamp={prevTimestamp} sessionId={sessionId} entryId={entryId} forkEntryId={forkEntryId} onFork={onFork} onQuote={onQuote} searchBlock={searchBlock} writtenFiles={writtenFiles} turnDurationMs={turnDurationMs} onCompact={onCompact} isCompacting={isCompacting} compactError={compactError} />;
   }
   if (message.role === "toolResult") {
     // Rendered inline under its toolCall — skip standalone rendering if paired
@@ -340,7 +345,7 @@ export const MessageView = memo(function MessageView({ message, isStreaming, too
     && prev.compactError === next.compactError;
 });
 
-function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, onEditContent, onCancelEdit, isEditing }: {
+function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFork, forking, onEditContent, onCancelEdit, onQuote, isEditing }: {
   message: UserMessage;
   cwd?: string;
   onOpenFile?: (filePath: string, page?: number) => void;
@@ -350,9 +355,11 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
   forking?: boolean;
   onEditContent?: (message: UserMessage, entryId: string) => void;
   onCancelEdit?: () => void;
+  onQuote?: (text: string) => void;
   isEditing?: boolean;
 }) {
   const { t } = useI18n();
+  const menu = useContextMenu();
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -424,8 +431,30 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
     });
   };
 
+  const openMenu = (event) => {
+    // A selected passage keeps the system menu (Copy, Look Up, Translate);
+    // keyboard/long-press still reach the app menu.
+    if (!event.piStarSyntheticMenu && hasNonEmptySelection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = [{ id: "copy", label: t("i18n.copy"), onSelect: copyContent }];
+    const markdown = messageMarkdown(message);
+    if (markdown && markdown !== copyTarget) {
+      items.push({ id: "copy-markdown", label: t("menu.copyMarkdown"), onSelect: () => { void copyText(markdown); } });
+    }
+    if (onQuote) {
+      const selected = hasNonEmptySelection() ? window.getSelection()?.toString().trim() : "";
+      items.push({ id: "quote", label: t("menu.quoteSelection"), onSelect: () => onQuote(selected || copyTarget) });
+    }
+    if (canEdit) items.push({ id: "edit", label: t("menu.editMessage"), onSelect: () => onEditContent!(editTarget, entryId!) });
+    if (canFork) items.push({ id: "fork", label: t("menu.forkFromHere"), onSelect: () => onFork!(forkEntryId ?? entryId!) });
+    menu.open({ anchor: { kind: "point", x: event.clientX, y: event.clientY }, items, ariaLabel: "Message" });
+  };
+
   return (
     <div
+      data-context-menu="message"
+      onContextMenu={openMenu}
       style={{ marginBottom: 16, display: "flex", flexDirection: "column", alignItems: "flex-end" }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
@@ -700,6 +729,9 @@ function AssistantMessageView({
   onCompact,
   isCompacting,
   compactError,
+  forkEntryId,
+  onFork,
+  onQuote,
 }: {
   message: AssistantMessage;
   isStreaming?: boolean;
@@ -719,8 +751,12 @@ function AssistantMessageView({
   onCompact?: () => void;
   isCompacting?: boolean;
   compactError?: string | null;
+  forkEntryId?: string;
+  onFork?: (entryId: string) => void;
+  onQuote?: (text: string) => void;
 }) {
   const { t } = useI18n();
+  const menu = useContextMenu();
   const time = showTimestamp ? formatTime(message.timestamp) : null;
   const blockItems = useMemo(() => (message.content ?? [])
     .map((block, originalIndex) => ({ block, originalIndex }))
@@ -807,6 +843,31 @@ function AssistantMessageView({
     });
   };
 
+  const openMenu = (event) => {
+    // A selected passage keeps the system menu (Copy, Look Up, Translate);
+    // keyboard/long-press still reach the app menu.
+    if (!event.piStarSyntheticMenu && hasNonEmptySelection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = [{ id: "copy", label: t("i18n.copy"), onSelect: copyContent }];
+    const markdown = messageMarkdown(message);
+    if (markdown) {
+      items.push({ id: "copy-markdown", label: t("menu.copyMarkdown"), onSelect: () => { void copyText(markdown); } });
+    }
+    if (onQuote) {
+      const selected = hasNonEmptySelection() ? window.getSelection()?.toString().trim() : "";
+      items.push({
+        id: "quote",
+        label: t("menu.quoteSelection"),
+        onSelect: () => onQuote(selected || stripAnsi(textContent)),
+      });
+    }
+    if (onFork && (forkEntryId ?? entryId)) {
+      items.push({ id: "fork", label: t("menu.forkFromHere"), onSelect: () => onFork(forkEntryId ?? entryId!) });
+    }
+    menu.open({ anchor: { kind: "point", x: event.clientX, y: event.clientY }, items, ariaLabel: "Message" });
+  };
+
   useEffect(() => {
     if (!isStreaming) {
       // Finalise any un-finished thinking block durations on stream end
@@ -864,6 +925,8 @@ function AssistantMessageView({
     <div
       data-message-role="assistant"
       data-entry-id={entryId}
+      data-context-menu="message"
+      onContextMenu={openMenu}
       style={{ marginBottom: 16 }}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}

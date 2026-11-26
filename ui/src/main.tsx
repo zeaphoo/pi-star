@@ -2,6 +2,7 @@ import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
 import { PwaRegistration } from "@/components/PwaRegistration";
 import { installFetchPolicy } from "@/lib/api-fetch";
+import { installContextMenuPolicy } from "@/lib/context-menu/policy";
 import Home from "@/app/page";
 import LoginPage from "@/app/login/page";
 import "katex/dist/katex.min.css";
@@ -14,6 +15,10 @@ import "@/app/trace.css";
 // Every ordinary request gets a timeout, even one whose call site forgot:
 // a full connection pool used to leave the UI spinning forever.
 installFetchPolicy();
+
+// Pi Star's own chrome must not show the browser/WebView menu on any platform;
+// editable fields and text selections keep it. No UI is drawn here.
+installContextMenuPolicy();
 
 const root = document.getElementById("root");
 if (!root) throw new Error("missing #root");

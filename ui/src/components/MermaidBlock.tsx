@@ -6,6 +6,8 @@ import renderSyntaxNode from "react-syntax-highlighter/dist/esm/create-element";
 import SyntaxHighlighter from "react-syntax-highlighter/dist/esm/prism-light";
 import { useTheme } from "@/hooks/useTheme";
 import { useI18n } from "@/hooks/useI18n";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { hasNonEmptySelection } from "@/lib/context-menu/policy.js";
 import { usePrismLanguages } from "@/hooks/usePrismLanguages";
 import { CODE_THEME_STYLE } from "@/lib/code-roles";
 import { copyText } from "@/lib/clipboard";
@@ -356,6 +358,7 @@ function renderCodeLines({ rows, stylesheet, useInlineStyles }: CodeLinesProps) 
  */
 export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isStreaming }: CodeBlockProps) {
   const { t } = useI18n();
+  const menu = useContextMenu();
   const [copied, setCopied] = useState(false);
   // Loading starts with the first block, streaming or not, so a streamed
   // reply usually finds the languages ready when it ends.
@@ -376,8 +379,32 @@ export const CodeBlock = memo(function CodeBlock({ code, lang, headerAction, isS
     });
   };
 
+  const downloadCode = () => {
+    const blob = new Blob([code], { type: "text/plain;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `snippet.${lang && /^[a-z0-9+#-]+$/i.test(lang) ? lang : "txt"}`;
+    anchor.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const openCodeMenu = (event) => {
+    if (!event.piStarSyntheticMenu && hasNonEmptySelection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    menu.open({
+      anchor: { kind: "point", x: event.clientX, y: event.clientY },
+      items: [
+        { id: "copy", label: t("menu.copyCode"), onSelect: copy },
+        { id: "download", label: t("menu.downloadCode"), onSelect: downloadCode },
+      ],
+      ariaLabel: t("menu.copyCode"),
+    });
+  };
+
   return (
-    <div className="markdown-code-block">
+    <div className="markdown-code-block" data-context-menu="code" onContextMenu={openCodeMenu}>
       <div className="markdown-code-header">
         <span className="markdown-code-lang">{lang || "text"}</span>
         <div className="markdown-code-actions">

@@ -10,6 +10,13 @@
 
 ### Added
 
+- **App 级右键菜单（Phase 2/3 进行中）**：新增 `PopupMenu`（复用侧栏菜单的定位/翻转/键盘规则）、
+  唯一 `ContextMenuHost` / `useContextMenu()`、`data-context-menu` 注册表和全平台默认菜单抑制。
+  已接入会话消息、Markdown 代码块、文件树节点、Diff 与终端；支持 `Shift+F10` / ContextMenu 键、
+  触屏长按、`role="menu"` 与焦点归还。消息菜单含复制 Markdown 与引用选中；
+  文件树支持重命名、删除（新增 `DELETE /api/files/{path}` 与 `POST ?type=rename`）、
+  在系统文件管理器中显示（`/api/open-in-explorer` 接受 `path`）。调试构建保留系统菜单
+  （含 Inspect Element）。侧栏/项目/标签页沿用现有 `SidebarMenu`，迁移留给后续。
 - **渲染器看门狗**：桌面壳给每个 webview 注入每秒一次的主线程心跳
   （`POST /api/desktop/alive`）。主窗口可见且获得焦点时，壳轮询心跳年龄；超过 8 秒
   没有心跳就销毁并重建主窗口（新的 WebContent 进程），不再需要用户手动强退或在

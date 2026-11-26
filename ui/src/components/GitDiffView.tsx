@@ -6,6 +6,9 @@ import { buildDiffHighlightPlan, diffLineHtml } from "@/lib/diff-highlight";
 import { languageForPath } from "@/lib/file-language";
 import { useHighlightedSegments } from "@/hooks/useHighlightedSegments";
 import { useI18n } from "@/hooks/useI18n";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { hasNonEmptySelection } from "@/lib/context-menu/policy.js";
+import { copyText } from "@/lib/clipboard";
 
 interface Props {
   patch: string | null;
@@ -177,7 +180,23 @@ function GitDiffFile({ file, onExpandContext }: { file: SplitDiffFile; onExpandC
 
 /** A compact unified diff for the Git tab, using the same parser as the file viewer. */
 export function GitDiffView({ patch, emptyLabel, onExpandContext }: Props) {
+  const { t } = useI18n();
+  const menu = useContextMenu();
   const files = patch ? parseUnifiedPatch(patch) : null;
+
+  const openDiffMenu = (event) => {
+    if (!patch) return;
+    if (!event.piStarSyntheticMenu && hasNonEmptySelection()) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const items = [{ id: "copy-patch", label: t("menu.copyPatch"), onSelect: () => { void copyText(patch); } }];
+    if (onExpandContext) items.push({ id: "expand", label: t("diff.expandContext"), onSelect: onExpandContext });
+    menu.open({
+      anchor: { kind: "point", x: event.clientX, y: event.clientY },
+      items,
+      ariaLabel: t("menu.copyPatch"),
+    });
+  };
 
   if (!patch || !files) {
     return (
@@ -188,7 +207,11 @@ export function GitDiffView({ patch, emptyLabel, onExpandContext }: Props) {
   }
 
   return (
-    <div style={{ height: "100%", overflow: "auto", background: "var(--code-bg)", ...CODE_STYLE }}>
+    <div
+      data-context-menu="diff"
+      onContextMenu={openDiffMenu}
+      style={{ height: "100%", overflow: "auto", background: "var(--code-bg)", ...CODE_STYLE }}
+    >
       {files.map((file, fi) => (
         <div key={`${file.newPath ?? file.oldPath ?? "diff"}:${fi}`}>
           <div

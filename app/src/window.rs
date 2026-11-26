@@ -26,8 +26,9 @@ static POPUP_SEQ: AtomicUsize = AtomicUsize::new(0);
 /// 占住心跳就停，`watchdog` 据此重建卡死的主窗口。
 fn marker_script(client: &str) -> String {
     format!(
-        r#"(function(){{var m={{version:1,desktop:true,platform:"{platform}",shell:"tauri"}};try{{Object.defineProperty(window,"__PI_STAR__",{{value:Object.freeze(m),writable:false,configurable:false}});}}catch(e){{window.__PI_STAR__=Object.freeze(m);}}var beat=function(){{try{{fetch("/api/desktop/alive?client={client}",{{method:"POST",cache:"no-store",keepalive:true}}).catch(function(){{}});}}catch(e){{}}}};beat();setInterval(beat,1000);}})();"#,
+        r#"(function(){{var m={{version:1,desktop:true,platform:"{platform}",shell:"tauri",debug:{debug}}};try{{Object.defineProperty(window,"__PI_STAR__",{{value:Object.freeze(m),writable:false,configurable:false}});}}catch(e){{window.__PI_STAR__=Object.freeze(m);}}var beat=function(){{try{{fetch("/api/desktop/alive?client={client}",{{method:"POST",cache:"no-store",keepalive:true}}).catch(function(){{}});}}catch(e){{}}}};beat();setInterval(beat,1000);}})();"#,
         platform = std::env::consts::OS,
+        debug = cfg!(debug_assertions),
         client = client,
     )
 }

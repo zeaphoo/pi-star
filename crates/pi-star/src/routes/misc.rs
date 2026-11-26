@@ -367,7 +367,12 @@ pub async fn open_in_explorer_status(headers: axum::http::HeaderMap) -> Response
 
 #[derive(Debug, Deserialize)]
 pub struct OpenBody {
-    cwd: String,
+    /// Open this directory. Ignored when `path` is given.
+    #[serde(default)]
+    cwd: Option<String>,
+    /// Reveal this file or directory in the system file manager.
+    #[serde(default)]
+    path: Option<String>,
 }
 
 pub async fn open_in_explorer(
@@ -386,19 +391,49 @@ pub async fn open_in_explorer(
     if !loopback {
         return forbidden("remote");
     }
-    let cwd = PathBuf::from(body.cwd);
-    if !state.roots.is_allowed_existing(&cwd) {
-        return forbidden("access-denied");
-    }
-    if !cwd.is_dir() {
-        return bad_request("not-a-directory");
-    }
+    let target = if let Some(path) = body.path.filter(|value| !value.trim().is_empty()) {
+        let target = PathBuf::from(path);
+        if !state.roots.is_allowed_existing(&target) {
+            return forbidden("access-denied");
+        }
+        if !target.exists() {
+            return not_found("not-found");
+        }
+        target
+    } else {
+        let Some(cwd) = body.cwd.filter(|value| !value.trim().is_empty()) else {
+            return bad_request("cwd or path is required");
+        };
+        let cwd = PathBuf::from(cwd);
+        if !state.roots.is_allowed_existing(&cwd) {
+            return forbidden("access-denied");
+        }
+        if !cwd.is_dir() {
+            return bad_request("not-a-directory");
+        }
+        cwd
+    };
     #[cfg(target_os = "macos")]
-    let (program, args) = ("open", vec![cwd.to_string_lossy().into_owned()]);
+    let (program, args) = (
+        "open",
+        vec!["-R".to_string(), target.to_string_lossy().into_owned()],
+    );
     #[cfg(target_os = "windows")]
-    let (program, args) = ("explorer", vec![cwd.to_string_lossy().into_owned()]);
+    let (program, args) = (
+        "explorer",
+        vec![format!("/select,{}", target.to_string_lossy())],
+    );
     #[cfg(all(unix, not(target_os = "macos")))]
-    let (program, args) = ("xdg-open", vec![cwd.to_string_lossy().into_owned()]);
+    let (program, args) = {
+        // Most Linux file managers have no portable "select this entry": open
+        // the containing directory instead.
+        let directory = if target.is_dir() {
+            target.clone()
+        } else {
+            target.parent().unwrap_or(&target).to_path_buf()
+        };
+        ("xdg-open", vec![directory.to_string_lossy().into_owned()])
+    };
     let mut command = std::process::Command::new(program);
     command.args(args);
     // Reap the launcher: a dropped `Child` stays a zombie until this server

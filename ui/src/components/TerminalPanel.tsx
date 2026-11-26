@@ -8,6 +8,8 @@ import { useI18n } from "@/hooks/useI18n";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import { useTerminalAppearance } from "@/hooks/useTerminalAppearance";
 import { useTerminalTheme } from "@/hooks/useTerminalTheme";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { copyText } from "@/lib/clipboard";
 import {
   resolveTerminalFontSize,
   resolveTerminalFontWeight,
@@ -52,6 +54,11 @@ interface Props {
   showExtraKeys?: boolean;
   /** Per-pane controls drawn over the terminal, in its own theme. */
   actions?: ReactNode;
+  /** Restart the shell behind this pane (the pane's toolbar does this too). */
+  onRestart?: () => void;
+  /** Close this pane; absent for the last pane. */
+  onClosePane?: () => void;
+  canClosePane?: boolean;
 }
 
 export function TerminalPanel({
@@ -68,8 +75,12 @@ export function TerminalPanel({
   onExit,
   showExtraKeys: extraKeysEnabled = true,
   actions,
+  onRestart,
+  onClosePane,
+  canClosePane = false,
 }: Props) {
   const { t } = useI18n();
+  const menu = useContextMenu();
   const { id, cwd, restored } = tab;
   const containerRef = useRef<HTMLDivElement>(null);
   const terminalRef = useRef<Terminal | null>(null);
@@ -431,12 +442,51 @@ export function TerminalPanel({
     colorScheme: preset.kind,
   } as CSSProperties;
 
+  const openTerminalMenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const terminal = terminalRef.current;
+    const selection = terminal?.getSelection() ?? "";
+    const items: any[] = [
+      {
+        id: "copy",
+        label: t("i18n.copy"),
+        disabled: !selection,
+        disabledReason: t("menu.nothingSelected"),
+        onSelect: () => { void copyText(selection); },
+      },
+      {
+        id: "paste",
+        label: t("menu.paste"),
+        onSelect: () => {
+          void navigator.clipboard?.readText?.().then((text) => {
+            if (text) terminalRef.current?.paste(text);
+          }).catch(() => {});
+        },
+      },
+      { type: "separator", id: "terminal-separator-1" },
+      { id: "clear", label: t("menu.clear"), onSelect: () => terminalRef.current?.clear() },
+    ];
+    if (onRestart) items.push({ id: "restart", label: t("terminal.restart"), onSelect: onRestart });
+    if (canClosePane && onClosePane) {
+      items.push({ type: "separator", id: "terminal-separator-2" });
+      items.push({ id: "close", label: t("menu.closePane"), danger: true, onSelect: onClosePane });
+    }
+    menu.open({
+      anchor: { kind: "point", x: event.clientX, y: event.clientY },
+      items,
+      ariaLabel: t("terminal.title"),
+    });
+  };
+
   return (
     <section
       className="terminal-panel"
       data-terminal-theme={preset.kind}
       data-terminal-preset={preset.id}
       data-status={status}
+      data-context-menu="terminal"
+      onContextMenu={openTerminalMenu}
       style={themeStyle}
       aria-label={t("terminal.title")}
       onPointerDown={() => onActivate?.()}

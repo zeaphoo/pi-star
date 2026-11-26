@@ -575,6 +575,95 @@ async fn files_list_read_and_index() {
 }
 
 #[tokio::test]
+async fn files_rename_and_delete_respect_the_allowed_roots() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+    let encoded = fixture
+        .cwd
+        .to_string_lossy()
+        .trim_start_matches('/')
+        .to_string();
+    std::fs::write(fixture.cwd.join("rename-me.txt"), "x").unwrap();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/files/{encoded}/rename-me.txt?type=rename"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"name":"renamed.txt"}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["path"].as_str().unwrap().ends_with("renamed.txt"));
+    assert!(!fixture.cwd.join("rename-me.txt").exists());
+    assert_eq!(
+        std::fs::read_to_string(fixture.cwd.join("renamed.txt")).unwrap(),
+        "x"
+    );
+
+    // A name that already exists is refused instead of overwriting it.
+    std::fs::write(fixture.cwd.join("taken.txt"), "keep").unwrap();
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri(format!("/api/files/{encoded}/renamed.txt?type=rename"))
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(r#"{"name":"taken.txt"}"#))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(
+        std::fs::read_to_string(fixture.cwd.join("taken.txt")).unwrap(),
+        "keep"
+    );
+
+    std::fs::create_dir_all(fixture.cwd.join("tree/sub")).unwrap();
+    std::fs::write(fixture.cwd.join("tree/sub/leaf.txt"), "leaf").unwrap();
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/files/{encoded}/renamed.txt"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["deleted"], true);
+    assert!(!fixture.cwd.join("renamed.txt").exists());
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/files/{encoded}/tree"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!fixture.cwd.join("tree").exists());
+
+    // The project itself is browsable but never deletable from the file tree.
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .method("DELETE")
+            .uri(format!("/api/files/{encoded}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert!(fixture.cwd.is_dir());
+}
+
+#[tokio::test]
 async fn agent_ensure_session_creates_a_file() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

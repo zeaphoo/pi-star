@@ -20,6 +20,10 @@ import { createExpandedPathsMemory } from "@/lib/file-tree-expansion";
 import { loadChangesViewMode, saveChangesViewMode, type ChangesViewMode } from "@/lib/sidebar-prefs";
 import { droppedItems } from "@/hooks/useDragDrop";
 import { useI18n } from "@/hooks/useI18n";
+import { useContextMenu } from "@/hooks/useContextMenu.js";
+import { copyText } from "@/lib/clipboard";
+import { revealMenuLabelKey } from "@/lib/context-menu/file-manager.js";
+import { desktopPlatform } from "@/lib/desktop";
 type Translate = ReturnType<typeof useI18n>["t"];
 
 /** Why a listed entry is normally left out; only listings with `hidden=1` report it. */
@@ -222,6 +226,7 @@ export function TreeNode({
   dropTargetPath,
   onDropFiles,
   onDropTargetChange,
+  onTreeChanged,
   t,
 }: {
   node: FileNode;
@@ -241,8 +246,11 @@ export function TreeNode({
   dropTargetPath?: string | null;
   onDropFiles?: (directory: string, items: DroppedItem[]) => void;
   onDropTargetChange?: (path: string | null) => void;
+  /** A rename/delete changed this listing: reload loaded directories. */
+  onTreeChanged?: () => void;
   t: Translate;
 }) {
+  const menu = useContextMenu();
   const open = expandedPaths.has(node.fullPath);
   const hidden = node.hidden ?? parentHidden;
   const isDropTarget = node.isDir && dropTargetPath === node.fullPath;
@@ -260,6 +268,14 @@ export function TreeNode({
   const [allowedLinkTarget, setAllowedLinkTarget] = useState<string | null>(null);
   const [allowingLink, setAllowingLink] = useState(false);
   const [allowLinkError, setAllowLinkError] = useState<string | null>(null);
+  const [renameOpen, setRenameOpen] = useState(false);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [renameName, setRenameName] = useState(node.name);
+  const [busy, setBusy] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const renameDialogRef = useRef<HTMLDialogElement>(null);
+  const deleteDialogRef = useRef<HTMLDialogElement>(null);
+  const renameInputRef = useRef<HTMLInputElement>(null);
   // A link leading outside the project is refused until the operator allows
   // its target, so it asks for that instead of listing (#748).
   const pendingLinkTarget = node.outsideLinkTarget && node.outsideLinkTarget !== allowedLinkTarget
@@ -316,6 +332,88 @@ export function TreeNode({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [refreshToken]);
 
+  useEffect(() => {
+    if (!renameOpen) return;
+    const dialog = renameDialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+    requestAnimationFrame(() => {
+      renameInputRef.current?.focus();
+      renameInputRef.current?.select();
+    });
+  }, [renameOpen]);
+
+  useEffect(() => {
+    if (!deleteOpen) return;
+    const dialog = deleteDialogRef.current;
+    if (dialog && !dialog.open) dialog.showModal();
+  }, [deleteOpen]);
+
+  const errorMessage = async (response: Response) => {
+    try {
+      const data = await response.json() as { error?: string };
+      return data.error || `HTTP ${response.status}`;
+    } catch {
+      return `HTTP ${response.status}`;
+    }
+  };
+
+  const revealEntry = async () => {
+    setActionError(null);
+    try {
+      const response = await fetch("/api/open-in-explorer", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ cwd, path: node.fullPath }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const submitRename = async (event: React.FormEvent) => {
+    event.preventDefault();
+    const name = renameName.trim();
+    if (busy || !name || name === node.name) {
+      setRenameOpen(false);
+      return;
+    }
+    setBusy(true);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/files/${encodeFilePathForApi(node.fullPath)}?type=rename`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name }),
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      setRenameOpen(false);
+      onTreeChanged?.();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (busy) return;
+    setBusy(true);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/files/${encodeFilePathForApi(node.fullPath)}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error(await errorMessage(response));
+      setDeleteOpen(false);
+      onTreeChanged?.();
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const handleClick = useCallback(() => {
     if (node.isDir) {
       const next = !open;
@@ -347,10 +445,76 @@ export function TreeNode({
     }
   }, [node.fullPath, node.outsideLinkEncloses, pendingLinkTarget, loadChildren, t]);
 
+  const openFileMenu = (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    const relative = getRelativeFilePath(node.fullPath, cwd);
+    const items: any[] = [
+      {
+        id: "open",
+        label: t("menu.open"),
+        onSelect: () => {
+          if (node.isDir) {
+            const next = !open;
+            onToggleExpanded(node.fullPath, next);
+            if (next && !loaded && !pendingLinkTarget) loadChildren();
+          } else {
+            onOpenFile(node.fullPath, node.name);
+          }
+        },
+      },
+    ];
+    if (onAtMention) {
+      items.push({ id: "insert-path", label: t("files.insertPath"), onSelect: () => onAtMention(relative, node.isDir) });
+    }
+    items.push({ type: "separator", id: "file-separator-1" });
+    items.push({ id: "copy-relative", label: t("menu.copyRelativePath"), onSelect: () => { void copyText(relative); } });
+    items.push({ id: "copy-absolute", label: t("menu.copyAbsolutePath"), onSelect: () => { void copyText(node.fullPath); } });
+    if (!node.isDir) {
+      items.push({
+        id: "download",
+        label: t("files.download"),
+        onSelect: () => {
+          const anchor = document.createElement("a");
+          anchor.href = `/api/files/${encodeFilePathForApi(node.fullPath)}?type=download`;
+          anchor.download = node.name;
+          anchor.click();
+        },
+      });
+    }
+    items.push({ type: "separator", id: "file-separator-2" });
+    items.push({
+      id: "rename",
+      label: t("menu.rename"),
+      onSelect: () => {
+        setRenameName(node.name);
+        setActionError(null);
+        setRenameOpen(true);
+      },
+    });
+    items.push({ id: "reveal", label: t(revealMenuLabelKey({ platform: desktopPlatform() })), onSelect: () => { void revealEntry(); } });
+    items.push({
+      id: "delete",
+      label: t("menu.delete"),
+      danger: true,
+      onSelect: () => {
+        setActionError(null);
+        setDeleteOpen(true);
+      },
+    });
+    menu.open({
+      anchor: { kind: "point", x: event.clientX, y: event.clientY },
+      items,
+      ariaLabel: node.name,
+    });
+  };
+
   return (
     <div>
       <div
         data-file-path={node.fullPath}
+        data-context-menu="file"
+        onContextMenu={openFileMenu}
         onClick={handleClick}
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
@@ -592,6 +756,7 @@ export function TreeNode({
               dropTargetPath={dropTargetPath}
               onDropFiles={onDropFiles}
               onDropTargetChange={onDropTargetChange}
+              onTreeChanged={onTreeChanged}
               t={t}
             />
           ))}
@@ -607,6 +772,53 @@ export function TreeNode({
           )}
         </div>
       )}
+      {actionError && !renameOpen && !deleteOpen && (
+        <div role="alert" style={{ paddingLeft: 8 + depth * 14, paddingRight: 8, paddingTop: 3, paddingBottom: 3, fontSize: 11, color: "#f87171", wordBreak: "break-word" }}>
+          {actionError}
+        </div>
+      )}
+      <dialog
+        ref={renameDialogRef}
+        aria-label={t("files.renameTitle")}
+        onClose={() => { if (!busy) setRenameOpen(false); }}
+        style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 0, background: "var(--bg-panel)", color: "var(--text)", minWidth: 300 }}
+      >
+        <form onSubmit={submitRename} style={{ display: "flex", flexDirection: "column", gap: 12, padding: 16 }}>
+          <strong style={{ fontSize: 13 }}>{t("files.renameTitle")}</strong>
+          <input
+            ref={renameInputRef}
+            value={renameName}
+            onChange={(event) => setRenameName(event.target.value)}
+            aria-label={t("files.renameLabel")}
+            style={{ height: 30, padding: "0 8px", border: "1px solid var(--border)", borderRadius: 6, background: "var(--bg)", color: "var(--text)", fontSize: 13 }}
+          />
+          {actionError && <span role="alert" style={{ color: "#f87171", fontSize: 11, wordBreak: "break-word" }}>{actionError}</span>}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button type="button" onClick={() => setRenameOpen(false)} disabled={busy}>{t("files.cancel")}</button>
+            <button type="submit" disabled={busy || !renameName.trim()}>{t("files.renameAction")}</button>
+          </div>
+        </form>
+      </dialog>
+      <dialog
+        ref={deleteDialogRef}
+        aria-label={t("files.deleteTitle")}
+        onClose={() => { if (!busy) setDeleteOpen(false); }}
+        style={{ border: "1px solid var(--border)", borderRadius: 10, padding: 0, background: "var(--bg-panel)", color: "var(--text)", minWidth: 320 }}
+      >
+        <div style={{ display: "flex", flexDirection: "column", gap: 12, padding: 16 }}>
+          <strong style={{ fontSize: 13 }}>{t("files.deleteTitle")}</strong>
+          <p style={{ margin: 0, fontSize: 12, lineHeight: 1.6 }}>
+            {node.isDir
+              ? t("files.deleteFolderConfirm", { name: node.name })
+              : t("files.deleteConfirm", { name: node.name })}
+          </p>
+          {actionError && <span role="alert" style={{ color: "#f87171", fontSize: 11, wordBreak: "break-word" }}>{actionError}</span>}
+          <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+            <button type="button" onClick={() => setDeleteOpen(false)} disabled={busy}>{t("files.cancel")}</button>
+            <button type="button" onClick={confirmDelete} disabled={busy} style={{ color: "#f87171" }}>{t("files.deleteAction")}</button>
+          </div>
+        </div>
+      </dialog>
     </div>
   );
 }
@@ -1505,6 +1717,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                     dropTargetPath={dropTargetPath}
                     onDropFiles={handleDropFiles}
                     onDropTargetChange={handleDropTargetChange}
+                    onTreeChanged={() => setTreeRefreshKey((key) => key + 1)}
                     t={t}
                   />
                 ))}
@@ -1609,6 +1822,7 @@ export const FileExplorer = forwardRef<FileExplorerHandle, Props>(function FileE
                 dropTargetPath={dropTargetPath}
                 onDropFiles={handleDropFiles}
                 onDropTargetChange={handleDropTargetChange}
+                onTreeChanged={() => setTreeRefreshKey((key) => key + 1)}
                 t={t}
               />
             ))
