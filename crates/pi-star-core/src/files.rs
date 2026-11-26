@@ -2,6 +2,9 @@ use std::fs;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use pi_star_tools::utils::process::output_with_timeout;
+use std::time::Duration;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result, anyhow};
@@ -582,7 +585,7 @@ fn list_with_git(cwd: &Path) -> Option<Vec<String>> {
         ])
         .env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output().ok()?;
+    let output = output_with_timeout(&mut command, Duration::from_secs(12)).ok()?;
     if !output.status.success() {
         return None;
     }

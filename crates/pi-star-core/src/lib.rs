@@ -26,4 +26,5 @@ pub mod transcript_notices;
 pub mod ui_state;
 
 pub use config::Config;
+pub use pi_star_tools::utils::process;
 pub use pi_star_tools::{sanitize_std_command, sanitize_tokio_command};

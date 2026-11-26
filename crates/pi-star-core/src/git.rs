@@ -2,9 +2,18 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use anyhow::{Result, anyhow};
 use serde::Serialize;
+
+use pi_star_tools::utils::process::output_with_timeout;
+
+/// Deadline for read-only git queries (status, rev-parse, diff, history).
+/// macOS volumes with iCloud/network I/O can leave `git` stuck indefinitely.
+pub const GIT_TIMEOUT: Duration = Duration::from_secs(12);
+/// Worktree add/remove checks out files and may legitimately take longer.
+const WORKTREE_TIMEOUT: Duration = Duration::from_secs(120);
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -270,7 +279,7 @@ fn read_porcelain(root: &Path) -> Vec<PorcelainEntry> {
         .args(["status", "--porcelain=v1", "-z"])
         .env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let Ok(output) = command.output() else {
+    let Ok(output) = output_with_timeout(&mut command, GIT_TIMEOUT) else {
         return Vec::new();
     };
     if !output.status.success() {
@@ -334,7 +343,7 @@ pub fn repository_root(dir: &Path) -> Option<PathBuf> {
         .args(["rev-parse", "--show-toplevel"])
         .env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output().ok()?;
+    let output = output_with_timeout(&mut command, GIT_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }
@@ -346,7 +355,7 @@ fn git_text(root: &Path, args: &[String]) -> Result<String> {
     let mut command = Command::new("git");
     command.arg("-C").arg(root).args(args).env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output()?;
+    let output = output_with_timeout(&mut command, GIT_TIMEOUT)?;
     if !output.status.success() {
         return Err(anyhow!("git command failed"));
     }
@@ -423,7 +432,7 @@ pub fn add_worktree(cwd: &Path, path: &Path, branch: &str, create_branch: bool) 
     let mut command = Command::new("git");
     command.arg("-C").arg(cwd).args(&args).env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output()?;
+    let output = output_with_timeout(&mut command, WORKTREE_TIMEOUT)?;
     if !output.status.success() {
         return Err(anyhow!(
             String::from_utf8_lossy(&output.stderr).trim().to_string()
@@ -441,7 +450,7 @@ pub fn remove_worktree(cwd: &Path, path: &Path, force: bool) -> Result<()> {
     let mut command = Command::new("git");
     command.arg("-C").arg(cwd).args(&args).env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output()?;
+    let output = output_with_timeout(&mut command, WORKTREE_TIMEOUT)?;
     if !output.status.success() {
         return Err(anyhow!(
             String::from_utf8_lossy(&output.stderr).trim().to_string()
@@ -555,7 +564,7 @@ fn read_porcelain_v2(root: &Path) -> PorcelainV2 {
         ])
         .env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let Ok(output) = command.output() else {
+    let Ok(output) = output_with_timeout(&mut command, GIT_TIMEOUT) else {
         return result;
     };
     if !output.status.success() {

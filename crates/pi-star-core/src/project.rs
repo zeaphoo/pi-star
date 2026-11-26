@@ -1,7 +1,13 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
+
+use pi_star_tools::utils::process::output_with_timeout;
+
+/// Discovery must fail fast on a stalled volume instead of blocking a listing.
+const GIT_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -89,7 +95,7 @@ fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     command.arg("-C").arg(cwd).args(args).env("LC_ALL", "C");
     pi_star_tools::sanitize_std_command(&mut command);
-    let output = command.output().ok()?;
+    let output = output_with_timeout(&mut command, GIT_TIMEOUT).ok()?;
     if !output.status.success() {
         return None;
     }

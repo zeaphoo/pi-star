@@ -17,6 +17,11 @@
 
 ### Fixed
 
+- **Git 子进程增加 12 秒超时**：`repository_root`、`git status`、`git diff/show`、
+  `ls-files`、worktree 分支探测等读操作超过 12 秒会被杀掉，不再在 iCloud/网络卷上
+  无限期占住 blocking 线程；`worktree add/remove` 这类需要 checkout 的操作用 120 秒。
+  超时统一通过 `pi_star_tools::utils::process::output_with_timeout` 实现，并在等待期间
+  并发排空 stdout/stderr，避免大 diff 因管道写满而被误杀。
 - **Diff 变更视图被超大仓库卡死**：`git status` 改用
   `--untracked-files=normal`，未跟踪目录折叠为一条，不再把 `node_modules` 里每个文件都列出来；
   状态文件列表上限 2000 并返回 `filesTruncated`，前端提示“只列出前 N 个”。工作区里

@@ -9,6 +9,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use pi_star_core::git;
+use pi_star_core::process::output_with_timeout;
 use pi_star_core::project::ProjectInfo;
 
 use crate::routes::{bad_request, blocking, forbidden, internal, no_store, not_found};
@@ -181,8 +182,7 @@ pub async fn add_worktree(
             &format!("refs/heads/{branch_for_work}"),
         ]);
         pi_star_core::sanitize_std_command(&mut command);
-        let branch_exists = command
-            .output()
+        let branch_exists = output_with_timeout(&mut command, git::GIT_TIMEOUT)
             .map(|output| output.status.success())
             .unwrap_or(false);
         if let Err(error) =
