@@ -21,10 +21,14 @@ pub const MIN_MAIN_SIZE: (f64, f64) = (900.0, 600.0);
 static POPUP_SEQ: AtomicUsize = AtomicUsize::new(0);
 
 /// 注入到 pi-star 页面的只读桌面标记。不包含任何 Tauri command 能力。
-fn marker_script() -> String {
+///
+/// 同时装入渲染器心跳：它在页面的主线程上每秒跑一次，主线程一旦被死循环
+/// 占住心跳就停，`watchdog` 据此重建卡死的主窗口。
+fn marker_script(client: &str) -> String {
     format!(
-        r#"(function(){{var m={{version:1,desktop:true,platform:"{platform}",shell:"tauri"}};try{{Object.defineProperty(window,"__PI_STAR__",{{value:Object.freeze(m),writable:false,configurable:false}});}}catch(e){{window.__PI_STAR__=Object.freeze(m);}}}})();"#,
-        platform = std::env::consts::OS
+        r#"(function(){{var m={{version:1,desktop:true,platform:"{platform}",shell:"tauri"}};try{{Object.defineProperty(window,"__PI_STAR__",{{value:Object.freeze(m),writable:false,configurable:false}});}}catch(e){{window.__PI_STAR__=Object.freeze(m);}}var beat=function(){{try{{fetch("/api/desktop/alive?client={client}",{{method:"POST",cache:"no-store",keepalive:true}}).catch(function(){{}});}}catch(e){{}}}};beat();setInterval(beat,1000);}})();"#,
+        platform = std::env::consts::OS,
+        client = client,
     )
 }
 
@@ -74,7 +78,7 @@ pub fn open_main(app: &AppHandle, supervisor: &Arc<Supervisor>, target: &str) {
         .inner_size(MAIN_SIZE.0, MAIN_SIZE.1)
         .min_inner_size(MIN_MAIN_SIZE.0, MIN_MAIN_SIZE.1)
         .visible(false)
-        .initialization_script(marker_script())
+        .initialization_script(marker_script(MAIN))
         .on_new_window(move |url, features| {
             handle_new_window(&popup_app, &popup_origin, url, features)
         })
@@ -154,7 +158,7 @@ fn handle_new_window(
             .title("Pi Star")
             .inner_size(1200.0, 800.0)
             .window_features(features)
-            .initialization_script(marker_script())
+            .initialization_script(marker_script(&label))
             .on_document_title_changed(|window, title| {
                 let _ = window.set_title(&title);
             })
@@ -179,24 +183,36 @@ fn open_external(url: &tauri::Url) {
         return;
     }
     #[cfg(target_os = "macos")]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("open");
         command.arg(url.as_str());
         command
     };
     #[cfg(windows)]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("cmd");
         command.arg("/C").arg("start").arg("").arg(url.as_str());
         command
     };
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("xdg-open");
         command.arg(url.as_str());
         command
     };
-    let _ = command.spawn();
+    let _ = spawn_and_reap(command);
+}
+
+/// Spawn a short-lived launcher (`open`, `xdg-open`, …) and reap it on a
+/// background thread. Dropping a `std::process::Child` without `wait()` leaves
+/// a zombie entry in the process table until the shell exits; on macOS those
+/// zombies show up in Activity Monitor and cannot be killed from there.
+pub(crate) fn spawn_and_reap(mut command: std::process::Command) -> std::io::Result<()> {
+    let mut child = command.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
 }
 
 /// Close every console window (main and popups) but keep splash/notice.
@@ -327,3 +343,16 @@ pub fn sync_dock_presence(app: &AppHandle, present: bool) {
 
 #[cfg(not(target_os = "macos"))]
 pub fn sync_dock_presence(_app: &AppHandle, _present: bool) {}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marker_script_installs_the_renderer_heartbeat() {
+        let script = marker_script(MAIN);
+        assert!(script.contains("__PI_STAR__"));
+        assert!(script.contains("/api/desktop/alive?client=main"));
+        assert!(script.contains("setInterval(beat,1000)"));
+    }
+}

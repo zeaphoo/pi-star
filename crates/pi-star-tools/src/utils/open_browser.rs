@@ -32,6 +32,19 @@
 
 use std::process::Command;
 
+/// Spawn a short-lived launcher and reap it on a background thread.
+///
+/// Dropping a `Child` without `wait()` leaves a zombie in the process table
+/// until this process exits; on macOS that zombie shows up in Activity Monitor
+/// and cannot be killed from there.
+fn spawn_and_reap(mut command: Command) -> std::io::Result<()> {
+    let mut child = command.spawn()?;
+    std::thread::spawn(move || {
+        let _ = child.wait();
+    });
+    Ok(())
+}
+
 /// Open a URL in the default browser. Returns `Ok(())` if the browser launch
 /// command was successfully invoked (not if the browser actually opened the URL).
 ///
@@ -79,15 +92,14 @@ fn browser_launch_command(url: &str) -> Result<(&'static str, Vec<&str>), String
 pub fn open_browser(url: &str) -> Result<(), String> {
     let (cmd, args) = browser_launch_command(url)?;
 
-    // Spawn the command without waiting for it to complete.
-    // Browser launch is best-effort: we don't want to block if the browser
-    // takes time to start, and we don't want a launcher failure to crash
-    // the application.
-    match Command::new(cmd).args(&args).spawn() {
-        Ok(_child) => {
-            // Successfully spawned. We don't wait for it to complete.
-            Ok(())
-        }
+    // Spawn the command without waiting for it to complete. Browser launch is
+    // best-effort: we don't want to block if the browser takes time to start.
+    // The background thread only reaps the launcher so it cannot linger as a
+    // zombie (macOS Activity Monitor shows those and cannot kill them).
+    let mut command = Command::new(cmd);
+    command.args(&args);
+    match spawn_and_reap(command) {
+        Ok(()) => Ok(()),
         Err(e) => {
             // Failed to spawn. This could be because the command doesn't exist
             // (e.g., xdg-open not installed on a minimal Linux system).
@@ -124,8 +136,10 @@ pub fn open_file(path: &str) -> Result<(), String> {
         return Err(format!("Unsupported platform for opening file"));
     };
 
-    match Command::new(cmd).args(&args).spawn() {
-        Ok(_) => Ok(()),
+    let mut command = Command::new(cmd);
+    command.args(&args);
+    match spawn_and_reap(command) {
+        Ok(()) => Ok(()),
         Err(e) => Err(format!("Failed to open file: {}", e)),
     }
 }

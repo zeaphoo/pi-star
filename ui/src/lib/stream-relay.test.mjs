@@ -78,6 +78,36 @@ test("a gap clears the cursor and asks the page to resync", () => {
   assert.equal(resub.cursor, null);
 });
 
+test("a send that throws while draining the ready queue does not spin", () => {
+  // `send` re-queues the frame when the socket throws. Draining the queue in
+  // an unbounded loop then shifted and re-queued the same frame forever,
+  // pegging the page/SharedWorker at 100% CPU.
+  const toTab = [];
+  let handlers = null;
+  const relay = createRelay(
+    {
+      connect(next) {
+        handlers = next;
+        return {
+          send() { throw new Error("socket is closing"); },
+          close() { next.onClose(); },
+        };
+      },
+    },
+    {
+      toTab(tab, message) { toTab.push([tab, message]); },
+      setTimeout(handler) { return handler; },
+      clearTimeout() {},
+      retryDelayMs() { return 1; },
+    },
+  );
+  relay.connect();
+  relay.fromTab("a", { type: "sub", channel: "agent:s1" });
+  // Must return; the unbounded version never did.
+  handlers.onText(JSON.stringify({ op: "ready", protocol: 1 }));
+  assert.equal(relay.snapshot().reconnects, 0);
+});
+
 test("closing a tab releases its channels", () => {
   const h = harness();
   h.ready();

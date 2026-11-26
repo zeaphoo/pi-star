@@ -17,6 +17,10 @@ use crate::state::AppState;
 pub fn router(state: Arc<AppState>) -> Router {
     let api = Router::new()
         .route("/health", get(health))
+        .route(
+            "/desktop/alive",
+            get(routes::desktop::status).post(routes::desktop::beat),
+        )
         .route("/stream", get(crate::stream::ws::handler))
         .route("/sessions", get(routes::sessions::list))
         .route(

@@ -46,26 +46,24 @@ fn open_path(path: &Path) -> Result<(), String> {
     }
 
     #[cfg(target_os = "macos")]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("open");
         command.arg(path);
         command
     };
     #[cfg(windows)]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("cmd");
         command.arg("/C").arg("start").arg("").arg(path);
         command
     };
     #[cfg(all(unix, not(target_os = "macos")))]
-    let mut command = {
+    let command = {
         let mut command = std::process::Command::new("xdg-open");
         command.arg(path);
         command
     };
 
-    command
-        .spawn()
-        .map(|_| ())
+    crate::window::spawn_and_reap(command)
         .map_err(|error| format!("打开 {} 失败：{error}", path.display()))
 }

@@ -164,6 +164,77 @@ async fn health_and_static_spa() {
 }
 
 #[tokio::test]
+async fn desktop_heartbeat_tracks_the_last_beat() {
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/desktop/alive?client=main")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["alive"], false, "no beat yet");
+    assert!(body["ageMs"].is_null());
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/desktop/alive?client=main")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/desktop/alive?client=main")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["alive"], true);
+    assert!(body["ageMs"].as_u64().is_some());
+
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .uri(&format!("/api/desktop/alive?client={}", "x".repeat(65)))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn desktop_heartbeat_is_public_when_a_password_is_set() {
+    let fixture = write_fixture();
+    let app = router_with_password(&fixture, Some("secret")).await;
+    let (status, _) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/desktop/alive?client=main")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "the login page must be able to beat"
+    );
+}
+
+#[tokio::test]
 async fn sessions_list_read_and_pagination() {
     let fixture = write_fixture();
     let app = router(&fixture).await;

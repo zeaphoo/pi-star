@@ -1,6 +1,8 @@
 import { useEffect, type RefObject } from "react";
 
 const HIDE_DELAY_MS = 500;
+/// A ref that never attaches would otherwise schedule a frame forever.
+const MAX_ATTACH_FRAMES = 300;
 
 export function useScrollbarVisibility(ref: RefObject<HTMLElement | null>, enabled = true): void {
   useEffect(() => {
@@ -9,6 +11,7 @@ export function useScrollbarVisibility(ref: RefObject<HTMLElement | null>, enabl
     let element: HTMLElement | null = null;
     let attachFrame: number | null = null;
     let disposed = false;
+    let attachAttempts = 0;
     let hideTimer: ReturnType<typeof setTimeout> | null = null;
     const clearHideTimer = () => {
       if (hideTimer !== null) {
@@ -38,6 +41,7 @@ export function useScrollbarVisibility(ref: RefObject<HTMLElement | null>, enabl
       if (disposed) return;
       element = ref.current;
       if (!element) {
+        if (attachAttempts++ >= MAX_ATTACH_FRAMES) return;
         attachFrame = requestAnimationFrame(attach);
         return;
       }

@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "@/hooks/useI18n";
+import { apiFetch } from "@/lib/api-fetch";
 import { getFileName } from "@/lib/file-paths";
 import type {
   GitCommitDetail,
@@ -680,7 +681,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     const controller = new AbortController();
     setReposLoading(true);
     setError(null);
-    fetch(`/api/git/repos?root=${encodeURIComponent(root)}`, { signal: controller.signal })
+    apiFetch(`/api/git/repos?root=${encodeURIComponent(root)}`, { signal: controller.signal })
       .then((response) => readJson<{ repos: GitRepo[] }>(response, t("git.loadReposFailed")))
       .then((data) => {
         const list = data.repos ?? [];
@@ -715,7 +716,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     if (!active || !state.selectedRepoPath || state.tab !== "changes") return;
     const controller = new AbortController();
     setStatusLoading(true);
-    fetch(`/api/git/status?cwd=${encodeURIComponent(state.selectedRepoPath)}`, { signal: controller.signal })
+    apiFetch(`/api/git/status?cwd=${encodeURIComponent(state.selectedRepoPath)}`, { signal: controller.signal })
       .then((response) => readJson<GitStatusResponse>(response, t("git.loadStatusFailed")))
       .then((next) => {
         setStatus(next);
@@ -743,7 +744,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
       scope: state.selectedFileScope,
       context: String(diffContext),
     });
-    fetch(`/api/git/diff?${params.toString()}`, { signal: controller.signal })
+    apiFetch(`/api/git/diff?${params.toString()}`, { signal: controller.signal })
       .then((response) => readJson<GitFileDiffResponse>(response, t("git.loadDiffFailed")))
       .then(setDiff)
       .catch(() => {
@@ -757,7 +758,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     if (!active || !state.selectedRepoPath || state.tab !== "history") return;
     const controller = new AbortController();
     setHistoryLoading(true);
-    fetch(`/api/git/history?cwd=${encodeURIComponent(state.selectedRepoPath)}&limit=50&skip=0`, { signal: controller.signal })
+    apiFetch(`/api/git/history?cwd=${encodeURIComponent(state.selectedRepoPath)}&limit=50&skip=0`, { signal: controller.signal })
       .then((response) => readJson<{ commits: GitHistoryCommit[] }>(response, t("git.loadHistoryFailed")))
       .then((data) => {
         setCommits(data.commits ?? []);
@@ -788,7 +789,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
       cwd: state.selectedRepoPath,
       sha: state.selectedCommitSha,
     });
-    fetch(`/api/git/commit?${params.toString()}`, { signal: controller.signal })
+    apiFetch(`/api/git/commit?${params.toString()}`, { signal: controller.signal })
       .then((response) => readJson<GitCommitDetail>(response, t("git.loadCommitFailed")))
       .then((next) => {
         setDetail(next);
@@ -821,7 +822,7 @@ export function GitWorkspace({ projectRoot, state, active, isMobile, onChange }:
     });
     if (selectedCommitFile.oldPath) params.set("oldPath", selectedCommitFile.oldPath);
     params.set("context", String(commitDiffContext));
-    fetch(`/api/git/commit-diff?${params.toString()}`, { signal: controller.signal })
+    apiFetch(`/api/git/commit-diff?${params.toString()}`, { signal: controller.signal })
       .then((response) => readJson<{ patch: string }>(response, t("git.loadDiffFailed")))
       .then((data) => setCommitDiff(data.patch ?? null))
       .catch(() => {

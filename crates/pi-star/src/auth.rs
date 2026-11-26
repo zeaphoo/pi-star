@@ -47,6 +47,7 @@ pub async fn security_middleware(
 fn is_public_path(path: &str) -> bool {
     path == "/login"
         || path == "/api/web-auth"
+        || path == "/api/desktop/alive"
         || path == "/manifest.webmanifest"
         || path == "/sw.js"
         || path == "/offline.html"

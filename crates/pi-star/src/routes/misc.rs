@@ -399,8 +399,12 @@ pub async fn open_in_explorer(
     let (program, args) = ("explorer", vec![cwd.to_string_lossy().into_owned()]);
     #[cfg(all(unix, not(target_os = "macos")))]
     let (program, args) = ("xdg-open", vec![cwd.to_string_lossy().into_owned()]);
-    match std::process::Command::new(program).args(args).spawn() {
-        Ok(_) => no_store(json!({"opened": true})),
+    let mut command = std::process::Command::new(program);
+    command.args(args);
+    // Reap the launcher: a dropped `Child` stays a zombie until this server
+    // exits, and those zombies cannot be killed from Activity Monitor.
+    match crate::launcher::spawn_and_reap(command) {
+        Ok(()) => no_store(json!({"opened": true})),
         Err(error) => internal(error),
     }
 }

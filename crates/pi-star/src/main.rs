@@ -3,6 +3,7 @@ mod auth;
 mod debug_streams;
 #[cfg(test)]
 mod integration_tests;
+mod launcher;
 mod pi_rpc;
 mod pi_runtime;
 mod protocol;
@@ -217,7 +218,7 @@ fn open_browser(url: &str) {
     let command = ("cmd", vec!["/C", "start", "", url]);
     #[cfg(all(unix, not(target_os = "macos")))]
     let command = ("xdg-open", vec![url]);
-    let _ = std::process::Command::new(command.0)
-        .args(command.1)
-        .spawn();
+    let mut process = std::process::Command::new(command.0);
+    process.args(command.1);
+    let _ = launcher::spawn_and_reap(process);
 }

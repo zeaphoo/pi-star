@@ -83,6 +83,8 @@ pub struct AppState {
     pub auth_token: String,
     pub allowed_hosts: Vec<String>,
     pub auth_throttle: Mutex<AuthThrottle>,
+    /// Last renderer heartbeat per desktop webview (`routes::desktop`).
+    pub desktop_beats: Mutex<HashMap<String, Instant>>,
     pub(crate) oauth_flows: Mutex<HashMap<String, PendingOAuth>>,
     pub(crate) mcp_signins: Mutex<HashMap<String, crate::routes::mcp_oauth::McpSignInFlow>>,
     server_port: AtomicU16,
@@ -173,6 +175,7 @@ impl AppState {
             auth_token: uuid::Uuid::new_v4().to_string(),
             allowed_hosts,
             auth_throttle: Mutex::new(AuthThrottle::default()),
+            desktop_beats: Mutex::new(HashMap::new()),
             oauth_flows: Mutex::new(HashMap::new()),
             mcp_signins: Mutex::new(HashMap::new()),
             server_port: AtomicU16::new(

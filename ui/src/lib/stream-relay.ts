@@ -76,20 +76,26 @@ export function createRelay(transport: RelayTransport, options: RelayOptions) {
     return tabs;
   }
 
-  function send(text: string): void {
-    if (disposed) return;
+  function send(text: string): boolean {
+    if (disposed) return false;
     if (!socket || !serverReady) {
       queued.push(text);
       if (queued.length > MAX_QUEUE) {
         queued.shift();
         dropped += 1;
       }
-      return;
+      return false;
     }
     try {
       socket.send(text);
+      return true;
     } catch {
       queued.push(text);
+      if (queued.length > MAX_QUEUE) {
+        queued.shift();
+        dropped += 1;
+      }
+      return false;
     }
   }
 
@@ -110,9 +116,14 @@ export function createRelay(transport: RelayTransport, options: RelayOptions) {
           entry.serverId = nextId++;
           send(JSON.stringify({ op: "sub", id: entry.serverId, channel, cursor: entry.cursor }));
         }
-        while (queued.length > 0 && serverReady) {
+        // Drain in a bounded pass: a send that throws re-queues its frame, so
+        // an unbounded `while queued.length > 0` would spin the page (or the
+        // SharedWorker) at 100% CPU. Leave the rest for the next `ready`.
+        let pending = queued.length;
+        while (serverReady && pending > 0) {
           const next = queued.shift();
-          if (next) send(next);
+          pending -= 1;
+          if (next && !send(next)) break;
         }
         return;
       case "ev": {

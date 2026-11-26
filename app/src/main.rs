@@ -7,6 +7,7 @@ mod config;
 mod desktop;
 mod prefs;
 mod supervisor;
+mod watchdog;
 mod window;
 
 use std::sync::Arc;
@@ -120,8 +121,17 @@ fn main() {
             )?;
             settings.attach_items(autostart_item.clone(), close_to_tray_item.clone());
 
+            // 看门狗只在真正加载本地 pi-star 时启用；dev URL 由 Vite 提供，
+            // 没有心跳端点，启用会误判。
+            let watchdog = config
+                .dev_url
+                .is_none()
+                .then(|| (config.port, config.data_root.clone()));
             let supervisor = Supervisor::new(config, bin, status_item);
             app.manage(Arc::clone(&supervisor));
+            if let Some((port, data_root)) = watchdog {
+                watchdog::start(handle.clone(), Arc::clone(&supervisor), port, data_root);
+            }
             window::sync_dock_presence(&handle, false);
 
             let tray_supervisor = Arc::clone(&supervisor);

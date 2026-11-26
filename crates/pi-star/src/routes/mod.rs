@@ -1,5 +1,6 @@
 pub mod agent;
 pub mod auth;
+pub mod desktop;
 pub mod files;
 pub mod git;
 pub mod mcp_oauth;
