@@ -17,6 +17,11 @@
 
 ### Fixed
 
+- **Diff 变更视图被超大仓库卡死**：`git status` 改用
+  `--untracked-files=normal`，未跟踪目录折叠为一条，不再把 `node_modules` 里每个文件都列出来；
+  状态文件列表上限 2000 并返回 `filesTruncated`，前端提示“只列出前 N 个”。工作区里
+  有几十个嵌套仓库时，原先一次 status 会返回数十万条并让渲染进程 100% 卡死。
+- **仓库扫描上限从 20 提到 100**：workspace 下 70–80 个仓库时不再大部分被隐藏。
 - **流总线排空队列可能死循环**：`ready` 帧到达后，`send` 在 socket 抛错时把消息放回
   队列，`while (queued.length > 0)` 会永远移出并放回同一帧，把页面或 SharedWorker
   卡在 100% CPU。改为有界的一次性排空，失败留到下一次 `ready`；新增回归测试。

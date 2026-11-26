@@ -30,9 +30,15 @@ pub struct GitStatusResponse {
     pub untracked_count: u32,
     pub conflicts_count: u32,
     pub files: Vec<GitFileStatus>,
+    /// More changed files existed than were returned; `files` is capped so a
+    /// huge untracked tree cannot freeze the renderer.
+    pub files_truncated: bool,
     pub additions: u64,
     pub deletions: u64,
 }
+
+/// How many changed files one status response may carry.
+const MAX_STATUS_FILES: usize = 2_000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +72,7 @@ pub fn status(cwd: &Path) -> GitStatusResponse {
             untracked_count: 0,
             conflicts_count: 0,
             files: Vec::new(),
+            files_truncated: false,
             additions: 0,
             deletions: 0,
         };
@@ -73,7 +80,7 @@ pub fn status(cwd: &Path) -> GitStatusResponse {
     let porcelain = read_porcelain_v2(&root);
     let entries = porcelain.entries;
     let mut files = Vec::new();
-    for entry in &entries {
+    for entry in entries.iter().take(MAX_STATUS_FILES) {
         let file_path = root.join(&entry.path);
         let relative = file_path.strip_prefix(cwd).unwrap_or(&file_path);
         let file_path = cwd.join(relative).to_string_lossy().into_owned();
@@ -99,6 +106,7 @@ pub fn status(cwd: &Path) -> GitStatusResponse {
         untracked_count: porcelain.untracked,
         conflicts_count: porcelain.conflicts,
         files,
+        files_truncated: entries.len() > MAX_STATUS_FILES,
         additions,
         deletions,
     }
@@ -537,7 +545,12 @@ fn read_porcelain_v2(root: &Path) -> PorcelainV2 {
             "status",
             "--porcelain=v2",
             "--branch",
-            "--untracked-files=all",
+            // `all` enumerates every file inside an untracked directory. A
+            // workspace that holds dozens of nested repositories (each with
+            // node_modules) then returns hundreds of thousands of entries and
+            // the Changes tab cannot render them. `normal` collapses an
+            // untracked directory to one entry, like `git status` itself.
+            "--untracked-files=normal",
             "-z",
         ])
         .env("LC_ALL", "C");
@@ -722,7 +735,9 @@ fn repo_entry(root: &Path, scan_root: &Path, is_current: bool) -> GitRepo {
 }
 
 pub fn scan_repositories(root: &Path, max_depth: usize) -> Vec<GitRepo> {
-    const LIMIT: usize = 20;
+    // A workspace often holds many sibling repositories; 20 silently hid most
+    // of them. Keep the response bounded but large enough for that layout.
+    const LIMIT: usize = 100;
     let max_depth = max_depth.clamp(1, 5);
     let current_repo = repository_root(root);
     let mut found = Vec::new();
@@ -1006,4 +1021,79 @@ pub fn commit_diff_with_context(
     );
     let patch = git_text(&root, &args).ok()?;
     (!patch.trim().is_empty()).then_some(patch)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(["-c", "commit.gpgsign=false"])
+            .args(args)
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", "/dev/null")
+            .env("LC_ALL", "C")
+            .output()
+            .expect("run git");
+        assert!(
+            output.status.success(),
+            "git {:?} failed: {}",
+            args,
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    fn init_repo(dir: &Path) {
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "user.name", "Pi Star Test"]);
+        git(
+            dir,
+            &["config", "user.email", "pi-star-test@example.invalid"],
+        );
+    }
+
+    #[test]
+    fn an_untracked_directory_is_one_entry_not_every_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        for i in 0..50 {
+            std::fs::create_dir_all(repo.join("node_modules/pkg")).unwrap();
+            std::fs::write(repo.join(format!("node_modules/pkg/f{i}.js")), "x").unwrap();
+        }
+        let result = status(repo);
+        assert!(result.is_git_repository);
+        assert_eq!(
+            result.files.len(),
+            1,
+            "normal status collapses the directory"
+        );
+        assert!(!result.files_truncated);
+        assert_eq!(result.files[0].status, "untracked");
+    }
+
+    #[test]
+    fn a_huge_change_list_is_capped_for_the_renderer() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        for i in 0..(MAX_STATUS_FILES + 1) {
+            std::fs::write(repo.join(format!("f{i}.txt")), "base").unwrap();
+        }
+        git(repo, &["add", "-A"]);
+        git(repo, &["commit", "-qm", "base"]);
+        for i in 0..(MAX_STATUS_FILES + 1) {
+            std::fs::write(repo.join(format!("f{i}.txt")), "changed").unwrap();
+        }
+        let result = status(repo);
+        assert_eq!(result.files.len(), MAX_STATUS_FILES);
+        assert!(
+            result.files_truncated,
+            "the client must know the list is partial"
+        );
+    }
 }

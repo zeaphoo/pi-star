@@ -26,6 +26,8 @@ export interface GitStatusResponse {
   untrackedCount?: number;
   conflictsCount?: number;
   files: GitFileStatus[];
+  /** The server capped `files` because the change list was too large. */
+  filesTruncated?: boolean;
   additions: number;
   deletions: number;
 }

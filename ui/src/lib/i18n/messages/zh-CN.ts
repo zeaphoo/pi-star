@@ -1984,6 +1984,7 @@ export const zhCNLocale: LocalePlugin = {
     "git.noTextDiff": "没有文本变更。",
     "git.loadReposFailed": "扫描 Git 仓库失败",
     "git.loadStatusFailed": "加载 Git 状态失败",
+    "git.filesTruncated": "仓库变更过多，只列出前 {count} 个。",
     "git.loadDiffFailed": "加载变更失败",
     "git.loadHistoryFailed": "加载历史失败",
     "git.loadCommitFailed": "加载提交失败",

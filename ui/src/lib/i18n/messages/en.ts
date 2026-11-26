@@ -1984,6 +1984,7 @@ export const enLocale: LocalePlugin = {
     "git.noTextDiff": "No text changes.",
     "git.loadReposFailed": "Failed to scan Git repositories",
     "git.loadStatusFailed": "Failed to load Git status",
+    "git.filesTruncated": "This repository has too many changes; only the first {count} are listed.",
     "git.loadDiffFailed": "Failed to load diff",
     "git.loadHistoryFailed": "Failed to load history",
     "git.loadCommitFailed": "Failed to load commit",

@@ -1984,6 +1984,7 @@ export const zhTWLocale: LocalePlugin = {
     "git.noTextDiff": "沒有文字變更。",
     "git.loadReposFailed": "掃描 Git 儲存庫失敗",
     "git.loadStatusFailed": "載入 Git 狀態失敗",
+    "git.filesTruncated": "儲存庫變更過多，只列出前 {count} 個。",
     "git.loadDiffFailed": "載入變更失敗",
     "git.loadHistoryFailed": "載入歷史失敗",
     "git.loadCommitFailed": "載入提交失敗",

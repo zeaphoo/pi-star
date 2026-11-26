@@ -279,6 +279,20 @@ function ChangesView({
           paddingBottom: 8,
         }}
       >
+        {status?.filesTruncated && (
+          <div
+            role="status"
+            style={{
+              padding: "8px 10px",
+              borderBottom: "1px solid var(--border)",
+              color: "var(--text-muted)",
+              fontSize: 10,
+              lineHeight: 1.5,
+            }}
+          >
+            {t("git.filesTruncated", { count: total })}
+          </div>
+        )}
         {loading && total === 0 ? (
           <div style={{ padding: 12, color: "var(--text-dim)", fontSize: 11 }}>{t("git.loading")}</div>
         ) : empty ? (
