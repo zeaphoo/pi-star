@@ -1934,12 +1934,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
         break;
       case "prompt_error":
-        addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? "Command failed" });
+        addNotice({ type: "error", message: (event.errorMessage as string | undefined) ?? translate("chat.notice.commandFailed") });
         break;
       case "extension_error":
         addNotice({
           type: "error",
-          message: (event.error as string | undefined) ?? "Extension command failed",
+          message: (event.error as string | undefined) ?? translate("chat.notice.extensionCommandFailed"),
         });
         break;
       case "user_message_entry": {
@@ -2194,10 +2194,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     } catch (error) {
       addNotice({
         type: "error",
-        message: error instanceof Error ? error.message : String(error),
+        message: translate("chat.notice.backendSwitchFailed", {
+          error: error instanceof Error ? error.message : String(error),
+        }),
       });
     }
-  }, [addNotice, closeEvents, maintainEventsConnected, selectBackend, session?.id]);
+  }, [addNotice, closeEvents, maintainEventsConnected, selectBackend, session?.id, translate]);
 
   const handleSend = useCallback(async (message: string, images?: AttachedImage[]) => {
     const trimmedMessage = message.trim();
@@ -2353,7 +2355,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       // A folder that no longer exists never reached the model: the composer's
       // banner names it (translated) instead of the server's English notice.
       if (e instanceof AgentCommandError && e.missingCwd) setPromptMissingCwd(e.missingCwd);
-      else addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      else if (isPromptRejectedError(e)) addNotice({ type: "error", message: e.message });
+      else addNotice({
+        type: "error",
+        message: translate("chat.notice.sendFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
       restoreSubmission(message, images, composerDraftKey);
       optimisticUserMessageKeyRef.current = null;
       // Rejection only describes this submission. Another tab or an event we
@@ -2389,7 +2397,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       promoteNewSession(1, inputText);
     } catch (e) {
       console.error("Failed to execute shell command:", e);
-      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      addNotice({
+        type: "error",
+        message: translate("chat.notice.shellFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
       restoreSubmission(inputText, undefined, composerDraftKey);
     } finally {
       bashRunningRef.current = false;
@@ -2441,7 +2454,12 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       }
     } catch (e) {
       console.error("Fork failed:", e);
-      addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+      addNotice({
+        type: "error",
+        message: translate("chat.notice.forkFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
     } finally {
       setForkingEntryId(null);
     }
@@ -2567,7 +2585,9 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       setCurrentModelOverride(previousOverride);
       addNotice({
         type: "error",
-        message: `Failed to switch model: ${e instanceof Error ? e.message : String(e)}`,
+        message: translate("chat.notice.modelSwitchFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
       });
       // A failed response can still follow a server-side write (for example, a
       // dropped connection), so let the server settle the displayed model.
@@ -2712,9 +2732,14 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       .catch((e) => {
         if (allModelsLoadRef.current !== load) return;
         allModelsLoadRef.current = null;
-        addNotice({ type: "error", message: e instanceof Error ? e.message : String(e) });
+        addNotice({
+          type: "error",
+          message: translate("chat.notice.modelsLoadFailed", {
+            error: e instanceof Error ? e.message : String(e),
+          }),
+        });
       });
-  }, [addNotice, newSessionCwd, session?.cwd]);
+  }, [addNotice, newSessionCwd, session?.cwd, translate]);
 
   useEffect(() => {
     if (!isModelScopeActive || !displayModel || allModelList) return;
@@ -2754,10 +2779,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       await saveDefaultPreferences({ provider, modelId });
     } catch (e) {
-      addNotice({ type: "error", message: `Failed to save default model: ${e instanceof Error ? e.message : String(e)}` });
+      addNotice({
+        type: "error",
+        message: translate("chat.notice.defaultModelSaveFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
       return;
     }
-    addNotice({ type: "success", message: `Default model: ${provider}/${modelId}` });
+    addNotice({
+      type: "success",
+      message: translate("chat.notice.defaultModelSaved", { model: `${provider}/${modelId}` }),
+    });
     setNewSessionDefaultModel({ provider, modelId });
     if (displayModel?.provider !== provider || displayModel?.modelId !== modelId) {
       await handleModelChange(provider, modelId);
@@ -2780,7 +2813,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         addNotice({ type: "error", message: result.error });
       } else if (!result.action) {
         // A command that opens a panel says nothing: the panel is the answer.
-        addNotice({ type: "success", message: result.message ?? "Command completed" });
+        addNotice({ type: "success", message: result.message ?? translate("chat.notice.commandCompleted") });
       }
       return result;
     };
@@ -2788,7 +2821,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       switch (commandName) {
         case "compact": {
-          if (!sid || isCompacting) return complete({ handled: true, error: "No active session to compact" });
+          if (!sid || isCompacting) return complete({ handled: true, error: translate("chat.command.noActiveSessionToCompact") });
           // Detached on purpose. This must resolve now: runBuiltinCommand holds
           // the composer's fieldset disabled until the command resolves, and the
           // compact POST blocks for the whole compaction, which read as an input
@@ -2804,7 +2837,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         case "auto-compact": {
-          if (!sid) return complete({ handled: true, error: "No active session" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSession") });
           // Read the live wrapper (this POST starts it if idle) so the toggle
           // follows settings.json, not the React default of `true`.
           const liveState = await sendAgentCommand<AgentStateResponse>(sid, { type: "get_state" });
@@ -2817,13 +2850,13 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
           return complete({
             handled: true,
             message: nextEnabled
-              ? "Auto-compaction enabled"
-              : "Auto-compaction disabled",
+              ? translate("chat.command.autoCompactEnabled")
+              : translate("chat.command.autoCompactDisabled"),
           });
         }
 
         case "reload": {
-          if (!sid) return complete({ handled: true, error: "No active session to reload" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSessionToReload") });
           await sendAgentCommand(sid, { type: "reload" });
           await Promise.all([
             loadSession(sid, false, true),
@@ -2831,19 +2864,19 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
             loadSlashCommands(),
             loadModels(),
           ]);
-          return complete({ handled: true, message: "Reloaded session resources" });
+          return complete({ handled: true, message: translate("chat.command.reloaded") });
         }
 
         case "name": {
-          if (!sid) return complete({ handled: true, error: "No active session to name" });
-          if (!args) return complete({ handled: true, error: "Usage: /name <name>" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSessionToName") });
+          if (!args) return complete({ handled: true, error: translate("chat.command.nameUsage") });
           await sendAgentCommand(sid, { type: "set_session_name", name: args });
           if (await loadSession(sid)) promoteNewSession();
-          return complete({ handled: true, message: `Session renamed to ${args}` });
+          return complete({ handled: true, message: translate("chat.command.renamed", { name: args }) });
         }
 
         case "session": {
-          if (!sid) return complete({ handled: true, error: "No active session" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSession") });
           const stats = await sendAgentCommand<SessionStatsInfo>(sid, { type: "get_session_stats" });
           if (stats) {
             setSessionStatsOverride(stats);
@@ -2867,27 +2900,27 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
         }
 
         case "copy": {
-          if (!sid) return complete({ handled: true, error: "No active session" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSession") });
           const data = await sendAgentCommand<LastAssistantTextResponse>(sid, { type: "get_last_assistant_text" });
           const textToCopy = data?.text ?? "";
-          if (!textToCopy) return complete({ handled: true, error: "No assistant message to copy" });
+          if (!textToCopy) return complete({ handled: true, error: translate("chat.command.noAssistantMessageToCopy") });
           await navigator.clipboard.writeText(textToCopy);
-          return complete({ handled: true, message: "Copied last assistant message" });
+          return complete({ handled: true, message: translate("chat.command.copiedLastAssistant") });
         }
 
         case "clone": {
-          if (!sid) return complete({ handled: true, error: "No active session to clone" });
+          if (!sid) return complete({ handled: true, error: translate("chat.command.noActiveSessionToClone") });
           if (agentRunningRef.current || bashRunningRef.current) {
-            return complete({ handled: true, error: "Cannot clone while the session is running" });
+            return complete({ handled: true, error: translate("chat.command.cloneWhileRunning") });
           }
           const result = await sendAgentCommand<{ cancelled?: boolean; newSessionId?: string }>(sid, {
             type: "clone",
             leafId: activeLeafId,
           });
           if (result?.cancelled || !result?.newSessionId) {
-            return complete({ handled: true, error: "Cannot clone an empty or unsaved session" });
+            return complete({ handled: true, error: translate("chat.command.cloneEmpty") });
           }
-          const completed = complete({ handled: true, message: "Cloned current session branch" });
+          const completed = complete({ handled: true, message: translate("chat.command.cloned") });
           onSessionForked?.(result.newSessionId);
           return completed;
         }
@@ -2917,7 +2950,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     }
     if (!sid) {
       restore();
-      addNotice({ type: "error", message: "No active session for the queued message" });
+      addNotice({ type: "error", message: translate("chat.notice.noActiveSessionForQueued") });
       return;
     }
     const piImages = images?.map((img) => ({ type: "image" as const, data: img.data, mimeType: img.mimeType }));
@@ -2980,7 +3013,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
       restoreRecalledPrompts(result);
     } catch (e) {
       console.error("Failed to recall queued messages:", e);
-      addNotice({ type: "error", message: "Failed to recall queued messages" });
+      addNotice({ type: "error", message: translate("chat.notice.recallQueuedFailed") });
     }
   }, [addNotice, restoreRecalledPrompts]);
 
@@ -3015,10 +3048,18 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
     try {
       await saveDefaultPreferences({ thinkingLevel: level });
     } catch (e) {
-      addNotice({ type: "error", message: `Failed to save default reasoning level: ${e instanceof Error ? e.message : String(e)}` });
+      addNotice({
+        type: "error",
+        message: translate("chat.notice.defaultReasoningSaveFailed", {
+          error: e instanceof Error ? e.message : String(e),
+        }),
+      });
       return;
     }
-    addNotice({ type: "success", message: `Default reasoning level: ${level}` });
+    addNotice({
+      type: "success",
+      message: translate("chat.notice.defaultReasoningSaved", { level }),
+    });
     setSavedDefaultThinkingLevel(level);
     if (displayThinkingLevel !== level) await handleThinkingLevelChange(level);
     reloadModelsQuietly();
