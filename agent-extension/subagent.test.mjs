@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 
 import { resolvePiInvocation } from "./subagent.js";
+import piStarSubagentChild from "./subagent-child.js";
 
 const args = ["--mode", "rpc", "--session-id", "child"];
 
@@ -154,4 +155,65 @@ test("profile resources are read from frontmatter and default off", async () => 
         rmSync(agentDir, { recursive: true, force: true });
         rmSync(project, { recursive: true, force: true });
     }
+});
+
+function childHarness() {
+    const handlers = new Map();
+    const entries = [];
+    let loading = true;
+    const pi = {
+        on(event, handler) {
+            handlers.set(event, handler);
+        },
+        appendEntry(customType, data) {
+            // pi rejects session-bound calls made while the factory is loading.
+            if (loading) throw new Error("Extension runtime not initialized. Action methods cannot be called during extension loading.");
+            entries.push({ customType, data });
+        },
+    };
+    return { pi, handlers, entries, doneLoading: () => { loading = false; } };
+}
+
+function withSubagentEnv(meta, queued, run) {
+    const previousMeta = process.env.PI_STAR_SUBAGENT_META;
+    const previousQueued = process.env.PI_STAR_SUBAGENT_START_QUEUED;
+    process.env.PI_STAR_SUBAGENT_META = JSON.stringify(meta);
+    if (queued) process.env.PI_STAR_SUBAGENT_START_QUEUED = "1";
+    try {
+        run();
+    } finally {
+        if (previousMeta === undefined) delete process.env.PI_STAR_SUBAGENT_META;
+        else process.env.PI_STAR_SUBAGENT_META = previousMeta;
+        if (previousQueued === undefined) delete process.env.PI_STAR_SUBAGENT_START_QUEUED;
+        else process.env.PI_STAR_SUBAGENT_START_QUEUED = previousQueued;
+    }
+}
+
+test("the child writes its metadata on session_start, not during extension loading", () => {
+    withSubagentEnv({ version: 1, parentSessionId: "parent" }, false, () => {
+        const { pi, handlers, entries, doneLoading } = childHarness();
+        piStarSubagentChild(pi);
+        assert.deepEqual(entries, [], "appendEntry during loading aborts the RPC child");
+        doneLoading();
+        handlers.get("session_start")();
+        assert.deepEqual(entries.map((entry) => entry.customType), ["pi-star:subagent", "pi-star:subagent-status"]);
+        assert.equal(entries[1].data.status, "running");
+        // A second session_start (reload) must not duplicate the header.
+        handlers.get("session_start")();
+        assert.equal(entries.length, 2);
+    });
+});
+
+test("a queued child flips to running on its first agent_start", () => {
+    withSubagentEnv({ version: 1, parentSessionId: "parent" }, true, () => {
+        const { pi, handlers, entries, doneLoading } = childHarness();
+        piStarSubagentChild(pi);
+        doneLoading();
+        handlers.get("session_start")();
+        assert.equal(entries[1].data.status, "queued");
+        handlers.get("agent_start")();
+        assert.equal(entries[2].data.status, "running");
+        handlers.get("agent_start")();
+        assert.equal(entries.length, 3);
+    });
 });

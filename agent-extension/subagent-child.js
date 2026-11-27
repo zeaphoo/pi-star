@@ -16,16 +16,25 @@ export default function piStarSubagentChild(pi) {
     }
     if (!meta)
         return;
-    // appendEntry persists the file even before the first message, which is what
-    // makes a queued or failed run visible in the sidebar at all.
     const startQueued = process.env.PI_STAR_SUBAGENT_START_QUEUED === "1";
-    pi.appendEntry("pi-star:subagent", meta);
-    pi.appendEntry("pi-star:subagent-status", { version: 1, status: startQueued ? "queued" : "running" });
+    // `session_start` is the first point where `pi.appendEntry` is allowed; pi
+    // rejects session-bound calls while extension factories are still loading
+    // ("Extension runtime not initialized"), which would abort the RPC process.
+    // It still runs before the first message, so a queued or failed run is
+    // persisted and visible in the sidebar.
+    let described = false;
+    pi.on("session_start", () => {
+        if (described)
+            return;
+        described = true;
+        pi.appendEntry("pi-star:subagent", meta);
+        pi.appendEntry("pi-star:subagent-status", { version: 1, status: startQueued ? "queued" : "running" });
+    });
     // A queued child was spawned without its prompt; the parent sends it when a
     // slot frees, and this is the first moment the file can say "running".
     let announced = !startQueued;
     pi.on("agent_start", () => {
-        if (announced)
+        if (announced || !described)
             return;
         announced = true;
         pi.appendEntry("pi-star:subagent-status", { version: 1, status: "running" });
