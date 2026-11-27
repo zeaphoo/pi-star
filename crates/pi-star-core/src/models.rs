@@ -164,12 +164,17 @@ pub fn load_models(config: &Config, scope_all: bool) -> Result<ModelsData> {
         .get("defaultThinkingLevel")
         .and_then(Value::as_str)
         .map(str::to_owned);
+    // A missing key is not "off": pi falls back to medium, and the UI shows the
+    // level new chats will actually start at. The star still marks only a saved pick.
+    let default_thinking_level = saved_default
+        .clone()
+        .unwrap_or_else(|| "medium".to_string());
     let thinking_level_pins = thinking_pins(enabled.as_deref(), &models);
     Ok(ModelsData {
         models,
         model_list: list,
         default_model,
-        default_thinking_level: saved_default.clone(),
+        default_thinking_level: Some(default_thinking_level),
         saved_default_thinking_level: saved_default,
         thinking_levels,
         thinking_level_maps,
@@ -1027,6 +1032,36 @@ mod tests {
             providers,
             ["configured-one", "custom-one"].into_iter().collect()
         );
+    }
+
+    #[test]
+    fn an_unset_reasoning_default_reports_pis_medium_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("models-store.json"),
+            json!({ "catalog-one": { "models": [{ "id": "chat", "name": "Chat" }] } })
+                .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            dir.path().join("auth.json"),
+            json!({ "catalog-one": { "type": "api_key", "key": "test-key" } }).to_string(),
+        )
+        .unwrap();
+        let config = crate::config::Config::new(Some(dir.path().to_path_buf()), None).unwrap();
+
+        let data = load_models(&config, false).unwrap();
+        assert_eq!(data.default_thinking_level.as_deref(), Some("medium"));
+        assert_eq!(data.saved_default_thinking_level, None);
+
+        std::fs::write(
+            config.settings_path(),
+            json!({ "defaultThinkingLevel": "high" }).to_string(),
+        )
+        .unwrap();
+        let data = load_models(&config, false).unwrap();
+        assert_eq!(data.default_thinking_level.as_deref(), Some("high"));
+        assert_eq!(data.saved_default_thinking_level.as_deref(), Some("high"));
     }
 
     #[test]

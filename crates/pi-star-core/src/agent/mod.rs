@@ -248,7 +248,7 @@ impl SessionRuntime {
             "sessionFile": self.path.to_string_lossy(),
             "sessionName": name,
             "model": model,
-            "thinkingLevel": "off",
+            "thinkingLevel": "medium",
             "isStreaming": false,
             "isPromptRunning": false,
             "isBashRunning": false,
@@ -320,7 +320,7 @@ impl SessionRuntime {
             "model": session_settings(&self.entries_snapshot(), None)
                 .1
                 .map(|model| json!({ "provider": model.provider, "id": model.model_id })),
-            "thinkingLevel": "off",
+            "thinkingLevel": "medium",
             "activeTools": tool_names(),
             "uptimeMs": 0,
         })

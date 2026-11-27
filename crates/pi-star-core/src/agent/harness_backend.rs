@@ -1006,14 +1006,13 @@ fn resolve_model(config: &Config, entries: &[Value]) -> Option<ModelDef> {
 }
 
 fn resolve_thinking(config: &Config, cwd: &Path) -> String {
+    let _ = cwd;
+    // Matches pi's own DEFAULT_THINKING_LEVEL when settings.json has no value.
     crate::settings::read_settings(config)
         .get("defaultThinkingLevel")
         .and_then(Value::as_str)
         .map(str::to_owned)
-        .unwrap_or_else(|| {
-            let _ = cwd;
-            "off".to_string()
-        })
+        .unwrap_or_else(|| "medium".to_string())
 }
 
 fn parse_api(api: &str) -> pi_star_ai::types::Api {
@@ -1935,6 +1934,22 @@ mod tests {
     use super::*;
     use pi_star_ai::providers::faux::{FauxProvider, FauxScript, FauxStep};
     use pi_star_harness::session::types::{SessionCreateOptions, SessionRepo, SessionStorage};
+
+    #[test]
+    fn unset_reasoning_default_resolves_to_pis_medium() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = Config::new(Some(dir.path().join("agent")), None).unwrap();
+        let cwd = dir.path().join("proj");
+        assert_eq!(resolve_thinking(&config, &cwd), "medium");
+
+        std::fs::create_dir_all(&config.agent_dir).unwrap();
+        std::fs::write(
+            config.settings_path(),
+            r#"{"defaultThinkingLevel":"low"}"#,
+        )
+        .unwrap();
+        assert_eq!(resolve_thinking(&config, &cwd), "low");
+    }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn prompt_streams_pi_events_and_persists_v3() {
