@@ -1081,6 +1081,7 @@ export const zhCNLocale: LocalePlugin = {
     "trust.mcp.unchecked": "Pi Star 无法加载 SDK 的 MCP 校验，以下条目未经校验。",
     "trust.mcp.cwd": "工作目录：{path}",
     "trust.close": "关闭",
+    "trust.appliesAfterRun": "信任已保存，运行结束后生效",
     "trust.alreadyTrusted": "此项目已受信任。",
     "trust.trustFailed": "无法信任此项目。",
     "mcp.transport.stdio": "stdio",

@@ -1081,6 +1081,7 @@ export const enLocale: LocalePlugin = {
     "trust.mcp.unchecked": "Pi Star cannot load the SDK's MCP checks, so these entries are listed unchecked.",
     "trust.mcp.cwd": "Working directory: {path}",
     "trust.close": "Close",
+    "trust.appliesAfterRun": "Trust saved · applies after this run",
     "trust.alreadyTrusted": "This project is already trusted.",
     "trust.trustFailed": "Could not trust this project.",
     "mcp.transport.stdio": "stdio",

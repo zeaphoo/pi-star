@@ -356,6 +356,9 @@ export function AppShell() {
   const [projectTrustDialogOpen, setProjectTrustDialogOpen] = useState(false);
   const [projectTrustBusy, setProjectTrustBusy] = useState(false);
   const [projectTrustError, setProjectTrustError] = useState<ProjectTrustFailure | null>(null);
+  // Trust is recorded immediately, but its resources reload only once the
+  // folder has no running session: a live run keeps the services it started with.
+  const [projectTrustReloadCwd, setProjectTrustReloadCwd] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(() => !initialNavigation.sidebarCollapsed);
   const desktopSidebarOpenRef = useRef(!initialNavigation.sidebarCollapsed);
   // The right dock: a project-scoped workbench of independent views. Open and
@@ -1764,6 +1767,15 @@ export function AppShell() {
   ) : null;
   const showChat = selectedSession !== null || effectiveNewSessionCwd !== null;
   const projectTrustCwd = selectedSession?.cwd ?? effectiveNewSessionCwd;
+  const projectTrustCwdRunning = useMemo(
+    () => Boolean(
+      projectTrustCwd
+      && sessionsWithSelection.some((session) => (
+        session.cwd === projectTrustCwd && runningSessionIds.has(session.id)
+      )),
+    ),
+    [projectTrustCwd, runningSessionIds, sessionsWithSelection],
+  );
   // While restoring initial session from URL, don't show the placeholder
   const showPlaceholder = initialSessionRestored && !showChat;
 
@@ -1814,14 +1826,37 @@ export function AppShell() {
       }
       setProjectTrust(data);
       setProjectTrustDialogOpen(false);
-      setModelsRefreshKey((key) => key + 1);
-      setSessionKey((key) => key + 1);
+      if (projectTrustCwdRunning) {
+        // The running session keeps the tools and resources it started with.
+        // The waiting effect below reloads once its folder is idle.
+        setProjectTrustReloadCwd(projectTrustCwd);
+      } else {
+        setProjectTrustReloadCwd(null);
+        setModelsRefreshKey((key) => key + 1);
+        setSessionKey((key) => key + 1);
+      }
     } catch (error) {
       setProjectTrustError({ error: error instanceof Error ? error.message : String(error) });
     } finally {
       setProjectTrustBusy(false);
     }
-  }, [projectTrustBusy, projectTrustCwd]);
+  }, [projectTrustBusy, projectTrustCwd, projectTrustCwdRunning, translate]);
+
+  // Apply a trust decision recorded during a run once that folder is idle. If
+  // the user moved elsewhere meanwhile, the trust is already on disk and the
+  // next session there picks it up without remounting an unrelated chat.
+  useEffect(() => {
+    if (!projectTrustReloadCwd) return;
+    const stillRunning = sessionsWithSelection.some((session) => (
+      session.cwd === projectTrustReloadCwd && runningSessionIds.has(session.id)
+    ));
+    if (stillRunning) return;
+    setProjectTrustReloadCwd(null);
+    if (projectTrustCwd === projectTrustReloadCwd) {
+      setModelsRefreshKey((key) => key + 1);
+      setSessionKey((key) => key + 1);
+    }
+  }, [projectTrustCwd, projectTrustReloadCwd, runningSessionIds, sessionsWithSelection]);
 
   // The restricted-mode banner and Settings › MCP's trust notice open the same dialog.
   const openProjectTrustDialog = useCallback(() => {
@@ -1925,7 +1960,54 @@ export function AppShell() {
   );
 
   const renderProjectTrustWarning = (mobileBanner: boolean) => {
-    if (!showChat || !projectTrust?.requiresTrust || projectTrust.trusted) return null;
+    if (!showChat) return null;
+    // Recorded while the folder's session runs: keep the status where the
+    // restricted-mode banner was, not in a toast the user can miss.
+    if (projectTrustReloadCwd && projectTrustReloadCwd === projectTrustCwd) {
+      return (
+        <div
+          role="status"
+          title={translate("trust.appliesAfterRun")}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: mobileBanner ? "flex-start" : "center",
+            gap: 6,
+            width: mobileBanner ? "100%" : undefined,
+            minHeight: mobileBanner ? 32 : undefined,
+            height: mobileBanner ? undefined : "100%",
+            padding: mobileBanner ? "6px 12px" : "0 12px",
+            background: mobileBanner ? "color-mix(in srgb, var(--accent) 8%, var(--bg-panel))" : "none",
+            border: "none",
+            borderBottom: mobileBanner ? "1px solid var(--border)" : "none",
+            color: "var(--accent)",
+            flexShrink: 0,
+            fontSize: 11,
+            lineHeight: 1.35,
+            textAlign: "left",
+          }}
+          data-mobile-trust-pending={mobileBanner ? "true" : undefined}
+        >
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            aria-hidden="true"
+            style={{ flexShrink: 0 }}
+          >
+            <circle cx="12" cy="12" r="9" />
+            <path d="M12 7v5l3 2" />
+          </svg>
+          <span>{translate("trust.appliesAfterRun")}</span>
+        </div>
+      );
+    }
+    if (!projectTrust?.requiresTrust || projectTrust.trusted) return null;
     return (
       <button
         type="button"
@@ -1943,7 +2025,6 @@ export function AppShell() {
           padding: mobileBanner ? "6px 12px" : "0 12px",
           background: mobileBanner ? "color-mix(in srgb, #d97706 8%, var(--bg-panel))" : "none",
           border: "none",
-          borderRight: mobileBanner ? "none" : "1px solid var(--border)",
           borderBottom: mobileBanner ? "1px solid var(--border)" : "none",
           color: "#d97706",
           cursor: "pointer",

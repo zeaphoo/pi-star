@@ -1081,6 +1081,7 @@ export const zhTWLocale: LocalePlugin = {
     "trust.mcp.unchecked": "Pi Star 無法載入 SDK 的 MCP 檢查，以下項目未經檢查。",
     "trust.mcp.cwd": "工作目錄：{path}",
     "trust.close": "關閉",
+    "trust.appliesAfterRun": "信任已儲存，執行結束後生效",
     "trust.alreadyTrusted": "此專案已受信任。",
     "trust.trustFailed": "無法信任此專案。",
     "mcp.transport.stdio": "stdio",

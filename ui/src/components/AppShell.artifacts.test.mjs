@@ -46,6 +46,21 @@ test("the right dock is project-scoped, independent of the main view", () => {
   assert.match(source, /<RightDock[\s\S]{0,400}state=\{dockState\}/);
   assert.doesNotMatch(source, /onChange=\{updateCodeWorkspace\}[\s\S]{0,80}<RightDock/);
 });
+test("trust during a run is saved now and applied after the folder goes idle", () => {
+  assert.match(source, /if \(projectTrustCwdRunning\)/);
+  assert.match(source, /setProjectTrustReloadCwd\(projectTrustCwd\)/);
+  assert.match(source, /const stillRunning = sessionsWithSelection\.some/);
+  assert.match(source, /if \(projectTrustCwd === projectTrustReloadCwd\)/);
+  // The waiting status replaces the restricted-mode banner where it stood.
+  assert.match(source, /data-mobile-trust-pending/);
+  assert.doesNotMatch(source, /projectTrustToast/);
+});
+
+test("the restricted-mode warning has no side divider of its own", () => {
+  // The warning button only draws its mobile bottom edge; other buttons keep theirs.
+  assert.doesNotMatch(source, /borderRight: mobileBanner \?/);
+});
+
 test("the selected session's toolbar opens its context panel, not Settings", () => {
   assert.doesNotMatch(source, /handleSystemInfoToggle/);
   assert.doesNotMatch(source, /activeTopPanel === "system"|activeTopPanel === "tools"/);
