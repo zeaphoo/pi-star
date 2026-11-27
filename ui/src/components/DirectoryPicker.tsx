@@ -3,6 +3,7 @@
 import { type CSSProperties, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
+import { loadShowHiddenFolders, saveShowHiddenFolders } from "@/lib/sidebar-prefs";
 
 interface DirectoryEntry {
   name: string;
@@ -11,6 +12,7 @@ interface DirectoryEntry {
 
 interface BrowseResponse {
   path?: string;
+  homePath?: string | null;
   parentPath?: string | null;
   directories?: DirectoryEntry[];
   drives?: DirectoryEntry[];
@@ -64,9 +66,11 @@ const secondaryActionStyle: CSSProperties = {
   color: "var(--text-muted)",
 };
 
-async function loadDirectories(directory?: string): Promise<BrowseResponse> {
-  const query = directory ? `?path=${encodeURIComponent(directory)}` : "";
-  const response = await fetch(`/api/cwd/browse${query}`);
+async function loadDirectories(directory?: string, showHidden = true): Promise<BrowseResponse> {
+  const params = new URLSearchParams();
+  if (directory) params.set("path", directory);
+  params.set("showHidden", showHidden ? "1" : "0");
+  const response = await fetch(`/api/cwd/browse?${params.toString()}`);
   const data = await response.json() as BrowseResponse;
   if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
   return data;
@@ -119,12 +123,16 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const { t } = useI18n();
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [currentPath, setCurrentPath] = useState("");
+  const [homePath, setHomePath] = useState("");
   const [parentDirectory, setParentDirectory] = useState<string | null>(null);
   const [pathInput, setPathInput] = useState(initialPath ?? "");
   const [directories, setDirectories] = useState<DirectoryEntry[]>([]);
   const [drives, setDrives] = useState<DirectoryEntry[] | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [showHidden, setShowHidden] = useState(loadShowHiddenFolders);
+  const showHiddenRef = useRef(showHidden);
+  showHiddenRef.current = showHidden;
   const [createOpen, setCreateOpen] = useState(false);
   const [directoryName, setDirectoryName] = useState("");
   const [createError, setCreateError] = useState<string | null>(null);
@@ -132,13 +140,14 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const backdropPressRef = useRef(false);
   const createBackdropPressRef = useRef(false);
 
-  const navigateTo = useCallback(async (directory?: string) => {
+  const navigateTo = useCallback(async (directory?: string, hidden?: boolean) => {
     setLoading(true);
     setLoadError(null);
     try {
-      const data = await loadDirectories(directory);
+      const data = await loadDirectories(directory, hidden ?? showHiddenRef.current);
       const nextPath = data.path ?? directory ?? "/";
       setCurrentPath(nextPath);
+      setHomePath(data.homePath ?? "");
       setParentDirectory(data.parentPath ?? null);
       setPathInput(nextPath);
       setDirectories(data.directories ?? []);
@@ -186,6 +195,14 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     } finally {
       setCreating(false);
     }
+  };
+
+  const handleShowHiddenChange = (next: boolean) => {
+    if (next === showHidden) return;
+    setShowHidden(next);
+    showHiddenRef.current = next;
+    saveShowHiddenFolders(next);
+    void navigateTo(currentPath || initialPath || undefined, next);
   };
 
   const hasUncommittedPath = pathInput.trim() !== currentPath;
@@ -271,6 +288,47 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
             {t("directoryPicker.go")}
           </button>
         </form>
+
+        <div
+          className="directory-picker-options"
+          role="group"
+          aria-label={t("directoryPicker.browsingOptions")}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0, padding: "6px 14px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+            <button
+              className="directory-picker-home-link"
+              type="button"
+              onClick={() => void navigateTo(homePath)}
+              disabled={loading || !homePath || currentPath === homePath}
+              title={t("directoryPicker.goToHome")}
+            >
+              {t("directoryPicker.homeDirectory")}
+            </button>
+            {!loading && drives === null && (
+              <>
+                <span aria-hidden="true" style={{ color: "var(--text-dim)", fontSize: 11 }}>·</span>
+                <span style={{ minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", color: "var(--text-dim)", fontSize: 11 }} aria-live="polite">
+                  {t("directoryPicker.folderCount", { count: directories.length })}
+                </span>
+              </>
+            )}
+          </div>
+          <label
+            className="directory-picker-option"
+            title={t("directoryPicker.showHiddenFolders")}
+            style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "3px 4px", borderRadius: 4, color: showHidden ? "var(--text)" : "var(--text-muted)", fontSize: 11, cursor: loading ? "default" : "pointer", userSelect: "none" }}
+          >
+            <input
+              type="checkbox"
+              checked={showHidden}
+              disabled={loading}
+              onChange={(event) => handleShowHiddenChange(event.target.checked)}
+              style={{ width: 13, height: 13, margin: 0, accentColor: "var(--accent)", cursor: loading ? "default" : "pointer" }}
+            />
+            <span>{t("directoryPicker.showHiddenFolders")}</span>
+          </label>
+        </div>
 
         <div className="directory-picker-list" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px" }}>
           {loading ? (

@@ -185,7 +185,6 @@ pub fn router(state: Arc<AppState>) -> Router {
                 .delete(routes::misc::web_auth_logout),
         )
         .route("/home", get(routes::misc::home))
-        .route("/default-cwd", post(routes::misc::default_cwd))
         .route("/cwd/validate", post(routes::misc::validate_cwd))
         .route(
             "/cwd/browse",

@@ -378,13 +378,6 @@ pub fn read_text(path: &Path) -> Result<String> {
     Ok(fs::read_to_string(path)?)
 }
 
-pub fn default_cwd() -> PathBuf {
-    home_dir()
-        .unwrap_or_else(|| PathBuf::from("."))
-        .join("pi-cwd")
-        .join(chrono::Local::now().format("%Y%m%d").to_string())
-}
-
 pub fn home_dir() -> Option<PathBuf> {
     crate::config::home_dir()
 }

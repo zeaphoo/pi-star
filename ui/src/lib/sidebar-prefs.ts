@@ -3,8 +3,9 @@
  * user's explicit project group expand/collapse choices, the archive view's
  * folded projects, whether the pinned section is collapsed, whether the files section below the sessions is
  * collapsed, whether the files tab or section lists ignored files, whether the
- * Git changes panel shows a flat list or a folder tree, and the folders the
- * worktree listing last found outside git.
+ * directory picker lists hidden folders, whether the Git changes panel shows a
+ * flat list or a folder tree, and the folders the worktree listing last found
+ * outside git.
  * Best-effort localStorage, like the other sidebar memories: privacy mode or
  * quota errors fall back to defaults.
  */
@@ -21,6 +22,7 @@ const LEGACY_GROUP_EXPANSION_STORAGE_KEY = "pi-star:sidebar-groups";
 const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-archive-collapsed";
 const PINNED_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-pins-collapsed";
 const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-star:sidebar-files-show-ignored";
+const SHOW_HIDDEN_FOLDERS_STORAGE_KEY = "pi-star:directory-picker-show-hidden";
 const FILES_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-files-collapsed";
 const CHANGES_VIEW_MODE_STORAGE_KEY = "pi-star:sidebar-changes-view-mode";
 const NON_GIT_CWDS_STORAGE_KEY = "pi-star:sidebar-non-git-cwds";
@@ -203,6 +205,28 @@ export function saveShowIgnoredFiles(
   if (!storage) return;
   try {
     storage.setItem(SHOW_IGNORED_FILES_STORAGE_KEY, String(show));
+  } catch {
+    // Persistence is best-effort.
+  }
+}
+
+/** The directory picker's hidden-folder switch; off unless the browser saved it on. */
+export function loadShowHiddenFolders(storage: StorageLike | null = getBrowserStorage()): boolean {
+  if (!storage) return false;
+  try {
+    return storage.getItem(SHOW_HIDDEN_FOLDERS_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function saveShowHiddenFolders(
+  show: boolean,
+  storage: StorageLike | null = getBrowserStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(SHOW_HIDDEN_FOLDERS_STORAGE_KEY, String(show));
   } catch {
     // Persistence is best-effort.
   }

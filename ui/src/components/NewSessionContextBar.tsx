@@ -18,8 +18,6 @@ interface Props {
   onInitialFocusDone: () => void;
   /** Start the fresh composer over in `target`; the shell ignores a move to where it already is. */
   onPick: (target: NewSessionTarget, from: NewSessionContextControl) => void;
-  /** "Use default directory": today's folder, which goes to `onPick`. */
-  onUseDefaultDirectory: () => void;
   /** "Open another project…": the folder picker, which hands its folder to `onPick`. */
   onOpenFolder: (opener: HTMLElement | null) => void;
   onRefreshWorktrees: () => void;
@@ -61,7 +59,6 @@ export function NewSessionContextBar({
   initialFocus,
   onInitialFocusDone,
   onPick,
-  onUseDefaultDirectory,
   onOpenFolder,
   onRefreshWorktrees,
   onCreateWorktree,
@@ -106,7 +103,6 @@ export function NewSessionContextBar({
         homeDir={homeDir}
         newWorktreeTitle={t("sidebar.newWorktreeForSession")}
         onPick={onPick}
-        onUseDefaultDirectory={onUseDefaultDirectory}
         onOpenFolder={onOpenFolder}
         onRefreshWorktrees={onRefreshWorktrees}
         onCreateWorktree={onCreateWorktree}

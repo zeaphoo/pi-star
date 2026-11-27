@@ -80,7 +80,6 @@ interface Props {
   handleRef?: Ref<ProjectWorktreePickerHandle>;
   /** A project or checkout other than the one in use was picked, or a checkout was just created. */
   onPick: (target: NewSessionTarget, from: ProjectWorktreeControl) => void;
-  onUseDefaultDirectory: () => void;
   /** "Open another project…": the folder picker. Focus goes back to `opener` when nothing moves. */
   onOpenFolder: (opener: HTMLElement | null) => void;
   onRefreshWorktrees: () => void;
@@ -210,7 +209,6 @@ export function ProjectWorktreePicker({
   newWorktreeTitle,
   handleRef,
   onPick,
-  onUseDefaultDirectory,
   onOpenFolder,
   onRefreshWorktrees,
   onCreateWorktree,
@@ -380,13 +378,6 @@ export function ProjectWorktreePicker({
     return [
       ...choices,
       ...separator,
-      {
-        type: "item",
-        id: "default-directory",
-        label: t("sidebar.useDefaultDirectory"),
-        icon: <FolderIcon size={13} />,
-        onSelect: () => onUseDefaultDirectory(),
-      },
       {
         type: "item",
         id: "open-folder",

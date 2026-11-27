@@ -33,7 +33,6 @@ function render(props = {}) {
     initialFocus: null,
     onInitialFocusDone: noop,
     onPick: noop,
-    onUseDefaultDirectory: noop,
     onOpenFolder: noop,
     onRefreshWorktrees: noop,
     onCreateWorktree: async () => ({ error: "unused" }),

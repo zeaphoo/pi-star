@@ -1720,9 +1720,6 @@ export function AppShell() {
   const handleOpenFolderForNewSession = useCallback((opener: HTMLElement | null) => {
     sidebarControlRef.current?.openFolderForNewSession((target) => pickNewSessionContextRef.current(target, "project"), opener);
   }, []);
-  const handleDefaultDirectoryForNewSession = useCallback(() => {
-    sidebarControlRef.current?.openDefaultDirectoryForNewSession((target) => pickNewSessionContextRef.current(target, "project"));
-  }, []);
   const handleRefreshNewSessionWorktrees = useCallback(() => {
     sidebarControlRef.current?.refreshWorktrees();
   }, []);
@@ -1744,7 +1741,6 @@ export function AppShell() {
       initialFocus={newSessionBarFocusRef.current}
       onInitialFocusDone={handleNewSessionBarFocusDone}
       onPick={handlePickNewSessionContext}
-      onUseDefaultDirectory={handleDefaultDirectoryForNewSession}
       onOpenFolder={handleOpenFolderForNewSession}
       onRefreshWorktrees={handleRefreshNewSessionWorktrees}
       onCreateWorktree={handleCreateNewSessionWorktree}
@@ -2123,7 +2119,6 @@ export function AppShell() {
               background: activeTopPanel === "branches" ? "var(--bg-selected)" : "none",
               border: "none",
               borderTop: activeTopPanel === "branches" ? "2px solid var(--accent)" : "2px solid transparent",
-              borderRight: "1px solid var(--border)",
               color: activeTopPanel === "branches" ? "var(--text)" : "var(--text-muted)",
               cursor: "pointer", flexShrink: 0,
             }}

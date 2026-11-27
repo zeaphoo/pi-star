@@ -169,8 +169,6 @@ export interface SessionSidebarControl {
    * the picker closes without moving the composer.
    */
   openFolderForNewSession(onPicked: (target: NewSessionTarget) => void, returnFocusTo: HTMLElement | null): void;
-  /** "Use default directory": today's ~/pi-cwd folder, validated as the folder picker's, goes to `onPicked`. */
-  openDefaultDirectoryForNewSession(onPicked: (target: NewSessionTarget) => void): void;
   /** Lists the worktrees of the sidebar's cwd again (the composer's worktree menu opening). */
   refreshWorktrees(): void;
   /** Creates a worktree of `project` and lists it at once; the caller starts the session in it. */
@@ -955,22 +953,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
     }
   }, [customPathValue, customPathValidating, focusAfterCommit]);
 
-  const handleDefaultCwd = useCallback(async () => {
-    try {
-      const res = await fetch("/api/default-cwd", { method: "POST" });
-      const data = await res.json() as { cwd?: string; error?: string };
-      // Select it like any other directory, so validation, project identity and
-      // the file allow-list all go through /api/cwd/validate. It is not a path
-      // the user typed, so the custom-path picker does not remember it.
-      if (data.cwd) await commitCustomPath(data.cwd, { remember: false });
-    } catch {
-      // ignore
-    }
-  }, [commitCustomPath]);
-  // The composer's bar asks through the handle, which is made once.
-  const handleDefaultCwdRef = useRef(handleDefaultCwd);
-  handleDefaultCwdRef.current = handleDefaultCwd;
-
   // Both pickers create through here: the worktree is listed at once, so
   // projectFor() keeps it in the project before the refetch lands, and
   // listed even when nobody moves there. The picker moves there itself.
@@ -1032,11 +1014,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
       folderReturnFocusRef.current = returnFocusTo;
       setCustomPathError(null);
       setCustomPathOpen(true);
-    },
-    openDefaultDirectoryForNewSession: (onPicked) => {
-      folderPickRef.current = onPicked;
-      folderReturnFocusRef.current = null;
-      void handleDefaultCwdRef.current();
     },
     refreshWorktrees,
     createWorktree,
@@ -1952,18 +1929,6 @@ export function SessionSidebar({ selectedSessionId, onSelectSession, onNewSessio
           };
         }),
       ] : []),
-      { type: "separator", id: "separator-default" },
-      {
-        type: "item",
-        id: "default-directory",
-        label: t("sidebar.useDefaultDirectory"),
-        icon: <FolderIcon size={13} />,
-        onSelect: () => {
-          folderPickRef.current = (target) => startNewSessionIn(target);
-          folderReturnFocusRef.current = null;
-          void handleDefaultCwd();
-        },
-      },
     ];
   };
   const sessionMenuItems = (row: SessionRow): SidebarMenuItem[] => sessionMenuEntries(row.context, row.status).map((entry, index) => {

@@ -2336,7 +2336,49 @@ async fn cwd_browse_create_and_misc_reports() {
     .await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["path"], fixture.cwd.to_string_lossy().as_ref());
+    assert!(body["homePath"].is_string() || body["homePath"].is_null());
     assert!(body["directories"].is_array());
+
+    let hidden_dir = fixture.cwd.join(".hidden-project");
+    std::fs::create_dir_all(&hidden_dir).unwrap();
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/cwd/browse?path={}&showHidden=0",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["directories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|entry| entry["name"] != ".hidden-project")
+    );
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/cwd/browse?path={}&showHidden=1",
+                urlencoding(&fixture.cwd)
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        body["directories"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| entry["name"] == ".hidden-project")
+    );
 
     let new_dir = format!("created-{}", uuid::Uuid::new_v4().simple());
     let (status, body) = call(

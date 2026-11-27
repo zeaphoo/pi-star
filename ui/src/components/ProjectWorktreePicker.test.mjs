@@ -34,7 +34,6 @@ function render(props = {}) {
     label: "Project and worktree",
     newWorktreeTitle: "Create a worktree checkout for a branch",
     onPick: noop,
-    onUseDefaultDirectory: noop,
     onOpenFolder: noop,
     onRefreshWorktrees: noop,
     onCreateWorktree: async () => ({ error: "unused" }),

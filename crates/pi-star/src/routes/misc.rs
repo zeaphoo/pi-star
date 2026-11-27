@@ -187,16 +187,6 @@ pub async fn home() -> Response {
     no_store(json!({"home": home.to_string_lossy()}))
 }
 
-pub async fn default_cwd() -> Response {
-    let dir = settings::default_cwd();
-    let create_dir = dir.clone();
-    match blocking(move || std::fs::create_dir_all(&create_dir)).await {
-        Ok(Ok(())) => no_store(json!({"cwd": dir.to_string_lossy()})),
-        Ok(Err(error)) => internal(error),
-        Err(response) => response,
-    }
-}
-
 #[derive(Debug, Deserialize)]
 pub struct CwdBody {
     cwd: Option<String>,
@@ -254,6 +244,27 @@ fn normalize_cwd(cwd: &str) -> PathBuf {
 #[derive(Debug, Deserialize, Default)]
 pub struct BrowseQuery {
     path: Option<String>,
+    #[serde(rename = "showHidden")]
+    show_hidden: Option<String>,
+}
+
+/// Dot-prefixed names are hidden on every platform; Windows also marks files
+/// with the hidden attribute, which a leading dot does not cover.
+fn is_hidden_directory(entry: &std::fs::DirEntry) -> bool {
+    if entry.file_name().to_string_lossy().starts_with('.') {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+        const FILE_ATTRIBUTE_HIDDEN: u32 = 0x2;
+        return entry
+            .metadata()
+            .map(|metadata| metadata.file_attributes() & FILE_ATTRIBUTE_HIDDEN != 0)
+            .unwrap_or(false);
+    }
+    #[cfg(not(windows))]
+    false
 }
 
 pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
@@ -263,7 +274,14 @@ pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
         .map(|value| normalize_cwd(&value))
         .or_else(settings::home_dir)
         .unwrap_or_default();
+    // Older callers omitted the switch; they keep seeing hidden folders.
+    let show_hidden = query
+        .show_hidden
+        .as_deref()
+        .map(|value| matches!(value, "1" | "true"))
+        .unwrap_or(true);
     let resolved = start.canonicalize().unwrap_or(start);
+    let home_path = settings::home_dir();
     let browse_path = resolved.clone();
     let prepared = match blocking(move || -> Option<Vec<Value>> {
         if !browse_path.is_dir() {
@@ -272,6 +290,9 @@ pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
         let mut directories = Vec::new();
         if let Ok(entries) = std::fs::read_dir(&browse_path) {
             for entry in entries.flatten() {
+                if !show_hidden && is_hidden_directory(&entry) {
+                    continue;
+                }
                 let path = entry.path();
                 let is_dir = entry.file_type().map(|kind| kind.is_dir()).unwrap_or(false)
                     || (entry
@@ -304,6 +325,7 @@ pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
     };
     no_store(json!({
         "path": resolved.to_string_lossy(),
+        "homePath": home_path.as_ref().map(|path| path.to_string_lossy().into_owned()),
         "parentPath": resolved.parent().map(|parent| parent.to_string_lossy().into_owned()),
         "directories": directories,
     }))
