@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { agentTabSessionId, openAgentTab, openFileTab, saveFileViewerState } from "./file-tab-state.ts";
+import { agentTabSessionId, openFileTab, saveFileViewerState } from "./file-tab-state.ts";
 
 const tabA = {
   id: "file:/repo/a.ts",
@@ -121,16 +121,7 @@ test("opening a PDF without a page fragment clears a previous jump", () => {
   assert.equal(next.viewerRevision, 1);
 });
 
-test("a sub-agent tab remembers the child session it shows", () => {
-  const tabs = openAgentTab([], "child-1", "Explore the repo");
-  assert.equal(tabs.length, 1);
-  assert.equal(tabs[0].kind, "agent");
-  assert.equal(agentTabSessionId(tabs[0].id), "child-1");
-  assert.equal(tabs[0].sourceSessionId, "child-1");
-  // Re-opening only updates the label; closing is the pane's own filter.
-  const renamed = openAgentTab(tabs, "child-1", "Explore again");
-  assert.equal(renamed.length, 1);
-  assert.equal(renamed[0].label, "Explore again");
-  assert.strictEqual(openAgentTab(tabs, "child-1", "Explore the repo"), tabs);
+test("a legacy sub-agent tab id still names its child session, so stored panes can drop it", () => {
+  assert.equal(agentTabSessionId("agent:child-1"), "child-1");
   assert.equal(agentTabSessionId("file:/repo/a.ts"), null);
 });

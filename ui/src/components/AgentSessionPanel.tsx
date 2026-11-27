@@ -13,9 +13,9 @@ interface Props {
   selectedSessionId: string;
   runningSessionIds: ReadonlySet<string>;
   onSelectSession: (session: SessionInfo) => void;
-  /** Subagents with a viewer tab in the open right panel. */
-  openSubagentTabIds: ReadonlySet<string>;
-  /** Opens a subagent's read-only viewer tab in the right panel (the `Agent` card's button), or closes it when open. */
+  /** The sub-agent whose transcript dialog is open, if any. */
+  openSubagentSessionId: string | null;
+  /** Opens a subagent's read-only transcript dialog, or closes it when it shows this one. */
   onToggleSubagentTab: (sessionId: string, label: string) => void;
 }
 
@@ -291,7 +291,7 @@ function AgentRow({
   );
 }
 
-export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, runningSessionIds, onSelectSession, openSubagentTabIds, onToggleSubagentTab }: Props) {
+export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, runningSessionIds, onSelectSession, openSubagentSessionId, onToggleSubagentTab }: Props) {
   const { t } = useI18n();
   const [query, setQuery] = useState("");
   const sortedSubagents = useMemo(() => [...subagents].sort((a, b) => {
@@ -401,7 +401,7 @@ export function AgentSessionPanel({ rootSession, subagents, selectedSessionId, r
               running={runningSessionIds.has(session.id)}
               usage={usage[session.id]}
               onSelect={() => onSelectSession(session)}
-              tabShown={openSubagentTabIds.has(session.id)}
+              tabShown={openSubagentSessionId === session.id}
               onToggleTab={() => {
                 const relation = session.relation?.kind === "subagent" ? session.relation : null;
                 onToggleSubagentTab(session.id, relation?.description || relation?.profile || sessionTitle(session));

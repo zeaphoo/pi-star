@@ -34,7 +34,7 @@ These are intentional and must be re-applied after a re-sync:
 - **Side chats (`/side`) are not ported.** Upstream v0.15's `SessionChatPanel`, `side-tab-state`,
   `side-chat-client`, `session-family` side helpers, and the side-chat branches in `AppShell`,
   `ChatWindow`, `ChatInput`, `useAgentSession`, `AgentSessionPanel`, `SessionSidebar`, `TabBar`
-  and the locale files stay out. Subagent tabs still use `SubagentViewer`, and the
+  and the locale files stay out. Sub-agent transcripts still use `SubagentViewer` (inside `SubagentDialog`), and the
   selected-text popover keeps "Ask in new chat".
 - `next/*`, `process.env.NEXT_PUBLIC_*` and the React/Vite adaptations are applied by
   `scripts/sync-ui-from-pi-web.mjs` (`postProcess`); `src/main.tsx`, `src/shims/`, `src/types/`,
@@ -75,8 +75,9 @@ These are intentional and must be re-applied after a re-sync:
 - A session-scoped artifacts pane (`components/SessionArtifactsPane.tsx`,
   `lib/session-artifacts.ts`) sits to the right of `ChatWindow`, toggled beside Debug, with
   per-session file tabs and a remembered open state. Chat links and written-file chips open
-  there, and a sub-agent's transcript opens there too (`file-tab-state.ts`'s `openAgentTab`),
-  so the pane is the session's whole right side. The whole-session artifact list is paged
+  there. Sub-agent transcripts do **not**: they open in their own modal
+  (`components/SubagentDialog.tsx`), so the pane stays about artifacts. The whole-session
+  artifact list is paged
   from the context endpoint, outside the chat's own message window. The pane floats over the
   chat (`is-overlay`, decided by the room left after the sidebar and the dock) instead of
   squeezing it.
@@ -90,3 +91,15 @@ These are intentional and must be re-applied after a re-sync:
   preferences (`pi-star:dock-width`, `pi-star:dock-open`). It is offered at ≥1024px only,
   capped at four leaves (two of them terminals). The split-tree helpers it shares with the
   terminal workspace live in `lib/split-tree.ts`.
+- **Background subagent reports render as a card, not as a generic custom message.**
+  `MessageView` routes `pi-star:subagent-notification` / `subagent-notification` messages
+  with `pi-star-subagent` details to `components/SubagentReport.tsx`, which reads the run's
+  name, status, timing and error from `details` and strips the model-facing prefix and run
+  header from the report body (`lib/subagent-report.ts`). Long reports start collapsed;
+  short ones open. `ChatMinimap`'s turn preview uses the run's description instead of the
+  message's UUID-heavy text. `SubagentDialog` opens the child transcript over the chat
+  (Escape, backdrop, or its close button), and the Agent list's toggle opens the same
+  dialog; `file-tab-state.ts` keeps only the legacy `agent:` id reader to prune old parked
+  panes. These are pi-star additions and must be re-applied after a re-sync.
+  `SafeMarkdownBody` moved to its own module so the card shares the oversized markdown
+  guard with `MessageView`.

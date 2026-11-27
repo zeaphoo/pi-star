@@ -36,7 +36,7 @@ import {
   type CodeWorkspaceState,
   type MainView,
 } from "@/lib/code-workspace";
-import { agentTabId, agentTabSessionId, openAgentTab, openFileTab, saveFileViewerState } from "./file-tab-state";
+import { agentTabSessionId, openFileTab, saveFileViewerState } from "./file-tab-state";
 import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
@@ -44,6 +44,7 @@ import { AgentSessionPanel } from "./AgentSessionPanel";
 import { SessionContextPanel } from "./SessionContextPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { ArtifactsIcon, EMPTY_ARTIFACT_PANE, SessionArtifactsPane, type ArtifactPaneState } from "./SessionArtifactsPane";
+import { SubagentDialog } from "./SubagentDialog";
 import { RightDock } from "./RightDock";
 import { DockPanelIcon } from "./dock-icons";
 import { useTheme } from "@/hooks/useTheme";
@@ -399,6 +400,12 @@ export function AppShell() {
   const artifactsPrefsRestoredRef = useRef(false);
   const artifactsButtonRef = useRef<HTMLButtonElement>(null);
   const [artifactPanes, setArtifactPanes] = useState<Record<string, ArtifactPaneState>>({});
+  // The sub-agent transcript modal; one at a time and never persisted.
+  const [subagentDialog, setSubagentDialog] = useState<{ sessionId: string; label: string } | null>(null);
+  // A transcript belongs to the session that spawned it; a switch closes it.
+  useEffect(() => {
+    setSubagentDialog(null);
+  }, [selectedSession?.id]);
   const [liveArtifacts, setLiveArtifacts] = useState<SessionArtifact[]>([]);
   const [historyArtifacts, setHistoryArtifacts] = useState<SessionArtifact[]>([]);
   const [missingArtifactPaths, setMissingArtifactPaths] = useState<ReadonlySet<string>>(() => new Set());
@@ -1568,51 +1575,25 @@ export function AppShell() {
     });
   }, [artifactPaneKey]);
 
-  // Sub-agent work opens as a transcript tab in the session's artifacts pane,
-  // beside the files, instead of taking over the whole chat.
-  const handleOpenSubagentTab = useCallback((sessionId: string, label: string) => {
-    if (!artifactPaneKey) return;
-    updateArtifactPane((current) => ({
-      tabs: openAgentTab(current.tabs, sessionId, label),
-      activeTabId: agentTabId(sessionId),
-    }));
-    setArtifactsOpen(true);
-    // The pane lives on the chat's right: a sub-agent's work is session-scoped.
-    if (mainView !== "chat") {
-      setMainView("chat");
-      saveMainView("chat");
-    }
+  // A sub-agent's transcript opens in its own modal, not in the artifacts pane:
+  // that pane stays about the files the session wrote.
+  const openSubagentDialog = useCallback((sessionId: string, label: string) => {
+    setSubagentDialog({ sessionId, label });
+    setActiveTopPanel(null);
     if (isMobile) setSidebarOpen(false);
-  }, [artifactPaneKey, isMobile, mainView, updateArtifactPane]);
+  }, [isMobile]);
 
-  const openSubagentTabIds = useMemo(() => {
-    const ids = new Set<string>();
-    if (!artifactsOpen) return ids;
-    for (const tab of artifactPane.tabs) {
-      const sessionId = agentTabSessionId(tab.id);
-      if (sessionId) ids.add(sessionId);
-    }
-    return ids;
-  }, [artifactPane.tabs, artifactsOpen]);
+  const closeSubagentDialog = useCallback(() => setSubagentDialog(null), []);
 
-  // The agent switcher's row button: opens the transcript tab, or closes it
-  // when the pane already shows it.
-  const handleToggleSubagentTab = useCallback((sessionId: string, label: string) => {
-    const tabId = agentTabId(sessionId);
-    if (artifactPane.tabs.some((tab) => tab.id === tabId)) {
-      updateArtifactPane((current) => {
-        const tabs = current.tabs.filter((tab) => tab.id !== tabId);
-        if (tabs.length === current.tabs.length) return current;
-        return {
-          tabs,
-          activeTabId: current.activeTabId === tabId ? (tabs.at(-1)?.id ?? null) : current.activeTabId,
-        };
-      });
-      return;
-    }
-    if (isMobile) setActiveTopPanel(null);
-    handleOpenSubagentTab(sessionId, label);
-  }, [artifactPane.tabs, handleOpenSubagentTab, isMobile, updateArtifactPane]);
+  // The agent switcher's row button: opens the transcript, or closes the same
+  // one when it is already showing.
+  const handleToggleSubagent = useCallback((sessionId: string, label: string) => {
+    setSubagentDialog((current) => (
+      current?.sessionId === sessionId ? null : { sessionId, label }
+    ));
+    setActiveTopPanel(null);
+    if (isMobile) setSidebarOpen(false);
+  }, [isMobile]);
 
   const handleOpenArtifactFile = useCallback((
     filePath: string,
@@ -2900,8 +2881,8 @@ export function AppShell() {
                   selectedSessionId={selectedSession.id}
                   runningSessionIds={runningSessionIds}
                   onSelectSession={handleSelectSession}
-                  openSubagentTabIds={openSubagentTabIds}
-                  onToggleSubagentTab={handleToggleSubagentTab}
+                  openSubagentSessionId={subagentDialog?.sessionId ?? null}
+                  onToggleSubagentTab={handleToggleSubagent}
                 />
               )}
               {activeTopPanel === "context" && selectedSession && (
@@ -3167,7 +3148,7 @@ export function AppShell() {
                   missingWrittenPaths={missingArtifactPaths}
                   onArtifactsChange={handleArtifactsChange}
                   onFilesUploaded={handleExplorerRefresh}
-              onOpenSubagent={handleOpenSubagentTab}
+              onOpenSubagent={openSubagentDialog}
               onAskInNewChat={handleAskInNewChat}
               quoteSelectionEnabled={quoteSelectionEnabled}
               initialPrompt={pendingQuotePrompt?.sessionId === selectedSession?.id ? pendingQuotePrompt?.text : undefined}
@@ -3199,10 +3180,8 @@ export function AppShell() {
                     scanning={artifactsScanning}
                     pane={artifactPane}
                     overlay={artifactsOverlay}
-                    runningSessionIds={runningSessionIds}
                     onChange={(next) => updateArtifactPane(() => next)}
                     onOpenFile={handleOpenArtifactFile}
-                    onOpenSubagent={handleOpenSubagentTab}
                     onOpenInCode={handleOpenArtifactInCode}
                     onOpenCodeView={handleOpenArtifactsCodeView}
                     onViewerStateChange={handleArtifactViewerStateChange}
@@ -3361,6 +3340,19 @@ export function AppShell() {
         />
       )}
     </div>
+    {subagentDialog && (
+      <SubagentDialog
+        sessionId={subagentDialog.sessionId}
+        label={subagentDialog.label}
+        running={runningSessionIds.has(subagentDialog.sessionId)}
+        onClose={closeSubagentDialog}
+        onOpenFile={(filePath, page) => {
+          handleOpenArtifactFile(filePath, page, subagentDialog.sessionId);
+          closeSubagentDialog();
+        }}
+        onOpenSubagent={openSubagentDialog}
+      />
+    )}
     {settingsSection && (
       <SettingsPanel
         cwd={projectTrustCwd}

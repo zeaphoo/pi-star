@@ -3136,3 +3136,51 @@ select.mcp-add-input {
   font-size: 11px;
   line-height: 1.5;
 }
+
+/* Sub-agent transcript dialog (components/SubagentDialog.tsx). It is a modal,
+   not an artifacts-pane tab: the pane stays about files. A phone gets the whole
+   screen, the way Settings does. */
+.subagent-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 950;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left));
+  background: rgba(0, 0, 0, 0.4);
+}
+
+.subagent-dialog {
+  display: flex;
+  flex-direction: column;
+  width: min(980px, 100%);
+  height: min(78dvh, 820px);
+  max-height: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg);
+  box-shadow: 0 16px 48px rgba(0, 0, 0, 0.28);
+}
+
+/* Focus moves to the dialog itself when it opens (tabIndex -1); it is not a control, so no ring. */
+.subagent-dialog:focus {
+  outline: none;
+}
+
+@media (max-width: 640px) {
+  .subagent-dialog-backdrop {
+    padding: 0;
+  }
+
+  .subagent-dialog {
+    width: 100%;
+    height: 100dvh;
+    max-height: none;
+    padding-top: env(safe-area-inset-top);
+    padding-bottom: env(safe-area-inset-bottom);
+    border: none;
+    border-radius: 0;
+  }
+}

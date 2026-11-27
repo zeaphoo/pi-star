@@ -104,11 +104,13 @@ session to the standard PI engine for those.
 
 ## Viewing a run
 
-The right-panel subagent tab has two views:
+The sub-agent transcript dialog has two views:
 
 - **Transcript** — the child's messages, polled from `/api/sessions/{id}/context`.
 - **Trace** — the same dense event list as the main Trace tab, read from
   `/api/sessions/{id}/entries`.
 
 Both are read-only and never open an agent event stream, so viewing a run cannot
-resume, disturb or resurrect it.
+resume, disturb or resurrect it. The dialog opens from the Agent tool card, the
+completion report card in the transcript, or the Agents list; Escape, the
+backdrop, and its close button close it.

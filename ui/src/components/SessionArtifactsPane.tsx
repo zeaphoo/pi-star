@@ -9,9 +9,7 @@ import type { FileViewerState } from "@/lib/file-viewer-state";
 import type { SessionArtifact } from "@/lib/session-artifacts";
 import { FileViewer } from "./FileViewer";
 import { FileIcon } from "./FileIcons";
-import { SubagentViewer } from "./SubagentViewer";
 import { TabBar, type Tab } from "./TabBar";
-import { agentTabSessionId } from "./file-tab-state";
 
 export interface ArtifactPaneState {
   tabs: Tab[];
@@ -30,15 +28,11 @@ interface Props {
   scanning: boolean;
   pane: ArtifactPaneState;
   onChange: (pane: ArtifactPaneState) => void;
-  /** Sub-agent tabs report whether their run is live. */
-  runningSessionIds: ReadonlySet<string>;
   /**
    * Opens a file in this pane. `sourceSessionId` is the session whose cwd the
    * path belongs to: the pane's own, or a sub-agent's when its tab linked it.
    */
   onOpenFile: (filePath: string, page?: number, sourceSessionId?: string | null) => void;
-  /** Opens another sub-agent's transcript beside this one. */
-  onOpenSubagent?: (sessionId: string, label: string) => void;
   onOpenInCode: (filePath: string) => void;
   onOpenCodeView: () => void;
   onViewerStateChange: (tabId: string, revision: number, state: FileViewerState) => void;
@@ -117,9 +111,7 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
   scanning,
   pane,
   onChange,
-  runningSessionIds,
   onOpenFile,
-  onOpenSubagent,
   onOpenInCode,
   onOpenCodeView,
   onViewerStateChange,
@@ -132,7 +124,6 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
   const { t, locale } = useI18n();
   const activeTab = pane.tabs.find((tab) => tab.id === pane.activeTabId) ?? null;
   const showList = activeTab === null;
-  const activeAgentSessionId = activeTab ? agentTabSessionId(activeTab.id) : null;
   const [copiedPath, setCopiedPath] = useState<string | null>(null);
   const copiedTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -142,6 +133,14 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
       if (copiedTimerRef.current) clearTimeout(copiedTimerRef.current);
       copiedTimerRef.current = setTimeout(() => setCopiedPath(null), 1500);
     }).catch(() => {});
+  };
+
+  const closeTab = (tabId: string) => {
+    const remaining = pane.tabs.filter((tab) => tab.id !== tabId);
+    onChange({
+      tabs: remaining,
+      activeTabId: pane.activeTabId === tabId ? (remaining.at(-1)?.id ?? null) : pane.activeTabId,
+    });
   };
 
   const now = new Date();
@@ -172,13 +171,7 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
               tabs={pane.tabs}
               activeTabId={pane.activeTabId ?? ""}
               onSelectTab={(id) => onChange({ ...pane, activeTabId: id })}
-              onCloseTab={(id) => {
-                const remaining = pane.tabs.filter((tab) => tab.id !== id);
-                onChange({
-                  tabs: remaining,
-                  activeTabId: pane.activeTabId === id ? (remaining.at(-1)?.id ?? null) : pane.activeTabId,
-                });
-              }}
+              onCloseTab={closeTab}
             />
           </div>
         )}
@@ -268,15 +261,6 @@ export const SessionArtifactsPane = forwardRef<HTMLDivElement, Props>(function S
               );
             })}
           </div>
-        ) : activeAgentSessionId ? (
-          <SubagentViewer
-            key={activeAgentSessionId}
-            sessionId={activeAgentSessionId}
-            fallbackLabel={activeTab.label}
-            running={runningSessionIds.has(activeAgentSessionId)}
-            onOpenFile={(filePath, page) => onOpenFile(filePath, page, activeAgentSessionId)}
-            onOpenSubagent={onOpenSubagent}
-          />
         ) : activeTab ? (
           <FileViewer
             key={`${sessionId ?? ""}:${activeTab.id}:${activeTab.viewerRevision ?? 0}`}

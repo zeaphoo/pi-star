@@ -3,31 +3,13 @@ import type { Tab } from "./TabBar";
 
 const AGENT_TAB_PREFIX = "agent:";
 
-/** Tab id of a sub-agent's read-only transcript. */
-export function agentTabId(sessionId: string): string {
-  return `${AGENT_TAB_PREFIX}${sessionId}`;
-}
-
-/** The child session a tab shows, or null when it shows a file. */
+/**
+ * A stored tab that used to show a sub-agent's transcript (before the
+ * transcript moved to its own dialog). Only read to prune old parked panes;
+ * nothing creates these tabs any more.
+ */
 export function agentTabSessionId(tabId: string): string | null {
   return tabId.startsWith(AGENT_TAB_PREFIX) ? tabId.slice(AGENT_TAB_PREFIX.length) : null;
-}
-
-/**
- * A sub-agent transcript tab. Its `sourceSessionId` is the child's own session:
- * a worktree-isolated child resolves files against its own cwd, not the parent's.
- */
-export function openAgentTab(tabs: Tab[], sessionId: string, label: string): Tab[] {
-  const id = agentTabId(sessionId);
-  const existing = tabs.find((tab) => tab.id === id);
-  if (existing) return existing.label === label ? tabs : tabs.map((tab) => tab.id === id ? { ...tab, label } : tab);
-  return [...tabs, {
-    id,
-    label,
-    filePath: label,
-    kind: "agent",
-    sourceSessionId: sessionId,
-  }];
 }
 
 interface OpenFileTabInput {

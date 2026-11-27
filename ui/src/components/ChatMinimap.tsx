@@ -10,6 +10,7 @@ import {
 import { isMessageGroupAnchor, splitFinalAssistantBlocks } from "@/lib/message-display";
 import { loadMinimapPreviewLocked, saveMinimapPreviewLocked } from "@/lib/minimap-preview-lock";
 import type { AgentMessage, AssistantMessage, CustomMessage, TextContent, UserMessage } from "@/lib/types";
+import { subagentNotificationLabel } from "@/lib/subagent-report";
 import { useI18n } from "@/hooks/useI18n";
 import styles from "./ChatMinimap.module.css";
 
@@ -55,6 +56,12 @@ interface NodeInfo {
 }
 
 function getUserPreview(message: UserMessage | CustomMessage): string {
+  // A subagent notice's text is model-facing (an instruction prefix and a run
+  // header). The outline wants the run's name, not that wrapper.
+  if (message.role === "custom") {
+    const label = subagentNotificationLabel(message);
+    if (label) return label;
+  }
   if (typeof message.content === "string") return message.content.trim();
   return message.content
     .filter((block): block is TextContent => block.type === "text")

@@ -14,8 +14,10 @@ interface Props {
   fallbackLabel: string;
   running: boolean;
   onOpenFile: (filePath: string, page?: number) => void;
-  /** Opens a nested sub-agent's transcript in the same pane. */
+  /** Opens a nested sub-agent's transcript in the same dialog. */
   onOpenSubagent?: (sessionId: string, label: string) => void;
+  /** Closes the viewer; also offered when the child session no longer exists. */
+  onClose?: () => void;
 }
 
 const POLL_MS = 2000;
@@ -37,16 +39,16 @@ function toTranscript(page: Partial<SubagentTranscript>): SubagentTranscript {
 }
 
 /**
- * Read-only view of a subagent's session, rendered in a right-panel tab.
+ * Read-only view of a subagent's session, rendered in `SubagentDialog`.
  *
  * Live updates deliberately poll the context endpoint instead of opening the
  * agent SSE stream: `GET /api/sessions/[id]/context` serves the in-memory
  * entries of a running wrapper (or the file once it settles) without ever
- * spawning a wrapper, so a viewer tab can never resurrect or interfere with a
+ * spawning a wrapper, so the viewer can never resurrect or interfere with a
  * subagent run. Entry-level granularity: pi appends each finished entry
  * synchronously, so a 2 s poll shows the run at message/tool-call resolution.
  */
-export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, onOpenSubagent }: Props) {
+export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, onOpenSubagent, onClose }: Props) {
   const { t, locale } = useI18n();
   const [info, setInfo] = useState<SessionInfo | null>(null);
   const [label, setLabel] = useState(fallbackLabel);
@@ -255,6 +257,24 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
             <path d="M21 12a9 9 0 1 1-2.64-6.36" /><path d="M21 3v6h-6" />
           </svg>
         </button>
+        {onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            title={t("subagent.closeTab")}
+            aria-label={t("subagent.closeTab")}
+            style={{
+              display: "grid", placeItems: "center", width: 24, height: 24, flexShrink: 0,
+              background: "none", border: "none", borderRadius: 4, color: "var(--text-muted)", cursor: "pointer", padding: 0,
+            }}
+            onMouseEnter={(event) => { event.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(event) => { event.currentTarget.style.color = "var(--text-muted)"; }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+              <path d="M18 6 6 18M6 6l12 12" />
+            </svg>
+          </button>
+        )}
       </div>
 
       {view === "trace" ? (
@@ -268,7 +288,25 @@ export function SubagentViewer({ sessionId, fallbackLabel, running, onOpenFile, 
       >
         {notFound ? (
           <div style={{ padding: "24px 16px", color: "var(--text-muted)", fontSize: 12, textAlign: "center" }}>
-            {running ? t("subagent.viewer.starting") : t("subagent.viewer.error")}
+            <div>{running ? t("subagent.viewer.starting") : t("subagent.viewer.missing")}</div>
+            {!running && onClose && (
+              <button
+                type="button"
+                onClick={onClose}
+                style={{
+                  marginTop: 10,
+                  padding: "4px 12px",
+                  borderRadius: 6,
+                  border: "1px solid var(--border)",
+                  background: "var(--bg-panel)",
+                  color: "var(--text-muted)",
+                  cursor: "pointer",
+                  fontSize: 11,
+                }}
+              >
+                {t("subagent.closeTab")}
+              </button>
+            )}
           </div>
         ) : error && messages.length === 0 ? (
           <div role="alert" style={{ padding: "24px 16px", color: "#dc2626", fontSize: 12, textAlign: "center" }}>

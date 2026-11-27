@@ -4,13 +4,14 @@ import test from "node:test";
 
 const source = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 
-test("a session's file opens in its artifacts pane, and a sub-agent's too", () => {
+test("a session's file opens in its artifacts pane; a sub-agent's transcript does not", () => {
   // ChatWindow's own file links and written-file chips go to the pane...
   assert.match(source, /onOpenFile=\{handleOpenArtifactFile\}/);
   assert.match(source, /onArtifactsChange=\{handleArtifactsChange\}/);
-  // ...as does a sub-agent transcript, which the pane hosts beside the files.
-  assert.match(source, /onOpenSubagent=\{handleOpenSubagentTab\}/);
-  assert.match(source, /openAgentTab\(current\.tabs, sessionId, label\)/);
+  // ...while a sub-agent transcript opens in its own dialog, never beside the files.
+  assert.match(source, /onOpenSubagent=\{openSubagentDialog\}/);
+  assert.match(source, /<SubagentDialog/);
+  assert.doesNotMatch(source, /openAgentTab\(/);
   // The old shared file panel is gone: nothing opens there any more.
   assert.doesNotMatch(source, /handleOpenLinkedFile|#file-panel|rightPanelOpen/);
 });
