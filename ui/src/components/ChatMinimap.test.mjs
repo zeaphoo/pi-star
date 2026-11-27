@@ -20,7 +20,7 @@ const jiti = createJiti(import.meta.url, {
   jsx: { runtime: "automatic" },
   tsconfigPaths: true,
 });
-const { AssistantOutline, countToolCalls } = await jiti.import("./ChatMinimap.tsx");
+const { AssistantOutline, countToolCalls, pointerOverMinimapNode } = await jiti.import("./ChatMinimap.tsx");
 
 test("renders math in headings without disabling heading navigation", () => {
   const html = renderToStaticMarkup(
@@ -65,4 +65,22 @@ test("counts no tool calls for non-assistant or string-content messages", () => 
   assert.equal(countToolCalls({ role: "user", content: "run the tests" }), 0);
   assert.equal(countToolCalls({ role: "assistant", content: "plain string" }), 0);
   assert.equal(countToolCalls({ role: "assistant" }), 0);
+});
+
+test("only a dot on the rail counts as hovering a node", () => {
+  const nodes = [{ topRatio: 0.1 }, { topRatio: 0.5 }];
+  const hit = (x, y) => pointerOverMinimapNode(x, y, 36, 600, nodes);
+
+  // Directly on a dot (x is the rail's centre) and just inside its margin.
+  assert.equal(hit(18, 60), true);
+  assert.equal(hit(18, 68), true);
+  // Between dots, crossing the rail: the preview stays closed.
+  assert.equal(hit(18, 260), false);
+  // Along the dot's row but outside the dot itself, and vice versa.
+  assert.equal(hit(2, 300), false);
+  assert.equal(hit(18, 311), false);
+  assert.equal(hit(18, 0), false);
+  // No turns yet, or a rail without height, never hits.
+  assert.equal(pointerOverMinimapNode(18, 60, 36, 600, []), false);
+  assert.equal(pointerOverMinimapNode(18, 0, 36, 0, nodes), false);
 });

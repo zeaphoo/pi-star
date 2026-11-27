@@ -31,6 +31,8 @@ const MINIMAP_PADDING = 12;
 // above it so the last turn stays visible and clickable.
 const MINIMAP_BOTTOM_PADDING = 36 + MINIMAP_PADDING;
 const PREVIEW_HIDE_DELAY = 250;
+/** How far from a node's dot (its 8px square included) still counts as hovering it. */
+export const MINIMAP_NODE_HIT_RADIUS = 10;
 const NAVIGATION_ACTIVE_LOCK_MS = 1600;
 
 interface AssistantPreview {
@@ -244,6 +246,26 @@ function layoutNodes(allNodes: NodeInfo[], minimapHeight: number): NodeLayout {
     gap,
     fillsHeight: naturalGap <= MAX_NODE_GAP,
   };
+}
+
+/**
+ * Whether a pointer is close enough to one of the rail's dots to count as
+ * hovering it. The dots are 8px squares centred in the rail, so both axes get
+ * a small margin; the space between dots stays inert, which keeps the preview
+ * from opening while the pointer merely crosses the rail.
+ */
+export function pointerOverMinimapNode(
+  pointerX: number,
+  pointerY: number,
+  width: number,
+  height: number,
+  nodes: readonly { topRatio: number }[],
+): boolean {
+  if (nodes.length === 0 || height <= 0) return false;
+  if (Math.abs(pointerX - width / 2) > MINIMAP_NODE_HIT_RADIUS) return false;
+  return nodes.some(({ topRatio }) => (
+    Math.abs(pointerY - topRatio * height) <= MINIMAP_NODE_HIT_RADIUS
+  ));
 }
 
 export const ChatMinimap = memo(function ChatMinimap({
@@ -460,6 +482,10 @@ export const ChatMinimap = memo(function ChatMinimap({
     return () => clearTimeout(timeout);
   }, [messages.length, measureNodes, updateScroll]);
 
+  const pointerNearNode = useCallback((clientX: number, clientY: number, rect: DOMRect) => (
+    pointerOverMinimapNode(clientX - rect.left, clientY - rect.top, rect.width, rect.height, nodeLayoutRef.current.nodes)
+  ), []);
+
   const scrollToNode = useCallback((node: NodeInfo, behavior: ScrollBehavior) => {
     const scrollEl = scrollContainer.current;
     if (!scrollEl) return;
@@ -640,11 +666,19 @@ export const ChatMinimap = memo(function ChatMinimap({
     <div
       ref={containerRef}
       onMouseDown={handleMouseDown}
-      onMouseEnter={showPreview}
+      onMouseEnter={(event) => {
+        const rect = event.currentTarget.getBoundingClientRect();
+        if (pointerNearNode(event.clientX, event.clientY, rect)) showPreview();
+      }}
       onMouseLeave={schedulePreviewHide}
       onMouseMove={(event) => {
         const rect = event.currentTarget.getBoundingClientRect();
         setMouseYRatio((event.clientY - rect.top) / rect.height);
+        if (draggingRef.current) return;
+        // Merely crossing the rail must not expand the preview; only a node's
+        // dot (or a click, handled by mousedown) does.
+        if (pointerNearNode(event.clientX, event.clientY, rect)) showPreview();
+        else schedulePreviewHide();
       }}
       style={{
         width: MINIMAP_WIDTH,
