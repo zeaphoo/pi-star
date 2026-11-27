@@ -139,6 +139,14 @@ const TOOL_PRESET_MAP: Record<ToolPresetLabel, ToolPreset> = {
   default: "default",
   full: "full",
 };
+// Preset ids stay stable in settings and session files; only their display names are localized.
+const TOOL_PRESET_LABEL_KEYS: Record<ToolPresetLabel, string> = {
+  configured: "chat.toolPresetConfigured",
+  "chat-only": "chat.toolPresetChatOnly",
+  "read-only": "chat.toolPresetReadOnly",
+  default: "chat.toolPresetDefault",
+  full: "chat.toolPresetFull",
+};
 const COMPOSITION_END_ENTER_GRACE_MS = 100;
 const TEXT_COLLATOR = new Intl.Collator(undefined, { numeric: true, sensitivity: "base" });
 const ANCHORED_MENU_GAP = 8;
@@ -296,6 +304,11 @@ const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhi
 const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
   auto: "chat.thinkingUseDefault", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
   medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax",
+};
+// Level ids stay stable in requests and settings; only their titles are localized.
+const THINKING_LEVEL_LABEL_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
+  auto: "chat.thinkingLevelAuto", off: "chat.thinkingLevelOff", minimal: "chat.thinkingLevelMinimal", low: "chat.thinkingLevelLow",
+  medium: "chat.thinkingLevelMedium", high: "chat.thinkingLevelHigh", xhigh: "chat.thinkingLevelXhigh", max: "chat.thinkingLevelMax",
 };
 
 function formatTokenCount(tokens: number): string {
@@ -1750,11 +1763,10 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
   const resolvedThinkingLevel = thinkingLevel && thinkingLevel !== "auto" ? thinkingLevel : null;
   const thinkingDisplayLabel = (() => {
     const lvl = resolvedThinkingLevel ?? "auto";
-    if (lvl === "auto" || !thinkingLevelMap) return lvl;
-    return thinkingLevelMap[lvl] ?? lvl;
+    return t(THINKING_LEVEL_LABEL_KEYS[lvl]);
   })();
   const rawToolPresetLabel = Object.entries(TOOL_PRESET_MAP).find(([, v]) => v === (toolPreset ?? "configured"))?.[0] ?? "configured";
-  const toolPresetLabel = rawToolPresetLabel === "chat-only" ? t("chat.chatOnly") : rawToolPresetLabel;
+  const toolPresetLabel = t(TOOL_PRESET_LABEL_KEYS[rawToolPresetLabel]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -2703,8 +2715,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                         : !isAutoThinkingSelection && resolvedThinkingLevel === lvl;
                       const desc = t(THINKING_LEVEL_DESC_KEYS[lvl]);
                       const mappedVal = (lvl !== "auto" && thinkingLevelMap) ? thinkingLevelMap[lvl] : undefined;
-                      const displayLabel = (mappedVal != null && mappedVal !== lvl) ? mappedVal : lvl;
-                      const showOriginal = mappedVal != null && mappedVal !== lvl;
+                      // The provider's own label stays visible as a hint; the title follows the UI language.
+                      const showMapped = mappedVal != null && mappedVal !== lvl;
                       return (
                         <SelectorRow
                           key={lvl}
@@ -2731,8 +2743,8 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                             : undefined}
                         >
                           <span style={{ flex: 1 }}>
-                            {displayLabel}
-                            {showOriginal && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginLeft: 5 }}>({lvl})</span>}
+                            {t(THINKING_LEVEL_LABEL_KEYS[lvl])}
+                            {showMapped && <span style={{ fontSize: 10, color: "var(--text-dim)", fontFamily: "var(--font-mono)", marginLeft: 5 }}>({mappedVal})</span>}
                           </span>
                           <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{desc}</span>
                         </SelectorRow>
@@ -2822,7 +2834,7 @@ export const ChatInput = memo(forwardRef<ChatInputHandle, Props>(function ChatIn
                           {isActive
                             ? <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="var(--accent)" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}><polyline points="1.5 5 4 7.5 8.5 2.5" /></svg>
                             : <span style={{ width: 10, flexShrink: 0 }} />}
-                          <span style={{ flex: 1 }}>{lvl}</span>
+                          <span style={{ flex: 1 }}>{t(TOOL_PRESET_LABEL_KEYS[lvl])}</span>
                           <span style={{ fontSize: 11, color: "var(--text-dim)", marginLeft: 8 }}>{desc}</span>
                         </button>
                       );
