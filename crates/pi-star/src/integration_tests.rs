@@ -2206,6 +2206,23 @@ async fn models_refresh_and_tools_settings_keep_their_contract() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["maxConcurrent"], 3);
 
+    // The model list comes from the global config: a cwd outside the allowed
+    // roots (a pinned project with no sessions yet) must still list models.
+    let outside_roots = fixture._temp.path().to_string_lossy().into_owned();
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!(
+                "/api/models?cwd={}",
+                urlencoding(Path::new(&outside_roots))
+            ))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["models"].is_object());
+
     let (status, body) = call(
         app,
         Request::builder()

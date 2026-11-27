@@ -23,15 +23,8 @@ pub struct CwdQuery {
 }
 
 pub async fn models(State(state): State<Arc<AppState>>, Query(query): Query<CwdQuery>) -> Response {
-    if let Some(cwd) = query.cwd.filter(|value| !value.is_empty()) {
-        let cwd = PathBuf::from(cwd);
-        if !cwd.is_dir() {
-            return bad_request(format!("Directory does not exist: {}", cwd.display()));
-        }
-        if !state.roots.is_allowed_existing(&cwd) {
-            return forbidden("Access denied");
-        }
-    }
+    // The model list comes from the global agent config. The cwd is accepted for
+    // client compatibility but is not read here, so it needs no roots check.
     let all = query.scope.as_deref() == Some("all");
     let state_for_models = state.clone();
     let data = match blocking(move || {
