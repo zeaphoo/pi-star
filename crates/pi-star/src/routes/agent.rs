@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -591,12 +592,49 @@ fn session_summary(state: &AppState, id: &str) -> Value {
         "running": running,
         "awaitingInput": false,
         "subagent": false,
-        "eventStreams": streams.len(),
+        "eventStreams": streams.len() + state.hub.agent_subscribers(id),
         "providers": 0,
         "nextIdleCheckAt": Value::Null,
         "forcedByStop": false,
         "starts": if runtime.is_some() { 1 } else { 0 },
     })
+}
+
+/// Merges the SSE registry's pages with the bus's: one row per holder, each
+/// kind's count added, the first address and client label kept.
+fn merge_stream_pages(sse: Vec<Value>, bus: Vec<Value>) -> Vec<Value> {
+    let mut rows: BTreeMap<String, Value> = BTreeMap::new();
+    for page in sse.into_iter().chain(bus) {
+        let key = page
+            .get("holder")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string();
+        match rows.entry(key) {
+            std::collections::btree_map::Entry::Vacant(slot) => {
+                slot.insert(page);
+            }
+            std::collections::btree_map::Entry::Occupied(mut slot) => {
+                let target = slot.get_mut();
+                for field in ["agent", "terminal", "fileWatch", "auth"] {
+                    let sum = target.get(field).and_then(Value::as_u64).unwrap_or(0)
+                        + page.get(field).and_then(Value::as_u64).unwrap_or(0);
+                    if sum > 0 || field != "auth" {
+                        target[field] = Value::from(sum);
+                    }
+                }
+                for field in ["address", "client"] {
+                    let missing = target.get(field).map(Value::is_null).unwrap_or(true);
+                    if missing {
+                        if let Some(value) = page.get(field).filter(|value| !value.is_null()) {
+                            target[field] = value.clone();
+                        }
+                    }
+                }
+            }
+        }
+    }
+    rows.into_values().collect()
 }
 
 fn wrapper_json(
@@ -670,18 +708,20 @@ pub async fn debug(
         let state = &state_for;
         let mut ids = state.agents.ids();
         ids.extend(state.debug_streams.session_ids_with_streams());
+        ids.extend(state.hub.agent_session_ids());
         ids.sort();
         ids.dedup();
         let sessions: Vec<Value> = ids.iter().map(|id| session_summary(&state, id)).collect();
 
         let session = query.session.as_ref().map(|id| {
             let runtime = state.agents.get(id);
-            let streams: Vec<Value> = state
+            let mut streams: Vec<Value> = state
                 .debug_streams
                 .session_agent_streams(id)
                 .iter()
                 .map(|stream| stream.to_client_json())
                 .collect();
+            streams.extend(state.hub.agent_streams(id));
             json!({
                 "sessionId": id,
                 "wrapper": runtime
@@ -700,6 +740,9 @@ pub async fn debug(
         let agent_streams = state.debug_streams.count(StreamKind::Agent);
         let terminal_streams = state.debug_streams.count(StreamKind::Terminal);
         let file_watches = state.debug_streams.count(StreamKind::FileWatch);
+        let bus = state.hub.stream_counts();
+        let sse_total = agent_streams + terminal_streams + file_watches;
+        let bus_total = bus.agent + bus.terminal + bus.file;
         let terminals = state.terminals.count();
         no_store(json!({
             "now": crate::debug_streams::now_ms(),
@@ -712,9 +755,14 @@ pub async fn debug(
                     "closing": 0,
                     "starting": 0,
                 },
-                "eventStreams": { "total": agent_streams },
-                "sseTotal": agent_streams + terminal_streams + file_watches,
-                "pages": state.debug_streams.pages(),
+                "eventStreams": { "total": agent_streams + bus.agent },
+                "sseTotal": sse_total,
+                "busTotal": bus_total,
+                "streamTotal": sse_total + bus_total,
+                "pages": merge_stream_pages(
+                    state.debug_streams.pages(),
+                    state.hub.pages(),
+                ),
                 "fileWatches": file_watches,
                 "terminals": {
                     "count": terminals,

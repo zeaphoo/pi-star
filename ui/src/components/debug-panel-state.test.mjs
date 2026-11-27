@@ -384,6 +384,12 @@ test("the cross-checks only judge what the page had before the answer's request 
   // Connected 500 ms before the answer came back: after its request left, so not yet on the server.
   assert.deepEqual(issuesOf({ connection: { connectedAt: LOCAL - 500 }, detail: { eventStreams: [] } }), []);
   assert.equal(issuesOf({ connection: { connectedAt: LOCAL - 2 * SECOND }, detail: { eventStreams: [] } })[0].id, "noServerStream");
+  // On the bus the server's SSE registry holds no per-stream record to compare with.
+  assert.deepEqual(issuesOf({
+    connection: { connectedAt: LOCAL - 2 * SECOND },
+    detail: { eventStreams: [] },
+    page: { bus: { mode: "bus", state: "open", sockets: 1, channels: [], gaps: 0, dropped: 0 } },
+  }), []);
   // A stream for another session, or one still connecting, is not this session's.
   assert.deepEqual(issuesOf({ connection: { sessionId: "s2" }, detail: { eventStreams: [] } }), []);
   assert.deepEqual(issuesOf({ connection: { state: "connecting" }, detail: { eventStreams: [] } }), []);
@@ -464,6 +470,10 @@ test("a source's name and tooltip", () => {
   const [slot] = state.poolSlots([source(1, "file-watch", "/work/app/app.tsx", { createdAt: LOCAL - 4 * MINUTE - 12 * SECOND })], "http/1.1", null).slots;
   assert.equal(state.debugSlotTitle(slot, LOCAL, t), "File watch · app.tsx · open · opened 1× · 0 errors · 4m 12s ago");
   assert.equal(state.pageAgentStreamCount([source(1, "agent", "s1"), source(2, "agent", "s1"), source(3, "agent", "s2"), source(4, "file-watch", "s1")], "s1"), 2);
+  const bus = { mode: "bus", state: "open", sockets: 1, channels: [{ channel: "agent:s1", kind: "agent" }], gaps: 0, dropped: 0 };
+  assert.equal(state.pageAgentStreamCount([], "s1", bus), 1, "this page's bus channel is its own stream");
+  assert.equal(state.pageAgentStreamCount([source(1, "agent", "s1")], "s1", bus), 2, "mixed transports, each counted");
+  assert.equal(state.pageAgentStreamCount([], "s2", bus), 0, "another session's channel is not");
 });
 
 // ── Samples and scales ──

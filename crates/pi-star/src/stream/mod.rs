@@ -14,7 +14,7 @@
 pub mod sources;
 pub mod ws;
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
@@ -498,7 +498,73 @@ impl Channel {
 
 struct ConnInfo {
     holder: Option<String>,
+    address: Option<String>,
+    client: Option<String>,
+    opened_at: i64,
     channels: HashSet<String>,
+}
+
+/// Subscriptions the stream bus holds, by channel kind (auth included; the
+/// Debug panel shows the other three).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StreamCounts {
+    pub agent: usize,
+    pub terminal: usize,
+    pub file: usize,
+    pub auth: usize,
+}
+
+#[derive(Default)]
+struct PageRow {
+    connections: usize,
+    channels: usize,
+    agent: usize,
+    terminal: usize,
+    file_watch: usize,
+    auth: usize,
+    address: Option<String>,
+    client: Option<String>,
+}
+
+/// One page's connections and subscriptions, by holder (null: no page id).
+fn page_rows(connections: &HashMap<u64, ConnInfo>) -> Vec<Value> {
+    let mut pages: BTreeMap<Option<String>, PageRow> = BTreeMap::new();
+    for info in connections.values() {
+        let row = pages.entry(info.holder.clone()).or_default();
+        row.connections += 1;
+        row.channels += info.channels.len();
+        if row.address.is_none() {
+            row.address.clone_from(&info.address);
+        }
+        if row.client.is_none() {
+            row.client.clone_from(&info.client);
+        }
+        for key in &info.channels {
+            match key.split_once(':').map(|(kind, _)| kind) {
+                Some("agent") => row.agent += 1,
+                Some("terminal") => row.terminal += 1,
+                Some("file") => row.file_watch += 1,
+                Some("auth") => row.auth += 1,
+                _ => {}
+            }
+        }
+    }
+    pages
+        .into_iter()
+        .map(|(holder, row)| {
+            json!({
+                "holder": holder,
+                "address": row.address,
+                "client": row.client,
+                "connections": row.connections,
+                "channels": row.channels,
+                "agent": row.agent,
+                "terminal": row.terminal,
+                "fileWatch": row.file_watch,
+                "auth": row.auth,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy)]
@@ -558,6 +624,8 @@ impl Hub {
         self: &Arc<Self>,
         holder: Option<String>,
         tx: tokio::sync::mpsc::Sender<Outbound>,
+        address: Option<String>,
+        client: Option<String>,
     ) -> Result<ConnHandle, ()> {
         if let Some(holder) = &holder {
             let mut holders = self.holders.lock();
@@ -572,6 +640,9 @@ impl Hub {
             id,
             ConnInfo {
                 holder,
+                address,
+                client,
+                opened_at: crate::debug_streams::now_ms(),
                 channels: HashSet::new(),
             },
         );
@@ -592,6 +663,81 @@ impl Hub {
         if let Some(info) = self.connections.lock().get_mut(&conn_id) {
             info.channels.remove(key);
         }
+    }
+
+    /// Agent channels open on the bus: their session ids, for the Debug panel's list.
+    pub fn agent_session_ids(&self) -> Vec<String> {
+        self.channels
+            .lock()
+            .keys()
+            .filter_map(|key| key.strip_prefix("agent:").map(str::to_string))
+            .collect()
+    }
+
+    /// Subscriptions to the session's agent channel, one per connection.
+    pub fn agent_subscribers(&self, session_id: &str) -> usize {
+        let key = format!("agent:{session_id}");
+        self.channels
+            .lock()
+            .get(&key)
+            .map(|channel| channel.state.lock().subs.len())
+            .unwrap_or(0)
+    }
+
+    /// The bus's agent streams for a session, shaped like the SSE records the
+    /// Debug panel already renders (each connection is one subscriber).
+    pub fn agent_streams(&self, session_id: &str) -> Vec<Value> {
+        let key = format!("agent:{session_id}");
+        let Some((connected_at, conn_ids)) = ({
+            let channels = self.channels.lock();
+            channels.get(&key).map(|channel| {
+                let st = channel.state.lock();
+                (
+                    st.connected_at,
+                    st.subs.keys().copied().collect::<Vec<u64>>(),
+                )
+            })
+        }) else {
+            return Vec::new();
+        };
+        let connections = self.connections.lock();
+        conn_ids
+            .iter()
+            .filter_map(|id| connections.get(id))
+            .map(|info| {
+                json!({
+                    "holder": info.holder.clone(),
+                    "address": info.address.clone(),
+                    "client": info.client.clone(),
+                    "openedAt": info.opened_at,
+                    "connectedAt": connected_at,
+                    "lastWriteAt": Value::Null,
+                    "droppedEvents": 0,
+                    "queuedBytes": 0,
+                    "transport": "bus",
+                })
+            })
+            .collect()
+    }
+
+    /// Subscriptions by kind, the Debug panel's stream counts.
+    pub fn stream_counts(&self) -> StreamCounts {
+        let mut counts = StreamCounts::default();
+        for channel in self.channels.lock().values() {
+            let subscribers = channel.state.lock().subs.len();
+            match channel.kind {
+                ChannelKind::Agent => counts.agent += subscribers,
+                ChannelKind::Terminal => counts.terminal += subscribers,
+                ChannelKind::File => counts.file += subscribers,
+                ChannelKind::Auth => counts.auth += subscribers,
+            }
+        }
+        counts
+    }
+
+    /// The bus's pages, labelled by `?holder=` like the SSE registry's.
+    pub fn pages(&self) -> Vec<Value> {
+        page_rows(&self.connections.lock())
     }
 
     pub fn drop_conn(&self, conn: &ConnHandle) {
@@ -884,27 +1030,19 @@ impl Hub {
             .values()
             .map(|channel| channel.stats())
             .collect();
-        let connections = self.connections.lock();
-        let pages: Vec<Value> = {
-            let mut counts: HashMap<String, (usize, usize)> = HashMap::new();
-            for (_, info) in connections.iter() {
-                let label = info.holder.clone().unwrap_or_else(|| "unknown".into());
-                let entry = counts.entry(label).or_insert((0, 0));
-                entry.0 += 1;
-                entry.1 += info.channels.len();
-            }
-            counts
-                .into_iter()
-                .map(|(holder, (sockets, channels))| {
-                    json!({"holder": holder, "connections": sockets, "channels": channels})
-                })
-                .collect()
-        };
+        let pages = self.pages();
         let by_kind = |kind: ChannelKind| {
             channels
                 .iter()
                 .filter(|channel| channel["kind"] == kind.as_str())
                 .count()
+        };
+        let subscribers = |kind: ChannelKind| {
+            channels
+                .iter()
+                .filter(|channel| channel["kind"] == kind.as_str())
+                .filter_map(|channel| channel["subscribers"].as_u64())
+                .sum::<u64>()
         };
         json!({
             "protocol": 1,
@@ -917,6 +1055,16 @@ impl Hub {
                 "terminal": by_kind(ChannelKind::Terminal),
                 "file": by_kind(ChannelKind::File),
                 "auth": by_kind(ChannelKind::Auth),
+            },
+            "subscribers": subscribers(ChannelKind::Agent)
+                + subscribers(ChannelKind::Terminal)
+                + subscribers(ChannelKind::File)
+                + subscribers(ChannelKind::Auth),
+            "streamsByKind": {
+                "agent": subscribers(ChannelKind::Agent),
+                "terminal": subscribers(ChannelKind::Terminal),
+                "file": subscribers(ChannelKind::File),
+                "auth": subscribers(ChannelKind::Auth),
             },
             "ringBytes": self.total.load(Ordering::Relaxed),
             "ringBudgetBytes": self.cfg.budget_bytes,
@@ -1103,7 +1251,7 @@ mod tests {
     async fn a_fresh_channel_snapshots_even_with_a_client_cursor() {
         let hub = Hub::new(HubConfig::default());
         let (tx, mut rx) = tokio::sync::mpsc::channel(8);
-        let conn = hub.register_conn(None, tx).unwrap();
+        let conn = hub.register_conn(None, tx, None, None).unwrap();
         let channel = Channel::new(
             "terminal:t".into(),
             Arc::new(TestSource {
@@ -1124,6 +1272,65 @@ mod tests {
             Outbound::Text(text) => assert!(text.contains("snapshot"), "{text}"),
             Outbound::Close(_, reason) => panic!("closed: {reason}"),
         }
+    }
+
+    #[tokio::test]
+    async fn hub_reports_bus_streams_and_pages() {
+        let hub = Hub::new(HubConfig::default());
+        let (tx, _rx) = tokio::sync::mpsc::channel(8);
+        let conn = hub
+            .register_conn(
+                Some("page-a".into()),
+                tx,
+                Some("10.0.0.2".into()),
+                Some("Chrome :: macOS".into()),
+            )
+            .unwrap();
+        let channel = Channel::new(
+            "agent:s1".into(),
+            Arc::new(TestSource {
+                kind: ChannelKind::Agent,
+            }),
+            HubConfig::default(),
+            hub.total.clone(),
+        );
+        hub.channels
+            .lock()
+            .insert("agent:s1".into(), channel.clone());
+        hub.note_channel(conn.id, "agent:s1");
+        assert_eq!(
+            hub.attach(&channel, &conn, None).unwrap(),
+            Attach::Subscribed
+        );
+
+        assert_eq!(hub.agent_subscribers("s1"), 1);
+        assert_eq!(hub.agent_session_ids(), vec!["s1".to_string()]);
+        let streams = hub.agent_streams("s1");
+        assert_eq!(streams.len(), 1);
+        assert_eq!(streams[0]["holder"], "page-a");
+        assert_eq!(streams[0]["address"], "10.0.0.2");
+        assert_eq!(streams[0]["transport"], "bus");
+        assert!(streams[0]["openedAt"].as_i64().is_some());
+        assert!(streams[0]["connectedAt"].as_i64().is_some());
+
+        let counts = hub.stream_counts();
+        assert_eq!(
+            (counts.agent, counts.terminal, counts.file, counts.auth),
+            (1, 0, 0, 0)
+        );
+        let pages = hub.pages();
+        assert_eq!(pages.len(), 1);
+        assert_eq!(pages[0]["holder"], "page-a");
+        assert_eq!(pages[0]["client"], "Chrome :: macOS");
+        assert_eq!(
+            (pages[0]["agent"].as_u64(), pages[0]["terminal"].as_u64()),
+            (Some(1), Some(0))
+        );
+
+        let snapshot = hub.snapshot();
+        assert_eq!(snapshot["subscribers"], 1);
+        assert_eq!(snapshot["streamsByKind"]["agent"], 1);
+        assert_eq!(snapshot["pages"][0]["holder"], "page-a");
     }
 
     #[test]

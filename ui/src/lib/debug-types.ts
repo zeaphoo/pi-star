@@ -99,6 +99,8 @@ export interface DebugEventStream {
   droppedEvents: number;
   /** Bytes the browser has not read yet. */
   queuedBytes: number;
+  /** The transport the stream arrived on; absent on servers that predate the bus. */
+  transport?: "sse" | "bus";
 }
 
 /** One page holding event streams on the server, labelled by its first stream's request. */
@@ -110,7 +112,6 @@ export interface DebugServerPage {
   terminal: number;
   fileWatch: number;
 }
-
 export interface DebugSubagentRun {
   sessionId: string;
   parentSessionId: string;
@@ -199,13 +200,17 @@ export interface DebugServerGlobal {
    * (`__new__…`) and a rebuild's (`__recreate__…`) included.
    */
   wrappers: { alive: number; closing: number; starting: number };
+  /** Every open agent event stream, from all pages and browsers, on either transport. */
   eventStreams: {
-    /** Every open agent event stream, from all pages and browsers. */
     total: number;
   };
-  /** Every open SSE response, each a connection of its browser's pool: agent, terminal, file watch. */
+  /** Legacy SSE responses, each a connection of its browser's pool: agent, terminal, file watch. */
   sseTotal: number;
-  /** The pages holding them (opened with `?holder=`; null: without one), by kind. */
+  /** Stream-bus subscriptions (agent, terminal, file watch); absent on older servers. */
+  busTotal?: number;
+  /** Both transports' streams; the pages list's head. Falls back to `sseTotal`. */
+  streamTotal?: number;
+  /** The pages holding them (opened with `?holder=`; null: without one), by kind, both transports merged. */
   pages: DebugServerPage[];
   fileWatches: number;
   terminals: {
@@ -223,9 +228,55 @@ export interface DebugSnapshotResponse {
   /** Server clock when the snapshot was taken: subtract it, never the browser's clock. */
   now: number;
   server: DebugServerGlobal;
+  /** The stream hub's own counters and pages, when the server has one. */
+  hub?: DebugHubSnapshot;
   sessions: DebugSessionSummary[];
   /** Detail of `?session=`; null without one. */
   session: DebugSessionDetail | null;
+}
+
+/** `GET /api/agent/debug`'s `hub`: every bus connection and channel the server holds. */
+export interface DebugHubSnapshot {
+  protocol: number;
+  uptimeMs: number;
+  connections: number;
+  maxConnectionsPerHolder: number;
+  channels: number;
+  channelsByKind: { agent: number; terminal: number; file: number; auth: number };
+  /** Subscriptions (one per connection per channel), auth included. */
+  subscribers: number;
+  streamsByKind: { agent: number; terminal: number; file: number; auth: number };
+  ringBytes: number;
+  ringBudgetBytes: number;
+  dropped: number;
+  gaps: number;
+  pages: DebugHubPage[];
+  channelList: DebugHubChannel[];
+}
+
+export interface DebugHubPage {
+  holder: string | null;
+  address: string | null;
+  client: string | null;
+  connections: number;
+  channels: number;
+  agent: number;
+  terminal: number;
+  fileWatch: number;
+  auth?: number;
+}
+
+export interface DebugHubChannel {
+  channel: string;
+  kind: string;
+  resume: string;
+  seq: number;
+  subscribers: number;
+  ringBytes: number;
+  ringCapacity: number;
+  ringEvents: number;
+  evicted: number;
+  connectedAt: number;
 }
 
 // ── Browser: the page and its selected session ───────────────────────────────

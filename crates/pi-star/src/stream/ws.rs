@@ -29,11 +29,12 @@ pub async fn handler(
     ws: WebSocketUpgrade,
     State(state): State<Arc<AppState>>,
     Query(query): Query<StreamQuery>,
-    _headers: HeaderMap,
+    headers: HeaderMap,
 ) -> Response {
     let holder = query.holder.filter(|value| valid_holder(value));
+    let (address, client) = crate::debug_streams::describe_stream_client(&headers);
     let (tx, rx) = tokio::sync::mpsc::channel::<Outbound>(1024);
-    let conn = match state.hub.register_conn(holder, tx) {
+    let conn = match state.hub.register_conn(holder, tx, address, client) {
         Ok(conn) => conn,
         Err(()) => {
             return (

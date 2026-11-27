@@ -100,6 +100,19 @@ try {
   assert.ok(debug.hub.channelsByKind.terminal >= 1, JSON.stringify(debug.hub.channelsByKind));
   assert.deepEqual(sse, [], "no per-feature SSE endpoint was requested");
   assert.equal(debug.server.sseTotal, 0, "the server has no SSE streams");
+  assert.ok(debug.hub.subscribers >= 2, JSON.stringify(debug.hub.streamsByKind));
+  assert.ok(debug.server.busTotal >= 2, JSON.stringify(debug.server));
+  assert.equal(debug.server.streamTotal, debug.server.sseTotal + debug.server.busTotal);
+  assert.ok(
+    debug.server.pages.some((page) => page.agent >= 1 && page.terminal >= 1),
+    JSON.stringify(debug.server.pages),
+  );
+  const detail = await (await fetch(`${base}/api/agent/debug?session=bus-1`)).json();
+  const busStream = detail.session.eventStreams.find((stream) => stream.transport === "bus");
+  assert.ok(busStream, JSON.stringify(detail.session.eventStreams));
+  assert.equal(typeof busStream.openedAt, "number");
+  assert.equal(typeof busStream.connectedAt, "number");
+  assert.ok(busStream.holder, "the bus stream names the page that holds it");
   console.log("stream bus e2e: ok", JSON.stringify(debug.hub.channelsByKind));
 } finally {
   await browser?.close().catch(() => {});

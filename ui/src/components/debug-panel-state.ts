@@ -543,7 +543,7 @@ export function thisPageFirst<T extends { holder: string | null }>(items: readon
   return [...mine, ...items.filter((item) => !mine.includes(item))];
 }
 
-/** "SSE: 2 (this page 1, other page 1)": a badge run's name, counting this page's apart. */
+/** "Stream: 2 (this page 1, other page 1)": a badge run's name, counting this page's apart. */
 export function holderGroupLabel(name: string, holders: readonly (string | null)[], myHolder: string | null, t: Translate): string {
   const mine = holders.filter((holder) => holder !== null && holder === myHolder).length;
   return `${name}: ${holders.length} (${t("debug.holder.thisPage")} ${mine}, ${t("debug.holder.otherPage")} ${holders.length - mine})`;
@@ -693,8 +693,15 @@ export function debugSlotTitle(slot: DebugPoolSlot, now: number, t: Translate, t
 }
 
 /** This page's agent streams for a session: the share of the server's count that is ours. */
-export function pageAgentStreamCount(sources: readonly DebugTrackedEventSource[], sessionId: string): number {
-  return sources.filter((source) => source.kind === "agent" && source.label === sessionId).length;
+export function pageAgentStreamCount(
+  sources: readonly DebugTrackedEventSource[],
+  sessionId: string,
+  bus: DebugBusSnapshot | null = null,
+): number {
+  const legacy = sources.filter((source) => source.kind === "agent" && source.label === sessionId).length;
+  // One subscription carries every tab: the page holds the channel at most once.
+  const onBus = bus?.mode === "bus" && bus.channels.some((channel) => channel.channel === `agent:${sessionId}`);
+  return legacy + (onBus ? 1 : 0);
 }
 
 // ── Poll samples ──
@@ -852,10 +859,13 @@ export function debugIssues({ page, server, detail, t, titleOf }: DebugIssueInpu
   }
 
   // Cross-checks with the server: only about what the page had before the answer's request left.
+  // The bus keeps no per-stream records in the server's SSE registry, so there is nothing to
+  // compare a bus channel against here.
   const myHolder = client?.pageId ?? null;
   const requestStartedAt = server.receivedAt !== null ? server.receivedAt - (server.roundTripMs ?? 0) : null;
   if (
     detail && myHolder && connection && requestStartedAt !== null
+    && page.bus?.mode !== "bus"
     && connection.state === "connected"
     && connection.sessionId === detail.sessionId
     && connection.connectedAt !== null && connection.connectedAt < requestStartedAt

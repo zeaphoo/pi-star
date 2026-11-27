@@ -35,7 +35,7 @@ Coverage:
   font size. Headings and Markdown emphasis retain their weights.
 - The stream bus (`stream-bus.mjs`): one `/api/stream` WebSocket for two tabs and a terminal
   view, every channel multiplexed on it, no per-feature SSE request, and the server reports a
-  single connection with per-kind channel counts.
+  single connection with per-kind channel and per-page subscriber counts in `/api/agent/debug`.
 - A project terminal keeps its shell across sessions and reloads, restarts on
   demand, and swaps its own theme (`terminal.mjs`).
 - The right dock (`dock.mjs`): independent Code/Terminal leaves beside the

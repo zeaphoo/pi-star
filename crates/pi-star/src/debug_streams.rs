@@ -60,6 +60,7 @@ impl StreamRecord {
             "lastWriteAt": self.last_write_at,
             "droppedEvents": self.dropped_events,
             "queuedBytes": self.queued_bytes,
+            "transport": "sse",
         })
     }
 }

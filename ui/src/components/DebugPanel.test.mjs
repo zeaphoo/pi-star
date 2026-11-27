@@ -47,7 +47,7 @@ function visibleText(html) {
   return html.replace(/<style>[\s\S]*?<\/style>/g, "").replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
 }
 
-/** Where a section's title starts: its class, since a title such as "SSE" is also a badge's word. */
+/** Where a section's title starts: its class, since a title such as "Stream" is also a badge's word. */
 function sectionTitleAt(html, key, from = 0) {
   const match = new RegExp(`class="debug-section-title[^"]*">${t(`debug.section.${key}`)}<`).exec(html.slice(from));
   return match ? from + match.index : -1;
@@ -340,13 +340,13 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   const card = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-detail"));
   assert.doesNotMatch(detailOf(html), /debug-badge/, "none in the details under it");
   const labels = ariaLabels(card);
-  assert.ok(labels.includes("SSE: 2 (this page 1, other page 1)"), labels.join("\n"));
+  assert.ok(labels.includes("Stream: 2 (this page 1, other page 1)"), labels.join("\n"));
   assert.ok(!labels.some((label) => label.startsWith("Lease")), "the server keeps no leases to show");
   assert.ok(labels.includes("Liveness providers: 1"));
-  // The badges say what they are: no "SSE" label before them, no icon in them; their titles say
+  // The badges say what they are: no "Stream" label before them, no icon in them; their titles say
   // which page, its browser and system, and its address.
   assert.doesNotMatch(card, /debug-client/);
-  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="SSE: 2 [^"]*" role="img" aria-label="SSE: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · Chrome · macOS · 127.0.0.1 · connected 5m 10s ago · last write 13s ago">SSE<\/span><span class="debug-badge is-muted" title="other page page-oth · Safari · iOS · 192.168.1.20 · connected 6m 10s ago · last write 13s ago">SSE<\/span><\/span><span class="debug-run"/);
+  assert.match(card, /<span class="debug-row-badges"><span class="debug-run" title="Stream: 2 [^"]*" role="img" aria-label="Stream: 2 [^"]*"><span class="debug-badge is-accent is-filled" title="this page page-min · Chrome · macOS · 127.0.0.1 · connected 5m 10s ago · last write 13s ago">Stream<\/span><span class="debug-badge is-muted" title="other page page-oth · Safari · iOS · 192.168.1.20 · connected 6m 10s ago · last write 13s ago">Stream<\/span><\/span><span class="debug-run"/);
   assert.doesNotMatch(card, /debug-mini-label/);
   assert.doesNotMatch(card, />Lease</);
   // A provider's badge is its name.
@@ -359,14 +359,14 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   const rows = [...pages.replace(icons, "<icons>").matchAll(/<div class="(debug-page-row[^"]*)"[^>]*>(.*?)<\/div>/g)]
     .map((match) => `${match[1]}: ${visibleText(match[2])}`);
   assert.deepEqual(rows, [
-    "debug-page-row debug-list-head: Connected pages 2 SSE 5 total",
+    "debug-page-row debug-list-head: Connected pages 2 5 streams",
     "debug-page-row is-current: Chrome · macOS 127.0.0.1 this page 2",
     "debug-page-row: Safari · iOS 192.168.1.20 page-oth 3",
   ]);
-  // Every SSE kind counts, each a connection of the browser's pool; the title says which.
+  // Every stream kind counts; the title says which.
   assert.equal(pages.match(icons)?.length, 2, "two marks each, hidden from screen readers");
-  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · SSE 3 · Agent 2 · Terminal 1"), titles(pages).join("\n"));
-  assert.ok(titles(pages).includes("this page page-min · Chrome · macOS · 127.0.0.1 · SSE 2 · Agent 1 · File watch 1"));
+  assert.ok(titles(pages).includes("other page page-oth · Safari · iOS · 192.168.1.20 · Stream 3 · Agent 2 · Terminal 1"), titles(pages).join("\n"));
+  assert.ok(titles(pages).includes("this page page-min · Chrome · macOS · 127.0.0.1 · Stream 2 · Agent 1 · File watch 1"));
   // A page opened without a page id or a known browser still gets its row.
   const bare = reply();
   bare.server.sseTotal = 1;
@@ -374,12 +374,43 @@ test("one boxed word per stream and provider: this page's first and filled, othe
   const bareRow = pageList(render({ server: server({ reply: bare }) }));
   assert.match(bareRow, /<span class="debug-page-icons"><\/span><span class="debug-page-client is-dim">unknown browser<\/span><span class="debug-page-address">—<\/span><span class="debug-page-holder">no page id<\/span>/);
   const strip = serverHead(html);
-  assert.doesNotMatch(strip, />SSE</, "the head no longer lists streams");
+  assert.doesNotMatch(strip, />Stream</, "the head no longer lists streams");
   assert.doesNotMatch(html, /debug-divider/);
   assert.doesNotMatch(visibleText(section(html, "page", "server")), /\d\/6/);
   assert.match(strip, /aria-label="File watches: 1"><span class="debug-badge is-muted" title="File watches: 1">File<\/span><\/span>/);
   assert.match(strip, /aria-label="Terminals: 1 [^"]*"><span class="debug-badge is-muted" title="Terminals: 1 [^"]*">Term<\/span><\/span>/);
   assert.ok(titles(strip).some((title) => title.startsWith("Timers: idle 10m 00s · heartbeat 15s\n3 alive · 1 closing · 0 starting")));
+});
+
+test("bus and SSE streams share the list: the head reads the combined total, each title names its transport", () => {
+  const answer = reply();
+  answer.server.sseTotal = 0;
+  answer.server.busTotal = 3;
+  answer.server.streamTotal = 3;
+  answer.server.pages = [
+    { holder: "worker-1", address: "127.0.0.1", client: "Chrome :: macOS", agent: 2, terminal: 1, fileWatch: 0 },
+  ];
+  answer.session.eventStreams = [
+    // A shared worker's holder, not this tab's page id: the panel still calls
+    // it this page's stream because the page holds the channel.
+    { holder: "worker-1", address: "127.0.0.1", client: "Chrome :: macOS", openedAt: SERVER - 5 * MINUTE, connectedAt: SERVER - 5 * MINUTE, lastWriteAt: null, droppedEvents: 0, queuedBytes: 0, transport: "bus" },
+    { holder: "page-other-456", address: "192.168.1.20", client: "Safari :: iOS", openedAt: SERVER - 6 * MINUTE, connectedAt: SERVER - 6 * MINUTE, lastWriteAt: null, droppedEvents: 0, queuedBytes: 0, transport: "sse" },
+  ];
+  // One bus channel is one wrapper listener however many pages subscribe; an SSE response each.
+  answer.session.wrapper = wrapper({ eventListeners: 2 });
+  const bus = { mode: "bus", state: "open", sockets: 1, channels: [{ channel: "agent:s1", kind: "agent" }], gaps: 0, dropped: 0 };
+  const html = render({ page: page({ bus }), server: server({ reply: answer }) });
+
+  const pages = pageList(html);
+  assert.ok(visibleText(pages).includes("Connected pages 1 3 streams"), visibleText(pages));
+  assert.ok(titles(pages).some((title) => title.includes("Stream 3 · Agent 2 · Terminal 1")), titles(pages).join("\n"));
+
+  const list = sessionList(html);
+  const card = list.slice(list.indexOf("debug-row is-current"));
+  assert.ok(titles(card).some((title) => title.includes("this page page-min · WebSocket · Chrome :: macOS")), titles(card).join("\n"));
+  assert.match(card, /<span class="debug-badge is-accent is-filled" title="this page page-min · WebSocket · Chrome :: macOS/);
+  assert.ok(titles(card).some((title) => title.includes("SSE · Safari :: iOS")), titles(card).join("\n"));
+  assert.doesNotMatch(list, />Listeners 1</, "one bus listener and one SSE listener match the wrapper");
 });
 
 test("a starting stream is dashed amber, one dropping events amber; past the cap the rest is a count", () => {
@@ -390,18 +421,18 @@ test("a starting stream is dashed amber, one dropping events amber; past the cap
     ...[5, 4, 3, 2, 1, 0].map((index) => stream(`page-x-${index}`, SERVER - index * SECOND)),
   ];
   const list = sessionList(render({ server: withDetail({ eventStreams }) }));
-  const from = list.indexOf('<span class="debug-run" title="SSE: 8 (this page 1, other page 7)"');
+  const from = list.indexOf('<span class="debug-run" title="Stream: 8 (this page 1, other page 7)"');
   assert.notEqual(from, -1);
   const run = list.slice(from, list.indexOf('<span class="debug-run"', from + 1));
-  assert.equal(run.match(/>SSE<\/span>/g).length, 3, "three badges, a row's cap");
+  assert.equal(run.match(/>Stream<\/span>/g).length, 3, "three badges, a row's cap");
   assert.match(run, /<span class="debug-run-more">\+5<\/span><\/span>$/);
   // This page's own still starting: filled, amber and dashed; another page's that dropped events: amber, solid.
-  assert.match(run, /^[^>]*><span class="debug-badge is-warning is-filled is-dashed" title="this page page-min · starting the session">SSE<\/span>/);
-  assert.match(run, /<span class="debug-badge is-warning" title="other page page-oth · connected 6m 10s ago · 2 dropped">SSE<\/span>/);
+  assert.match(run, /^[^>]*><span class="debug-badge is-warning is-filled is-dashed" title="this page page-min · starting the session">Stream<\/span>/);
+  assert.match(run, /<span class="debug-badge is-warning" title="other page page-oth · connected 6m 10s ago · 2 dropped">Stream<\/span>/);
   assert.equal(run.match(/is-filled/g).length, 1, "only this page's is filled");
 });
 
-test("a session row: up to three SSE and one Provider badge, then counts; this page's streams filled", () => {
+test("a session row: up to three Stream and one Provider badge, then counts; this page's streams filled", () => {
   const answer = reply();
   answer.sessions = answer.sessions.map((entry) => (entry.sessionId === "notes-1" ? { ...entry, eventStreams: 5, providers: 2 } : entry));
   const grace = { id: 3, kind: "agent", label: "notes-1", state: "open", createdAt: LOCAL - MINUTE, opens: 1, errors: 0, lastOpenAt: null, lastErrorAt: null };
@@ -412,9 +443,9 @@ test("a session row: up to three SSE and one Provider badge, then counts; this p
   assert.equal(badges, [
     '<span class="debug-row-badges">',
     '<span class="debug-run" title="5 event streams" role="img" aria-label="5 event streams">',
-    '<span class="debug-badge is-accent is-filled" title="5 event streams">SSE</span>',
-    '<span class="debug-badge is-muted" title="5 event streams">SSE</span>',
-    '<span class="debug-badge is-muted" title="5 event streams">SSE</span>',
+    '<span class="debug-badge is-accent is-filled" title="5 event streams">Stream</span>',
+    '<span class="debug-badge is-muted" title="5 event streams">Stream</span>',
+    '<span class="debug-badge is-muted" title="5 event streams">Stream</span>',
     '<span class="debug-run-more">+2</span></span>',
     '<span class="debug-run" title="2 liveness providers" role="img" aria-label="2 liveness providers">',
     '<span class="debug-badge is-muted" title="2 liveness providers">Provider</span>',
@@ -431,7 +462,7 @@ test("a session row: up to three SSE and one Provider badge, then counts; this p
   assert.match(narrow, /\.debug-row-badges \{\s*grid-column: 2 \/ -1;\s*grid-row: 2;\s*flex-wrap: wrap;/);
 });
 
-test("the meter's slots say what holds them: SSE, File, Term; a connecting one dashed amber, empty ones dotted", () => {
+test("the meter's slots say what holds them: Stream, File, Term; a connecting one dashed amber, empty ones dotted", () => {
   const extra = (id, kind, label, createdAt, state = "open") => ({ id, kind, label, state, createdAt, opens: 1, errors: 0, lastOpenAt: null, lastErrorAt: null });
   const [chat, watch] = page().sources;
   const sources = [chat, extra(3, "agent", "notes-1", LOCAL - 4 * MINUTE), watch, extra(4, "terminal", "/work/app", LOCAL - 30 * SECOND, "connecting")];
@@ -441,8 +472,8 @@ test("the meter's slots say what holds them: SSE, File, Term; a connecting one d
   const meter = tile.slice(meterFrom, tile.indexOf("</div>", meterFrom));
   const slots = [...meter.matchAll(/<span class="(debug-(?:badge|slot)[^"]*)"[^>]*>([^<]*)<\/span>/g)].map((match) => `${match[1]}: ${match[2]}`);
   assert.deepEqual(slots, [
-    "debug-badge debug-slot is-accent is-filled: SSE",
-    "debug-badge debug-slot is-muted: SSE",
+    "debug-badge debug-slot is-accent is-filled: Stream",
+    "debug-badge debug-slot is-muted: Stream",
     "debug-badge debug-slot is-muted: File",
     "debug-badge debug-slot is-warning is-dashed: Term",
     "debug-slot is-empty: ",
@@ -450,12 +481,12 @@ test("the meter's slots say what holds them: SSE, File, Term; a connecting one d
   ]);
   assert.match(meter, /title="Terminal · app · connecting · opened 1× · 0 errors · 30s ago">Term</);
   assert.match(panelSource, /\.debug-slot\.is-empty \{\s*border: 1px dotted var\(--border\);/);
-  // The words follow the language; "SSE" stays as it is.
+  // The words follow the language, the stream word included.
   const zh = (key, params) => interpolateMessage(zhCNLocale.messages[key], params);
   const zhHtml = render({ page: page({ sources }), t: zh });
   const zhFrom = zhHtml.indexOf('<span class="debug-meter"');
   const zhMeter = zhHtml.slice(zhFrom, zhHtml.indexOf("</div>", zhFrom));
-  assert.deepEqual([...zhMeter.matchAll(/class="debug-badge[^"]*"[^>]*>([^<]*)</g)].map((match) => match[1]), ["SSE", "SSE", "文件", "终端"]);
+  assert.deepEqual([...zhMeter.matchAll(/class="debug-badge[^"]*"[^>]*>([^<]*)</g)].map((match) => match[1]), ["流", "流", "文件", "终端"]);
 });
 
 test("sessions on the server: grouped by project, the chat's first and not repeated, subagents under their root", () => {
@@ -474,14 +505,14 @@ test("sessions on the server: grouped by project, the chat's first and not repea
   // details below it on the same tint.
   const current = list.slice(list.indexOf("debug-row is-current"), list.indexOf("debug-row is-sub"));
   assert.match(current, /<span class="debug-row-status"><span class="debug-status" role="img" aria-label="alive"/);
-  assert.match(current, /aria-label="SSE: 2 \(this page 1, other page 1\)"/);
+  assert.match(current, /aria-label="Stream: 2 \(this page 1, other page 1\)"/);
   assert.match(current, /<\/div><div class="debug-detail"><div class="debug-detail-line"><span class="debug-detail-id">s1<\/span>/);
   assert.match(panelSource, /\.debug-row\.has-detail \{\s*border-radius: 4px 4px 0 0;/);
   assert.match(panelSource, /\.debug-row\.is-current::before \{\s*content: "";\s*position: absolute;\s*top: 5px;\s*left: 0;\s*width: 3px;\s*height: 14px;/);
   assert.match(list, /<span class="session-tree-awaiting" role="img" aria-label="awaiting input" title="awaiting input"><\/span>/, "the sidebar's awaiting dot");
   assert.match(list, /<span class="debug-status is-accent" title="running"><svg[^>]*class="sidebar-spin"/, "the sidebar's spinner");
   assert.match(list, /<span class="debug-status-ring is-closing"><\/span>/);
-  assert.match(list, /title="1 event streams" role="img" aria-label="1 event streams"><span class="debug-badge is-muted" title="1 event streams">SSE<\/span><\/span>/);
+  assert.match(list, /title="1 event streams" role="img" aria-label="1 event streams"><span class="debug-badge is-muted" title="1 event streams">Stream<\/span><\/span>/);
   // 3 min left when the server answered, 10 s ago.
   assert.match(list, /<span class="debug-row-idle-text">2m 50s<\/span>/, "to the second");
   // A head says what the columns are, above the first group.

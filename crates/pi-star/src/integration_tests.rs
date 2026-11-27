@@ -3487,10 +3487,15 @@ async fn stream_bus_carries_file_watch_events_over_one_websocket() {
     )
     .await
     .unwrap();
+    let hub = state.hub.clone();
     let app = axum::Router::new()
         .route(
             "/api/stream",
             axum::routing::get(crate::stream::ws::handler),
+        )
+        .route(
+            "/api/agent/debug",
+            axum::routing::get(crate::routes::agent::debug),
         )
         .with_state(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -3564,6 +3569,35 @@ async fn stream_bus_carries_file_watch_events_over_one_websocket() {
     }
     assert!(saw_connected, "the file channel greeted the subscriber");
     assert!(saw_change, "a write to the file reached the socket");
+
+    // The Debug snapshot sees the same subscription: the hub counts it, and
+    // its page row carries the holder and kind the panel renders.
+    let snapshot = hub.snapshot();
+    assert_eq!(snapshot["subscribers"], 1);
+    assert_eq!(snapshot["streamsByKind"]["file"], 1);
+    let pages = hub.pages();
+    assert_eq!(pages.len(), 1);
+    assert_eq!(pages[0]["holder"], "test-page");
+    assert_eq!(pages[0]["fileWatch"], 1);
+
+    // The debug endpoint adds the hub's counts to the SSE registry's: this
+    // subscription is a bus stream, not an SSE one.
+    let debug: Value = reqwest::get(format!("http://{addr}/api/agent/debug"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(debug["server"]["sseTotal"], 0);
+    assert_eq!(debug["server"]["busTotal"], 1);
+    assert_eq!(debug["server"]["streamTotal"], 1);
+    assert_eq!(
+        debug["server"]["eventStreams"]["total"], 0,
+        "no agent stream"
+    );
+    assert_eq!(debug["server"]["pages"][0]["holder"], "test-page");
+    assert_eq!(debug["server"]["pages"][0]["fileWatch"], 1);
+    assert_eq!(debug["hub"]["subscribers"], 1);
 }
 
 /// The QuickPI subagent path end to end: the model calls `subagent`, a real

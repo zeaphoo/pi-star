@@ -294,6 +294,8 @@ interface Ctx {
   clock: DebugServerClock | null;
   /** This page's id: its streams are the filled ones. */
   myHolder: string | null;
+  /** This page's bus channels, so the session rows can fill its own stream. */
+  bus: DebugPageReading["bus"];
   titleOf: DebugTitleOf;
 }
 
@@ -316,7 +318,7 @@ export function DebugPanelView({ page, server, samples = EMPTY_DEBUG_SAMPLES, se
   const groups = useMemo(() => (reply ? groupDebugSessions(reply.sessions, byId, targetSessionId) : null), [reply, byId, targetSessionId]);
   const issues = page ? debugIssues({ page, server, detail, t, titleOf }) : [];
   const verdict = debugVerdict(page, server, issues);
-  const ctx: Ctx = { t, now, clock, myHolder, titleOf };
+  const ctx: Ctx = { t, now, clock, myHolder, bus: page?.bus ?? null, titleOf };
 
   return (
     <section ref={sectionRef} className="debug-panel" aria-label={t("debug.panelLabel")}>
@@ -415,7 +417,7 @@ function badgeClass(item: Pick<BadgeItem, "tone" | "filled" | "dashed" | "faded"
 }
 
 /**
- * One boxed word per item ("SSE", a provider's name), each with its own tooltip, up to
+ * One boxed word per item ("Stream", a provider's name), each with its own tooltip, up to
  * `cap`, then "+n". The run is an image named `label`; `plain` drops the role when an enclosing
  * group already names it. No items, nothing.
  */
@@ -659,7 +661,7 @@ function SampleValue({ samples, t }: { samples: readonly DebugSample[]; t: Trans
  */
 function PageColumn({ page, samples, reply, ctx }: { page: DebugPageReading; samples: DebugSamples; reply: DebugSnapshotResponse | null; ctx: Ctx }) {
   const { t } = ctx;
-  const pool = poolSlots(page.sources, page.bus ? t("debug.page.bus") : page.protocol, page.client?.connection?.sessionId ?? null);
+  const pool = poolSlots(page.sources, page.bus?.mode === "bus" ? t("debug.page.bus") : page.protocol, page.client?.connection?.sessionId ?? null);
   const running = page.runningPoll;
   return (
     <div className="debug-col debug-col-page">
@@ -720,7 +722,7 @@ function Meter({ pool, ctx }: { pool: DebugPool; ctx: Ctx }) {
             className={badgeClass({ tone: slot.connecting ? "warning" : slot.chat ? "accent" : "muted", filled: slot.chat, dashed: slot.connecting }, "debug-slot")}
             title={debugSlotTitle(slot, now, t, titleOf)}
           >
-            {slot.kind === "agent" ? "SSE" : t(SLOT_TEXT_KEYS[slot.kind])}
+            {slot.kind === "agent" ? t("debug.section.stream") : t(SLOT_TEXT_KEYS[slot.kind])}
           </span>
         ) : (
           <span key={`empty:${index}`} className="debug-slot is-empty" />
@@ -732,7 +734,7 @@ function Meter({ pool, ctx }: { pool: DebugPool; ctx: Ctx }) {
   );
 }
 
-/** A meter slot's word for what is not an agent stream ("SSE"). */
+/** A meter slot's word for what is not an agent stream ("Stream"). */
 const SLOT_TEXT_KEYS: Record<Exclude<DebugPoolSlot["kind"], "agent">, string> = {
   "file-watch": "debug.box.file",
   terminal: "debug.box.terminal",
@@ -991,22 +993,23 @@ function ServerHead({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: 
 
 /**
  * The pages holding the server's event streams, one row each: who it is (browser and system
- * marks and words, its reported address), which page, and how many SSE connections it holds of
- * every kind (the agent's, terminals', file watches'; each takes one of the browser's), with the
- * server's total in the head. This page first, on the current row's tint. What a page is lives
- * here once rather than in every badge of every session it holds.
+ * marks and words, its reported address), which page, and how many streams it holds of every
+ * kind (the agent's, terminals', file watches'), with the server's total in the head. This page
+ * first, on the current row's tint. What a page is lives here once rather than in every badge
+ * of every session it holds.
  */
 function PageList({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: Ctx }) {
   const { t, myHolder } = ctx;
   if (!reply) return null;
-  const { pages, sseTotal } = reply.server;
-  if (sseTotal === 0 && pages.length === 0) return null;
+  const { pages } = reply.server;
+  const total = reply.server.streamTotal ?? reply.server.sseTotal;
+  if (total === 0 && pages.length === 0) return null;
   const holders = thisPageFirst(pages, myHolder);
   return (
     <div className="debug-pages">
       <div className="debug-page-row debug-list-head">
         <span className="debug-pages-title">{`${t("debug.pages.title")} ${holders.length}`}</span>
-        <span className="debug-page-count">{`SSE ${t("debug.global.streamTotal", { count: sseTotal })}`}</span>
+        <span className="debug-page-count">{t("debug.global.streamCount", { count: total })}</span>
       </div>
       {holders.map((entry, index) => {
         const mine = entry.holder !== null && entry.holder === myHolder;
@@ -1022,7 +1025,7 @@ function PageList({ reply, ctx }: { reply: DebugSnapshotResponse | null; ctx: Ct
           <div
             key={`${entry.holder ?? ""}:${index}`}
             className={`debug-page-row${mine ? " is-current" : ""}`}
-            title={join([page, entry.client, entry.address, `SSE ${count}`, kinds])}
+            title={join([page, entry.client, entry.address, `${t("debug.section.stream")} ${count}`, kinds])}
           >
             <span className="debug-page-icons"><ClientIcons client={entry.client} /></span>
             <span className={`debug-page-client${entry.client ? "" : " is-dim"}`}>{entry.client ?? t("debug.pages.unknownClient")}</span>
@@ -1200,22 +1203,37 @@ function SessionDetail({ detail, clock, ctx, unlisted = false }: { detail: Debug
 /** A wrapper whose listeners differ from the streams the server lists for it: one leaked or lost. */
 function ListenerMismatch({ detail, t }: { detail: DebugSessionDetail; t: Translate }) {
   const wrapper = detail.wrapper;
+  // A bus channel is one listener on the wrapper however many pages subscribe;
+  // each SSE response is a listener of its own.
+  const busStreams = detail.eventStreams.filter((stream) => stream.transport === "bus").length;
+  const sseStreams = detail.eventStreams.length - busStreams;
+  const expected = sseStreams + (busStreams > 0 ? 1 : 0);
   const mismatch = wrapper !== null && !wrapper.stale
     && detail.eventStreams.every((stream) => stream.connectedAt !== null)
-    && wrapper.eventListeners !== detail.eventStreams.length;
+    && wrapper.eventListeners !== expected;
   if (!mismatch || !wrapper) return null;
   return <Chip tone="warning">{`${t("debug.server.listeners")} ${wrapper.eventListeners}`}</Chip>;
 }
 
 /**
- * The chat's row in the list: one badge per event stream ("SSE") and liveness provider (its name)
+ * The chat's row in the list: one badge per event stream ("Stream") and liveness provider (its name)
  * the server holds for the session, with the holders the other rows' summaries lack: this page's
  * first and filled. Same caps as the other rows.
  */
 function DetailBadges({ detail, clock, ctx }: { detail: DebugSessionDetail; clock: DebugServerClock; ctx: Ctx }) {
   const { t, myHolder } = ctx;
   const ago = (at: number) => formatAgo(clock.age(at), t);
-  const streams = thisPageFirst([...detail.eventStreams].sort((a, b) => a.openedAt - b.openedAt), myHolder);
+  // A bus subscriber's holder is the profile's socket, not this tab: when this
+  // page holds the session's channel, its stream is this page's to fill.
+  const busMine = myHolder !== null
+    && ctx.bus?.mode === "bus"
+    && ctx.bus.channels.some((channel) => channel.channel === `agent:${detail.sessionId}`);
+  const streams = thisPageFirst(
+    [...detail.eventStreams]
+      .map((stream) => (busMine && stream.transport === "bus" ? { ...stream, holder: myHolder } : stream))
+      .sort((a, b) => a.openedAt - b.openedAt),
+    myHolder,
+  );
   const streamItems: BadgeItem[] = streams.map((stream) => {
     const starting = stream.connectedAt === null;
     return {
@@ -1225,6 +1243,7 @@ function DetailBadges({ detail, clock, ctx }: { detail: DebugSessionDetail; cloc
       // Which page, then where it says it is: a browser label and an address tell pages apart.
       title: join([
         debugHolderLabel(stream.holder, myHolder, t),
+        stream.transport && t(stream.transport === "bus" ? "debug.transport.bus" : "debug.transport.sse"),
         stream.client,
         stream.address,
         stream.connectedAt !== null ? t("debug.server.streamConnected", { time: ago(stream.connectedAt) }) : t("debug.server.streamStarting"),
@@ -1250,7 +1269,7 @@ function DetailBadges({ detail, clock, ctx }: { detail: DebugSessionDetail; cloc
     }));
   return (
     <>
-      <BadgeRun text="SSE" items={streamItems} cap={3} label={holderGroupLabel("SSE", streams.map((stream) => stream.holder), myHolder, t)} />
+      <BadgeRun text={t("debug.section.stream")} items={streamItems} cap={3} label={holderGroupLabel(t("debug.section.stream"), streams.map((stream) => stream.holder), myHolder, t)} />
       <BadgeRun
         text={t("debug.box.provider")}
         items={providerItems}
@@ -1422,7 +1441,7 @@ function SessionRow({ row, sources, idleTimeoutMs, clock, ctx, current }: {
       {summary && (
         <SessionRowCells
           summary={summary}
-          mine={pageAgentStreamCount(sources, row.id)}
+          mine={pageAgentStreamCount(sources, row.id, ctx.bus)}
           remaining={remaining}
           idleTimeoutMs={idleTimeoutMs}
           t={t}
@@ -1461,7 +1480,7 @@ function SessionRowCells({ summary, mine, remaining, idleTimeoutMs, t, badges, i
       <span className="debug-row-badges">
         {badges ?? (
           <>
-            <BadgeRun text="SSE" items={streams} cap={3} label={streamsLabel} />
+            <BadgeRun text={t("debug.section.stream")} items={streams} cap={3} label={streamsLabel} />
             <BadgeRun text={t("debug.box.provider")} items={providers} cap={1} label={providersLabel} />
           </>
         )}
@@ -1732,7 +1751,7 @@ const DEBUG_PANEL_CSS = `
     white-space: nowrap;
   }
 
-  /* A boxed word: "SSE", a provider's name, File, Term. Filled is this page's own. */
+  /* A boxed word: "Stream", a provider's name, File, Term. Filled is this page's own. */
   .debug-badge {
     display: inline-flex;
     height: 16px;
