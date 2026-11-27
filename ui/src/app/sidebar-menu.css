@@ -124,10 +124,23 @@
 }
 
 .sidebar-menu-shortcut {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   flex-shrink: 0;
-  color: var(--text-dim);
+  min-width: 17px;
+  height: 17px;
+  padding: 0 4px;
+  box-sizing: border-box;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--bg-panel) 84%, var(--text) 16%);
+  box-shadow: 0 1px 0 var(--border);
+  color: var(--text-muted);
   font-family: var(--font-mono);
-  font-size: 10.5px;
+  font-size: 10px;
+  font-weight: 600;
+  line-height: 1;
 }
 
 .sidebar-menu-separator {

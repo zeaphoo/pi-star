@@ -166,6 +166,13 @@ test("desktop placement: below a button, aligned by edge, flipping above when it
   assert.deepEqual(placeSidebarMenu({ kind: "rect", rect, align: "start" }, tall, viewport), { left: 220, top: 92 });
 });
 
+test("shortcut letters read as keycaps, not as part of the label", () => {
+  const block = css.match(/\.sidebar-menu-shortcut \{[^}]*\}/)?.[0] ?? "";
+  assert.match(block, /border: 1px solid var\(--border\)/);
+  assert.match(block, /border-radius: 4px/);
+  assert.match(block, /font-family: var\(--font-mono\)/);
+});
+
 test("shortcut letters find enabled items, case-insensitively", () => {
   assert.equal(findSidebarMenuShortcut(items, "p")?.id, "pin");
   assert.equal(findSidebarMenuShortcut(items, "D")?.id, "delete");
