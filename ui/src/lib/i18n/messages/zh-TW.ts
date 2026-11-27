@@ -121,6 +121,8 @@ export const zhTWLocale: LocalePlugin = {
     "settings.thinkingDisplay": "思考過程顯示",
     "settings.thinkingDisplayDescription": "選擇訊息載入時模型思考區塊是否預設展開。",
     "settings.thinkingExpandedDefault": "預設展開思考區塊",
+    "settings.defaultThinkingLevel": "預設推理層級",
+    "settings.defaultThinkingLevelDescription": "新建工作階段未手動選擇時使用；未設定時預設為「中」。",
     "settings.chat": "對話",
     "settings.enterSendMode": "傳送按鍵",
     "settings.enterSendModeEnter": "Enter",

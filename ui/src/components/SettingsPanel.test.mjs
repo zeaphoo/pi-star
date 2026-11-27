@@ -30,6 +30,13 @@ test("Session context is a per-session toolbar panel, not a Settings section", (
   assert.doesNotMatch(panelSource, /requiresProject: true/);
 });
 
+test("General › Chat sets the default reasoning level through the star's settings key", () => {
+  assert.match(panelSource, /settings-default-thinking/);
+  assert.match(panelSource, /CONCRETE_THINKING_LEVEL_IDS\.map/);
+  assert.match(panelSource, /\/api\/models\/default/);
+  assert.match(panelSource, /settings\.defaultThinkingLevel/);
+});
+
 test("Terminal sits under General › Appearance in the sidebar", () => {
   assert.doesNotMatch(panelSource, /\{ id: "terminal", label:/);
   assert.match(panelSource, /const \[generalView, setGeneralView\] = useState<"appearance" \| "terminal" \| "code" \| "chat">\("appearance"\)/);

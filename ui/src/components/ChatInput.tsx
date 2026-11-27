@@ -34,6 +34,11 @@ import { useI18n } from "@/hooks/useI18n";
 import { useChatAppearance } from "@/hooks/useChatAppearance";
 import { useFontPreferences } from "@/hooks/useFontPreferences";
 import type { ToolPreset } from "@/lib/tool-presets";
+import {
+  THINKING_LEVEL_DESC_KEYS,
+  THINKING_LEVEL_IDS as THINKING_LEVELS,
+  THINKING_LEVEL_LABEL_KEYS,
+} from "@/lib/thinking-levels";
 import { SelectorRow } from "./SelectorRow";
 import { ModelSelector, type ModelSelectorOption } from "./ModelSelector";
 import { AgentBackendSelector, type AgentBackendOption } from "./AgentBackendSelector";
@@ -300,16 +305,6 @@ function subscribeUpwardMenuMaxHeight(
   };
 }
 
-const THINKING_LEVELS = ["auto", "off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
-const THINKING_LEVEL_DESC_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
-  auto: "chat.thinkingUseDefault", off: "chat.thinkingOff", minimal: "chat.thinkingMinimal", low: "chat.thinkingLow",
-  medium: "chat.thinkingMedium", high: "chat.thinkingHigh", xhigh: "chat.thinkingXhigh", max: "chat.thinkingMax",
-};
-// Level ids stay stable in requests and settings; only their titles are localized.
-const THINKING_LEVEL_LABEL_KEYS: Record<typeof THINKING_LEVELS[number], string> = {
-  auto: "chat.thinkingLevelAuto", off: "chat.thinkingLevelOff", minimal: "chat.thinkingLevelMinimal", low: "chat.thinkingLevelLow",
-  medium: "chat.thinkingLevelMedium", high: "chat.thinkingLevelHigh", xhigh: "chat.thinkingLevelXhigh", max: "chat.thinkingLevelMax",
-};
 
 function formatTokenCount(tokens: number): string {
   if (tokens >= 1_000_000) return `${(tokens / 1_000_000).toFixed(1)}M`;

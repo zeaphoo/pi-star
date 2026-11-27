@@ -121,6 +121,8 @@ export const zhCNLocale: LocalePlugin = {
     "settings.thinkingDisplay": "思考过程显示",
     "settings.thinkingDisplayDescription": "选择消息加载时模型思考块是否默认展开。",
     "settings.thinkingExpandedDefault": "默认展开思考块",
+    "settings.defaultThinkingLevel": "默认推理级别",
+    "settings.defaultThinkingLevelDescription": "新建会话未手动选择时使用；未设置时默认为「中」。",
     "settings.chat": "对话",
     "settings.enterSendMode": "发送按键",
     "settings.enterSendModeEnter": "Enter",

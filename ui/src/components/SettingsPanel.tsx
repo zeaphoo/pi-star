@@ -35,6 +35,12 @@ import {
   isThinkingExpandedByDefault,
   setThinkingExpandedByDefault,
 } from "@/lib/thinking-expansion-preference";
+import {
+  CONCRETE_THINKING_LEVEL_IDS,
+  DEFAULT_THINKING_LEVEL,
+  THINKING_LEVEL_LABEL_KEYS,
+  isConcreteThinkingLevel,
+} from "@/lib/thinking-levels";
 import { ModelsConfig } from "./ModelsConfig";
 import { SkillsConfig } from "./SkillsConfig";
 import { AgentsConfig } from "./AgentsConfig";
@@ -109,6 +115,9 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [shellSaving, setShellSaving] = useState(false);
   const [shellError, setShellError] = useState<string | null>(null);
   const [thinkingExpanded, setThinkingExpanded] = useState(false);
+  const [defaultThinkingLevel, setDefaultThinkingLevel] = useState(DEFAULT_THINKING_LEVEL);
+  const [thinkingLevelSaving, setThinkingLevelSaving] = useState(false);
+  const [thinkingLevelError, setThinkingLevelError] = useState<string | null>(null);
   const [cacheMissNotices, setCacheMissNotices] = useState<boolean | null>(null);
   const [cacheMissNoticesSaving, setCacheMissNoticesSaving] = useState(false);
   const [cacheMissNoticesError, setCacheMissNoticesError] = useState<string | null>(null);
@@ -120,6 +129,12 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     setThinkingExpanded(isThinkingExpandedByDefault());
+    void fetch("/api/models")
+      .then((response) => response.ok ? response.json() : null)
+      .then((data: { defaultThinkingLevel?: string | null } | null) => {
+        if (isConcreteThinkingLevel(data?.defaultThinkingLevel)) setDefaultThinkingLevel(data.defaultThinkingLevel);
+      })
+      .catch(() => {});
     void fetch("/api/web-auth")
       .then((response) => response.ok ? response.json() : null)
       .then((data: { enabled?: boolean } | null) => setWebAuthEnabled(data?.enabled === true))
@@ -169,6 +184,34 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
       });
     return () => { cancelled = true; };
   }, []);
+
+  // The reasoning menu's star writes the same settings key; new chats follow it.
+  const saveDefaultThinkingLevel = async (level: typeof defaultThinkingLevel) => {
+    setThinkingLevelSaving(true);
+    setThinkingLevelError(null);
+    try {
+      const response = await fetch("/api/models/default", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thinkingLevel: level }),
+      });
+      if (!response.ok) {
+        let detail = "";
+        try {
+          const body = await response.json() as { error?: unknown };
+          if (typeof body.error === "string") detail = body.error;
+        } catch {
+          // Non-JSON error responses fall back to the HTTP status.
+        }
+        throw new Error(detail || `HTTP ${response.status}`);
+      }
+      setDefaultThinkingLevel(level);
+    } catch (cause) {
+      setThinkingLevelError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setThinkingLevelSaving(false);
+    }
+  };
 
   // pi's showCacheMissNotices (#1265); the open chat is read again to show or drop them.
   const toggleCacheMissNotices = async (enabled: boolean) => {
@@ -330,6 +373,40 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   const conversation = (
     <>
+      <section className="settings-general-section" aria-label={t("settings.defaultThinkingLevel")}>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option settings-chat-switch-option">
+            <label htmlFor="settings-default-thinking">{t("settings.defaultThinkingLevel")}</label>
+            <select
+              id="settings-default-thinking"
+              value={defaultThinkingLevel}
+              disabled={thinkingLevelSaving}
+              aria-describedby="settings-default-thinking-description"
+              onChange={(event) => {
+                const level = event.target.value;
+                if (isConcreteThinkingLevel(level)) void saveDefaultThinkingLevel(level);
+              }}
+              style={{
+                padding: "4px 8px",
+                border: "1px solid var(--border)",
+                borderRadius: 5,
+                background: "var(--bg)",
+                color: "var(--text)",
+                fontSize: 12,
+              }}
+            >
+              {CONCRETE_THINKING_LEVEL_IDS.map((level) => (
+                <option key={level} value={level}>{t(THINKING_LEVEL_LABEL_KEYS[level])}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+        <p id="settings-default-thinking-description" className="settings-general-description">
+          {t("settings.defaultThinkingLevelDescription")}
+        </p>
+        {thinkingLevelError && <p role="alert" className="settings-general-error">{thinkingLevelError}</p>}
+      </section>
+
       <section className="settings-general-section" aria-label={t("settings.chat")}>
         <div className="settings-chat-options">
           <div className="settings-chat-option settings-chat-switch-option">

@@ -121,6 +121,8 @@ export const enLocale: LocalePlugin = {
     "settings.thinkingDisplay": "Thinking display",
     "settings.thinkingDisplayDescription": "Choose whether model reasoning blocks are expanded when messages load.",
     "settings.thinkingExpandedDefault": "Expand thinking blocks by default",
+    "settings.defaultThinkingLevel": "Default reasoning level",
+    "settings.defaultThinkingLevelDescription": "Used by new chats until you pick a level in the composer. Defaults to medium.",
     "settings.chat": "Chat",
     "settings.enterSendMode": "Send key",
     "settings.enterSendModeEnter": "Enter",
