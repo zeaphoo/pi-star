@@ -11,12 +11,14 @@ const {
   loadNonGitCwds,
   loadPinnedCollapsed,
   loadChangesViewMode,
+  loadDirectorySort,
   loadShowHiddenFolders,
   loadShowIgnoredFiles,
   loadSidebarTab,
   rememberCwdGitStatus,
   saveArchiveCollapsed,
   saveChangesViewMode,
+  saveDirectorySort,
   saveFilesCollapsed,
   saveGroupExpansion,
   savePinnedCollapsed,
@@ -55,6 +57,7 @@ test("defaults to the sessions tab, open pins, no explicit group choices, an ope
   assert.equal(loadFilesCollapsed(storage), false);
   assert.equal(loadShowIgnoredFiles(storage), false);
   assert.equal(loadShowHiddenFolders(storage), false);
+  assert.equal(loadDirectorySort(storage), "name");
   assert.equal(loadChangesViewMode(storage), "list");
 });
 
@@ -126,6 +129,15 @@ test("saves and restores the directory picker's hidden-folder switch", () => {
   assert.equal(loadShowHiddenFolders(storage), true);
   saveShowHiddenFolders(false, storage);
   assert.equal(loadShowHiddenFolders(storage), false);
+});
+
+test("saves and restores the directory picker's sort order", () => {
+  const storage = createStorage();
+  saveDirectorySort("modified", storage);
+  assert.equal(storage.values.get("pi-star:directory-picker-sort"), "modified");
+  assert.equal(loadDirectorySort(storage), "modified");
+  saveDirectorySort("name", storage);
+  assert.equal(loadDirectorySort(storage), "name");
 });
 
 test("saves and restores the changes panel view mode, defaulting to list", () => {
@@ -271,11 +283,13 @@ test("falls back to defaults when browser storage is unavailable", () => {
   assert.deepEqual(loadGroupExpansion(unavailable), {});
   assert.equal(loadShowIgnoredFiles(unavailable), false);
   assert.equal(loadShowHiddenFolders(unavailable), false);
+  assert.equal(loadDirectorySort(unavailable), "name");
   assert.equal(loadFilesCollapsed(unavailable), false);
   assert.doesNotThrow(() => saveSidebarTab("files", unavailable));
   assert.doesNotThrow(() => saveFilesCollapsed(true, unavailable));
   assert.doesNotThrow(() => saveShowIgnoredFiles(true, unavailable));
   assert.doesNotThrow(() => saveShowHiddenFolders(true, unavailable));
+  assert.doesNotThrow(() => saveDirectorySort("modified", unavailable));
   assert.doesNotThrow(() => savePinnedCollapsed(true, unavailable));
   assert.doesNotThrow(() => saveGroupExpansion({ "/a": true }, unavailable));
   assert.deepEqual(loadNonGitCwds(unavailable), []);
@@ -301,11 +315,13 @@ test("falls back when accessing browser storage throws", () => {
     assert.deepEqual(loadGroupExpansion(), {});
     assert.equal(loadShowIgnoredFiles(), false);
     assert.equal(loadShowHiddenFolders(), false);
+    assert.equal(loadDirectorySort(), "name");
     assert.equal(loadFilesCollapsed(), false);
     assert.doesNotThrow(() => saveSidebarTab("files"));
     assert.doesNotThrow(() => saveFilesCollapsed(true));
     assert.doesNotThrow(() => saveShowIgnoredFiles(true));
     assert.doesNotThrow(() => saveShowHiddenFolders(true));
+    assert.doesNotThrow(() => saveDirectorySort("modified"));
     assert.doesNotThrow(() => savePinnedCollapsed(true));
     assert.doesNotThrow(() => saveGroupExpansion({ "/a": false }));
     assert.deepEqual(loadNonGitCwds(), []);

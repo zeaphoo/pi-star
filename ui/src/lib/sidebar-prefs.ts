@@ -23,6 +23,7 @@ const ARCHIVE_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-archive-collapsed";
 const PINNED_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-pins-collapsed";
 const SHOW_IGNORED_FILES_STORAGE_KEY = "pi-star:sidebar-files-show-ignored";
 const SHOW_HIDDEN_FOLDERS_STORAGE_KEY = "pi-star:directory-picker-show-hidden";
+const DIRECTORY_SORT_STORAGE_KEY = "pi-star:directory-picker-sort";
 const FILES_COLLAPSED_STORAGE_KEY = "pi-star:sidebar-files-collapsed";
 const CHANGES_VIEW_MODE_STORAGE_KEY = "pi-star:sidebar-changes-view-mode";
 const NON_GIT_CWDS_STORAGE_KEY = "pi-star:sidebar-non-git-cwds";
@@ -227,6 +228,28 @@ export function saveShowHiddenFolders(
   if (!storage) return;
   try {
     storage.setItem(SHOW_HIDDEN_FOLDERS_STORAGE_KEY, String(show));
+  } catch {
+    // Persistence is best-effort.
+  }
+}
+
+/** The directory picker's order; names unless the browser saved "modified". */
+export function loadDirectorySort(storage: StorageLike | null = getBrowserStorage()): "name" | "modified" {
+  if (!storage) return "name";
+  try {
+    return storage.getItem(DIRECTORY_SORT_STORAGE_KEY) === "modified" ? "modified" : "name";
+  } catch {
+    return "name";
+  }
+}
+
+export function saveDirectorySort(
+  sort: "name" | "modified",
+  storage: StorageLike | null = getBrowserStorage(),
+): void {
+  if (!storage) return;
+  try {
+    storage.setItem(DIRECTORY_SORT_STORAGE_KEY, sort);
   } catch {
     // Persistence is best-effort.
   }

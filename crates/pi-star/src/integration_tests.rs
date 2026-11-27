@@ -2370,6 +2370,8 @@ async fn cwd_browse_create_and_misc_reports() {
 
     let hidden_dir = fixture.cwd.join(".hidden-project");
     std::fs::create_dir_all(&hidden_dir).unwrap();
+    let visible_dir = fixture.cwd.join("visible-child");
+    std::fs::create_dir_all(&visible_dir).unwrap();
     let (status, body) = call(
         app.clone(),
         Request::builder()
@@ -2408,6 +2410,13 @@ async fn cwd_browse_create_and_misc_reports() {
             .iter()
             .any(|entry| entry["name"] == ".hidden-project")
     );
+    let visible = body["directories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|entry| entry["name"] == "visible-child")
+        .expect("visible child directory");
+    assert!(visible["modifiedMs"].is_u64());
 
     let new_dir = format!("created-{}", uuid::Uuid::new_v4().simple());
     let (status, body) = call(

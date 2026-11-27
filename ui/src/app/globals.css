@@ -2906,6 +2906,28 @@ pre, code {
   transition: color 120ms ease, background 120ms ease;
 }
 
+.directory-picker-sort {
+  height: 22px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--bg);
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.directory-picker-sort:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.directory-picker-sort:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
 .directory-picker-home-link {
   padding: 0;
   border: 0;

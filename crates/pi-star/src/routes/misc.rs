@@ -301,9 +301,15 @@ pub async fn browse_cwd(Query(query): Query<BrowseQuery>) -> Response {
                         .unwrap_or(false)
                         && path.is_dir());
                 if is_dir {
+                    let modified_ms = std::fs::metadata(&path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| modified.duration_since(std::time::UNIX_EPOCH).ok())
+                        .map(|elapsed| elapsed.as_millis() as u64);
                     directories.push(json!({
                         "name": entry.file_name().to_string_lossy(),
                         "path": path.to_string_lossy(),
+                        "modifiedMs": modified_ms,
                     }));
                 }
             }

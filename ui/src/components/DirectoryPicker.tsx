@@ -1,13 +1,15 @@
 "use client";
 
-import { type CSSProperties, type FormEvent, useCallback, useEffect, useRef, useState } from "react";
+import { type CSSProperties, type FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useI18n } from "@/hooks/useI18n";
-import { loadShowHiddenFolders, saveShowHiddenFolders } from "@/lib/sidebar-prefs";
+import { loadDirectorySort, loadShowHiddenFolders, saveDirectorySort, saveShowHiddenFolders } from "@/lib/sidebar-prefs";
+import { formatDirectoryModified, sortDirectoryEntries, type DirectorySort } from "@/lib/directory-picker";
 
 interface DirectoryEntry {
   name: string;
   path: string;
+  modifiedMs?: number | null;
 }
 
 interface BrowseResponse {
@@ -120,7 +122,7 @@ interface Props {
 }
 
 export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false, error }: Props) {
-  const { t } = useI18n();
+  const { t, locale } = useI18n();
   const [portalTarget, setPortalTarget] = useState<HTMLElement | null>(null);
   const [currentPath, setCurrentPath] = useState("");
   const [homePath, setHomePath] = useState("");
@@ -131,6 +133,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
   const [loadError, setLoadError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [showHidden, setShowHidden] = useState(loadShowHiddenFolders);
+  const [sortBy, setSortBy] = useState<DirectorySort>(loadDirectorySort);
   const showHiddenRef = useRef(showHidden);
   showHiddenRef.current = showHidden;
   const [createOpen, setCreateOpen] = useState(false);
@@ -203,6 +206,16 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
     showHiddenRef.current = next;
     saveShowHiddenFolders(next);
     void navigateTo(currentPath || initialPath || undefined, next);
+  };
+
+  const sortedDirectories = useMemo(
+    () => sortDirectoryEntries(directories, sortBy, locale),
+    [directories, locale, sortBy],
+  );
+  const handleSortChange = (value: string) => {
+    const next: DirectorySort = value === "modified" ? "modified" : "name";
+    setSortBy(next);
+    saveDirectorySort(next);
   };
 
   const hasUncommittedPath = pathInput.trim() !== currentPath;
@@ -293,7 +306,7 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
           className="directory-picker-options"
           role="group"
           aria-label={t("directoryPicker.browsingOptions")}
-          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 10, flexShrink: 0, padding: "6px 14px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}
+          style={{ display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 10, rowGap: 4, flexShrink: 0, padding: "6px 14px", borderBottom: "1px solid var(--border)", background: "var(--bg-panel)" }}
         >
           <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
             <button
@@ -314,20 +327,36 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
               </>
             )}
           </div>
-          <label
-            className="directory-picker-option"
-            title={t("directoryPicker.showHiddenFolders")}
-            style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "3px 4px", borderRadius: 4, color: showHidden ? "var(--text)" : "var(--text-muted)", fontSize: 11, cursor: loading ? "default" : "pointer", userSelect: "none" }}
-          >
-            <input
-              type="checkbox"
-              checked={showHidden}
-              disabled={loading}
-              onChange={(event) => handleShowHiddenChange(event.target.checked)}
-              style={{ width: 13, height: 13, margin: 0, accentColor: "var(--accent)", cursor: loading ? "default" : "pointer" }}
-            />
-            <span>{t("directoryPicker.showHiddenFolders")}</span>
-          </label>
+          <div style={{ display: "flex", alignItems: "center", gap: 12, flexShrink: 0 }}>
+            <label style={{ display: "flex", alignItems: "center", gap: 5, color: "var(--text-dim)", fontSize: 11 }}>
+              <span>{t("directoryPicker.sortBy")}</span>
+              <select
+                className="directory-picker-sort"
+                value={sortBy}
+                disabled={loading}
+                onChange={(event) => handleSortChange(event.target.value)}
+                title={t("directoryPicker.sortBy")}
+                aria-label={t("directoryPicker.sortBy")}
+              >
+                <option value="name">{t("directoryPicker.sortByName")}</option>
+                <option value="modified">{t("directoryPicker.sortByModified")}</option>
+              </select>
+            </label>
+            <label
+              className="directory-picker-option"
+              title={t("directoryPicker.showHiddenFolders")}
+              style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0, padding: "3px 4px", borderRadius: 4, color: showHidden ? "var(--text)" : "var(--text-muted)", fontSize: 11, cursor: loading ? "default" : "pointer", userSelect: "none" }}
+            >
+              <input
+                type="checkbox"
+                checked={showHidden}
+                disabled={loading}
+                onChange={(event) => handleShowHiddenChange(event.target.checked)}
+                style={{ width: 13, height: 13, margin: 0, accentColor: "var(--accent)", cursor: loading ? "default" : "pointer" }}
+              />
+              <span>{t("directoryPicker.showHiddenFolders")}</span>
+            </label>
+          </div>
         </div>
 
         <div className="directory-picker-list" style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "8px 10px" }}>
@@ -353,20 +382,34 @@ export function DirectoryPicker({ onCancel, onSelect, initialPath, busy = false,
                 <div style={{ padding: 8, color: "var(--text-dim)", fontSize: 11 }}>{t("directoryPicker.noDrives")}</div>
               )}
             </>
-          ) : directories.length > 0 ? (
-            directories.map((entry) => (
-              <button
-                key={entry.path}
-                className="directory-picker-entry"
-                type="button"
-                onClick={() => void navigateTo(entry.path)}
-                title={entry.path}
-                style={{ width: "100%", minHeight: 30, display: "flex", alignItems: "center", gap: 7, padding: "5px 8px", border: 0, borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-mono)", fontSize: 11 }}
-              >
-                <FolderIcon />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
-              </button>
-            ))
+          ) : sortedDirectories.length > 0 ? (
+            sortedDirectories.map((entry) => {
+              const modified = formatDirectoryModified(entry.modifiedMs, locale);
+              const modifiedTitle = entry.modifiedMs
+                ? new Date(entry.modifiedMs).toLocaleString(locale)
+                : undefined;
+              return (
+                <button
+                  key={entry.path}
+                  className="directory-picker-entry"
+                  type="button"
+                  onClick={() => void navigateTo(entry.path)}
+                  title={entry.path}
+                  style={{ width: "100%", minHeight: 30, display: "flex", alignItems: "center", gap: 7, padding: "5px 8px", border: 0, borderRadius: 5, background: "none", color: "var(--text-muted)", cursor: "pointer", textAlign: "left", fontFamily: "var(--font-mono)", fontSize: 11 }}
+                >
+                  <FolderIcon />
+                  <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{entry.name}</span>
+                  {modified && (
+                    <span
+                      title={modifiedTitle ? `${t("directoryPicker.lastModified")}: ${modifiedTitle}` : undefined}
+                      style={{ flexShrink: 0, color: "var(--text-dim)", fontSize: 10, fontVariantNumeric: "tabular-nums" }}
+                    >
+                      {modified}
+                    </span>
+                  )}
+                </button>
+              );
+            })
           ) : (
             <div style={{ padding: 8, color: "var(--text-dim)", fontSize: 11 }}>{t("directoryPicker.noSubdirectories")}</div>
           )}
