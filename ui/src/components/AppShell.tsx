@@ -41,6 +41,7 @@ import { SettingsPanel, SettingsSectionIcon } from "./SettingsPanel";
 import { ProjectTrustDialog, type ProjectTrustFailure } from "./ProjectTrustDialog";
 import { BranchNavigator, hasSessionBranches } from "./BranchNavigator";
 import { AgentSessionPanel } from "./AgentSessionPanel";
+import { SessionContextPanel } from "./SessionContextPanel";
 import { DebugPanel, DebugPanelBoundary } from "./DebugPanel";
 import { ArtifactsIcon, EMPTY_ARTIFACT_PANE, SessionArtifactsPane, type ArtifactPaneState } from "./SessionArtifactsPane";
 import { RightDock } from "./RightDock";
@@ -126,6 +127,7 @@ type AutoNameStatus =
 // app/globals.css: 36px, 44px on a phone or touch screen.
 const TOP_BAR_ICON_BUTTON_SIZE = "var(--top-bar-height)";
 const AGENT_PANEL_WIDTH = 420;
+const CONTEXT_PANEL_WIDTH = 720;
 const ARTIFACTS_OPEN_KEY = "pi-star:artifacts-open";
 const ARTIFACT_PANES_KEY = "pi-star:artifacts-panes:v1";
 const MAX_STORED_ARTIFACT_PANES = 30;
@@ -656,7 +658,7 @@ export function AppShell() {
   }, []);
 
   // Single active panel — only one dropdown open at a time
-  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "session" | "debug" | null>(null);
+  const [activeTopPanel, setActiveTopPanel] = useState<"agents" | "branches" | "context" | "session" | "debug" | null>(null);
   const [topPanelPos, setTopPanelPos] = useState<{ top: number; left: number; width: number } | null>(null);
 
   useEffect(() => {
@@ -672,12 +674,18 @@ export function AppShell() {
   }, [hasSubagentSessions]);
 
   useEffect(() => {
+    if (!selectedSession) {
+      setActiveTopPanel((panel) => panel === "context" ? null : panel);
+    }
+  }, [selectedSession]);
+
+  useEffect(() => {
     if (!dockExpanded) return;
     setActiveTopPanel(null);
   }, [dockExpanded]);
 
   const toggleTopPanel = useCallback((
-    panel: "agents" | "branches" | "session" | "debug",
+    panel: "agents" | "branches" | "context" | "session" | "debug",
     keepMobileToolbarOpen = false,
   ) => {
     if (isMobile) setSidebarOpen(false);
@@ -773,6 +781,14 @@ export function AppShell() {
           top: topBarRect.bottom,
           left: topBarRect.left,
           width: Math.min(AGENT_PANEL_WIDTH, topBarRect.width),
+        });
+        return;
+      }
+      if (activeTopPanel === "context") {
+        setTopPanelPos({
+          top: topBarRect.bottom,
+          left: topBarRect.left,
+          width: Math.min(CONTEXT_PANEL_WIDTH, topBarRect.width),
         });
         return;
       }
@@ -2105,6 +2121,34 @@ export function AppShell() {
             </button>
           );
         })()}
+        {selectedSession && (
+          <button
+            type="button"
+            className="main-toolbar-action"
+            onClick={() => toggleTopPanel("context", true)}
+            title={translate("context.title")}
+            aria-label={translate("context.title")}
+            aria-pressed={activeTopPanel === "context"}
+            style={{
+              display: "flex", alignItems: "center", justifyContent: "center", gap: 6,
+              width: mobile ? TOP_BAR_ICON_BUTTON_SIZE : undefined,
+              height: "100%", padding: mobile ? 0 : "0 12px",
+              background: activeTopPanel === "context" ? "var(--bg-selected)" : "none",
+              border: "none",
+              borderTop: activeTopPanel === "context" ? "2px solid var(--accent)" : "2px solid transparent",
+              color: activeTopPanel === "context" ? "var(--text)" : "var(--text-muted)",
+              cursor: "pointer", flexShrink: 0, fontSize: 11, whiteSpace: "nowrap",
+              transition: "color 0.1s, background 0.1s",
+            }}
+            data-mobile-toolbar-action="context"
+          >
+            <svg width={mobile ? 16 : 13} height={mobile ? 16 : 13} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" style={{ color: activeTopPanel === "context" ? "var(--accent)" : "var(--text-dim)" }} aria-hidden="true">
+              <path d="M4 6h16M4 12h16M4 18h10" />
+              <circle cx="19" cy="18" r="1.4" fill="currentColor" stroke="none" />
+            </svg>
+            {!mobile && <span>{translate("session.context")}</span>}
+          </button>
+        )}
         {!(mobile && isNarrowMobile) && renderAgentsButton(mobile)}
         {sessionHasBranches && (mobile ? (
           <button
@@ -2779,6 +2823,15 @@ export function AppShell() {
                   onToggleSubagentTab={handleToggleSubagentTab}
                 />
               )}
+              {activeTopPanel === "context" && selectedSession && (
+                <SessionContextPanel
+                  sessionId={selectedSession.id}
+                  prompt={systemPrompt}
+                  tools={systemTools}
+                  loading={systemInfoLoading}
+                  onLoad={loadSystemInfo}
+                />
+              )}
               {activeTopPanel === "session" && (
                 <div className="session-info-popover" style={{
                   background: "var(--bg-panel)",
@@ -3243,10 +3296,6 @@ export function AppShell() {
         projectTrust={projectTrust}
         onOpenTrustDialog={openProjectTrustDialog}
         onProjectTrustChanged={handleProjectTrustChanged}
-        systemPrompt={systemPrompt}
-        systemTools={systemTools}
-        systemInfoLoading={systemInfoLoading}
-        onLoadSystemInfo={loadSystemInfo}
       />
     )}
     {/* After Settings, so it opens above it (z-index 1100 over 1000) when Settings › MCP asks for it. */}

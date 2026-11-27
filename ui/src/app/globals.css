@@ -3221,6 +3221,69 @@ span.token.table {
 /* A tight toolbar (an open dock leaves the chat narrow) collapses the action
    labels before the groups can reach the centre switch. The measure is the chat
    column's own width (AppShell's tabSlot), not the viewport's. */
+.session-context-tabs {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.session-context-tab,
+.session-context-refresh {
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  font-size: 11px;
+  line-height: 1.4;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.session-context-tab:hover,
+.session-context-refresh:hover:not(:disabled) {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.session-context-tab[aria-selected="true"] {
+  background: var(--bg-selected);
+  color: var(--text);
+  font-weight: 600;
+}
+
+.session-context-refresh {
+  flex-shrink: 0;
+  margin-left: auto;
+}
+
+.session-context-refresh:disabled {
+  color: var(--text-dim);
+  cursor: default;
+}
+
+.session-context-hint {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-dim);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-context-tab:focus-visible,
+.session-context-refresh:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+@media (max-width: 640px) {
+  .session-context-hint {
+    display: none;
+  }
+}
+
 [data-toolbar-tight="true"] .main-toolbar-action > span {
   display: none;
 }

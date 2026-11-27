@@ -4,7 +4,7 @@ import test from "node:test";
 
 const cssSource = await readFile(new URL("../app/settings.css", import.meta.url), "utf8");
 const panelSource = await readFile(new URL("./SettingsPanel.tsx", import.meta.url), "utf8");
-const contextSource = await readFile(new URL("./SessionContextSettings.tsx", import.meta.url), "utf8");
+const appShellSource = await readFile(new URL("./AppShell.tsx", import.meta.url), "utf8");
 const terminalSource = await readFile(new URL("./TerminalSettings.tsx", import.meta.url), "utf8");
 const loginSource = await readFile(new URL("../app/login/page.tsx", import.meta.url), "utf8");
 
@@ -17,20 +17,15 @@ test("the login page returns only to a destination safeLoginDestination() accept
   assert.match(loginSource, /safeLoginDestination\(destination, window\.location\.origin\)/);
 });
 
-test("Session context lives in Settings, not on the toolbar", () => {
-  // Listed between the other sections and hosted by the panel.
-  assert.match(panelSource, /\{ id: "context", label: t\("settings\.context"\) \}/);
-  assert.match(panelSource, /sectionHost\("context", \(/);
-  assert.match(panelSource, /<SessionContextSettings/);
-  // It is a split view like the other sections: a sidebar picks which half of
-  // what the two retired panels showed, and the detail renders it read-only.
-  assert.match(contextSource, /<ConfigSplitView>/);
-  assert.match(contextSource, /<ConfigSidebar>/);
-  assert.match(contextSource, /<ConfigSidebarItem/);
-  assert.match(contextSource, /<ConfigDetail>/);
-  assert.match(contextSource, /<SystemPromptPanel embedded/);
-  assert.match(contextSource, /<ToolDefinitionsPanel embedded/);
-  assert.match(contextSource, /onClick=\{onLoad\}/);
+test("Session context is a per-session toolbar panel, not a Settings section", () => {
+  // Settings no longer lists or hosts it.
+  assert.doesNotMatch(panelSource, /settings\.context/);
+  assert.doesNotMatch(panelSource, /SessionContextSettings/);
+  assert.doesNotMatch(panelSource, /sectionHost\("context"/);
+  // The chat's toolbar button opens it for the selected session only.
+  assert.match(appShellSource, /<SessionContextPanel/);
+  assert.match(appShellSource, /activeTopPanel === "context" && selectedSession/);
+  assert.match(appShellSource, /data-mobile-toolbar-action="context"/);
   // The sections that need a project say so once, in settings-navigation.
   assert.doesNotMatch(panelSource, /requiresProject: true/);
 });

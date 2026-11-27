@@ -56,8 +56,6 @@ import {
   type ConfigDetailNavigation,
 } from "./SettingsUi";
 import { FontSettings } from "./FontSettings";
-import { SessionContextSettings } from "./SessionContextSettings";
-import type { ToolEntry } from "@/lib/tool-presets";
 
 interface Props {
   cwd: string | null;
@@ -75,11 +73,6 @@ interface Props {
   onOpenTrustDialog?: () => void;
   /** Settings › MCP added a project server, which changed `cwd`'s trust (and may have trusted a fresh folder). */
   onProjectTrustChanged?: (cwd: string, status: ProjectTrustStatus) => void;
-  /** Settings › Session context: the selected session's prompt and tools, as the chat holds them. */
-  systemPrompt?: string | null;
-  systemTools?: ToolEntry[] | null;
-  systemInfoLoading?: boolean;
-  onLoadSystemInfo?: () => void;
 }
 
 export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: { section: SettingsSection; size?: number; strokeWidth?: number }) {
@@ -101,7 +94,6 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   if (section === "skills") return <svg {...common}><path d="m12 2-10 5 10 5 10-5-10-5Z" /><path d="m2 12 10 5 10-5M2 17l10 5 10-5" /></svg>;
   if (section === "agents") return <svg {...common} className="settings-section-icon is-agent"><rect x="5" y="7" width="14" height="11" rx="2" /><path d="M9 11h.01M15 11h.01M9 15h6M12 7V4M10 4h4" /></svg>;
   if (section === "mcp") return <svg {...common}><rect x="3" y="3" width="18" height="7" rx="2" /><rect x="3" y="14" width="18" height="7" rx="2" /><path d="M7 6.5h.01M7 17.5h.01M11 6.5h6M11 17.5h6" /></svg>;
-  if (section === "context") return <svg {...common}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><polyline points="14 2 14 8 20 8" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="13" y2="17" /></svg>;
   return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
 }
 
@@ -727,10 +719,6 @@ export function SettingsPanel({
   projectTrust,
   onOpenTrustDialog,
   onProjectTrustChanged,
-  systemPrompt = null,
-  systemTools = null,
-  systemInfoLoading = false,
-  onLoadSystemInfo,
 }: Props) {
   const { t } = useI18n();
   const [section, setSection] = useState<SettingsSection>(initialSection);
@@ -745,7 +733,6 @@ export function SettingsPanel({
     { id: "agents", label: t("common.agents") },
     { id: "plugins", label: t("common.plugins") },
     { id: "mcp", label: t("settings.mcp") },
-    { id: "context", label: t("settings.context") },
   ] as const).map((item) => ({ ...item, requiresProject: settingsSectionRequiresProject(item.id) }));
   const sectionRequiresProject = settingsSectionRequiresProject(section);
   const isPhone = useIsMobile();
@@ -923,15 +910,6 @@ export function SettingsPanel({
           {cwd && sectionHost("plugins", <PluginsConfig embedded key={cwd} cwd={cwd} sessionId={sessionId} trust={projectTrust} onClose={onClose} onReloaded={onSessionReloaded} />)}
           {/* No project needed: the global mcp.json is listed alone, and a project adds its group. */}
           {sectionHost("mcp", <McpConfig embedded key={cwd ?? ""} cwd={cwd} trust={projectTrust} onTrustProject={onOpenTrustDialog} onProjectTrustChanged={onProjectTrustChanged} onClose={onClose} />)}
-          {sectionHost("context", (
-            <SessionContextSettings
-              sessionId={sessionId}
-              prompt={systemPrompt ?? null}
-              tools={systemTools ?? null}
-              loading={Boolean(systemInfoLoading)}
-              onLoad={() => onLoadSystemInfo?.()}
-            />
-          ))}
           </ConfigDetailNavigationContext.Provider>
         </main>
       </div>

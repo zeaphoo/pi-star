@@ -46,12 +46,15 @@ test("the right dock is project-scoped, independent of the main view", () => {
   assert.match(source, /<RightDock[\s\S]{0,400}state=\{dockState\}/);
   assert.doesNotMatch(source, /onChange=\{updateCodeWorkspace\}[\s\S]{0,80}<RightDock/);
 });
-test("the toolbar no longer opens its own system and tools panels", () => {
+test("the selected session's toolbar opens its context panel, not Settings", () => {
   assert.doesNotMatch(source, /handleSystemInfoToggle/);
-  assert.doesNotMatch(source, /translate\("system\.label"\)|translate\("tools\.label"\)/);
   assert.doesNotMatch(source, /activeTopPanel === "system"|activeTopPanel === "tools"/);
-  // Settings owns that view now, and the chat still provides the data.
-  assert.match(source, /systemPrompt=\{systemPrompt\}/);
-  assert.match(source, /onLoadSystemInfo=\{loadSystemInfo\}/);
+  // One context button in the chat's action group, for a selected session.
+  assert.match(source, /selectedSession && \(/);
+  assert.match(source, /data-mobile-toolbar-action="context"/);
+  assert.match(source, /activeTopPanel === "context" && selectedSession/);
+  assert.match(source, /<SessionContextPanel/);
+  assert.match(source, /onLoad=\{loadSystemInfo\}/);
+  // The chat still provides the prompt, tools and loader behind the panel.
   assert.match(source, /onSystemInfoLoaderChange=\{handleSystemInfoLoaderChange\}/);
 });
