@@ -284,10 +284,56 @@ pub struct ProjectTrustStatus {
     pub decision_error: Option<String>,
 }
 
+/// Project-local resources the SDK gates behind trust.
+const TRUST_REQUIRING_PROJECT_ENTRIES: [&str; 8] = [
+    "settings.json",
+    "mcp.json",
+    "extensions",
+    "skills",
+    "prompts",
+    "themes",
+    "SYSTEM.md",
+    "APPEND_SYSTEM.md",
+];
+
+/// Whether `cwd` has project-local resources the SDK gates behind trust:
+/// trust-requiring entries under its `.pi`, or `.agents/skills` in the folder
+/// or an ancestor. The user's own `~/.agents/skills` is global and never counts.
+pub fn has_trust_requiring_project_resources(cwd: &Path) -> bool {
+    let config_dir = cwd.join(".pi");
+    if TRUST_REQUIRING_PROJECT_ENTRIES
+        .iter()
+        .any(|entry| config_dir.join(entry).exists())
+    {
+        return true;
+    }
+    let user_skills = crate::config::home_dir().map(|home| {
+        crate::project::canonical(&home)
+            .join(".agents")
+            .join("skills")
+    });
+    let mut current = crate::project::canonical(cwd);
+    loop {
+        let skills = current.join(".agents").join("skills");
+        if user_skills
+            .as_ref()
+            .is_none_or(|user_skills| !crate::project::same_path(user_skills, &skills))
+            && skills.exists()
+        {
+            return true;
+        }
+        let Some(parent) = current.parent() else {
+            return false;
+        };
+        if parent == current {
+            return false;
+        }
+        current = parent.to_path_buf();
+    }
+}
+
 pub fn project_trust(config: &Config, cwd: &Path) -> ProjectTrustStatus {
-    let requires_trust = cwd.join(".pi").join("mcp.json").is_file()
-        || cwd.join(".pi").join("extensions").is_dir()
-        || cwd.join(".pi").join("settings.json").is_file();
+    let requires_trust = has_trust_requiring_project_resources(cwd);
     let trust = read_json(&config.agent_dir.join("trust.json")).unwrap_or_else(|| json!({}));
     let canonical = crate::project::canonical(cwd);
     let mut candidate = canonical.as_path();
@@ -380,4 +426,55 @@ pub fn read_text(path: &Path) -> Result<String> {
 
 pub fn home_dir() -> Option<PathBuf> {
     crate::config::home_dir()
+}
+
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+
+    #[test]
+    fn every_pi_resource_requires_trust() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("project");
+        fs::create_dir_all(&cwd).unwrap();
+        assert!(!has_trust_requiring_project_resources(&cwd));
+
+        for entry in TRUST_REQUIRING_PROJECT_ENTRIES {
+            let path = cwd.join(".pi").join(entry);
+            if entry.contains('.') {
+                fs::create_dir_all(path.parent().unwrap()).unwrap();
+                fs::write(&path, "").unwrap();
+            } else {
+                fs::create_dir_all(&path).unwrap();
+            }
+            assert!(
+                has_trust_requiring_project_resources(&cwd),
+                "{entry} must require trust"
+            );
+            if path.is_dir() {
+                fs::remove_dir_all(&path).unwrap();
+            } else {
+                fs::remove_file(&path).unwrap();
+            }
+            assert!(!has_trust_requiring_project_resources(&cwd));
+        }
+    }
+
+    #[test]
+    fn agents_skills_in_the_folder_or_an_ancestor_requires_trust() {
+        let temp = tempfile::tempdir().unwrap();
+        let cwd = temp.path().join("repo").join("nested");
+        fs::create_dir_all(&cwd).unwrap();
+        assert!(!has_trust_requiring_project_resources(&cwd));
+
+        let project_skills = temp.path().join("repo").join(".agents").join("skills");
+        fs::create_dir_all(&project_skills).unwrap();
+        assert!(has_trust_requiring_project_resources(&cwd));
+        fs::remove_dir_all(&project_skills).unwrap();
+        assert!(!has_trust_requiring_project_resources(&cwd));
+
+        let own_skills = cwd.join(".agents").join("skills");
+        fs::create_dir_all(&own_skills).unwrap();
+        assert!(has_trust_requiring_project_resources(&cwd));
+    }
 }

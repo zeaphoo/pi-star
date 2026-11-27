@@ -652,6 +652,8 @@ mod subagent_prompt_tests {
             "---\nname: review\ndescription: Review code\n---\n\nReview body here.\n",
         )
         .unwrap();
+        // .pi/skills now requires trust, as it does in pi and pi-web.
+        crate::settings::set_project_trust(&config, &cwd, true).unwrap();
         let prompt = build_system_prompt_with(
             &config,
             &cwd,

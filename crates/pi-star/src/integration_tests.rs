@@ -82,6 +82,15 @@ async fn router_with_password(fixture: &Fixture, password: Option<&str>) -> axum
     crate::app::router(state)
 }
 
+fn trust_fixture_project(fixture: &Fixture) {
+    let config = pi_star_core::Config::new(
+        Some(fixture.agent_dir.clone()),
+        Some(fixture.ui_dir.clone()),
+    )
+    .unwrap();
+    pi_star_core::settings::set_project_trust(&config, &fixture.cwd, true).unwrap();
+}
+
 async fn call(app: axum::Router, request: Request<Body>) -> (StatusCode, Value) {
     let response = app.oneshot(request).await.unwrap();
     let status = response.status();
@@ -1258,6 +1267,7 @@ async fn skills_install_and_update_from_a_git_source() {
     git(&["add", "."]);
     git(&["commit", "-qm", "skill"]);
     let package = format!("file://{}@demo", repo.to_string_lossy());
+    trust_fixture_project(&fixture);
     let app = router(&fixture).await;
 
     let (status, body) = call(
@@ -1452,6 +1462,7 @@ async fn skills_discover_settings_package_and_auto_sources() {
     )
     .unwrap();
 
+    trust_fixture_project(&fixture);
     let app = router(&fixture).await;
     let (status, body) = call(
         app,
@@ -2070,6 +2081,7 @@ async fn agent_bash_output_requires_a_referenced_temp_file() {
 #[tokio::test]
 async fn skills_check_reports_an_unsupported_lock_entry() {
     let fixture = write_fixture();
+    trust_fixture_project(&fixture);
     let app = router(&fixture).await;
     let skill_dir = fixture.cwd.join(".pi").join("skills").join("check");
     std::fs::create_dir_all(&skill_dir).unwrap();
