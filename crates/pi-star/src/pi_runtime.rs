@@ -101,6 +101,29 @@ fn node_name() -> &'static str {
     if cfg!(windows) { "node.exe" } else { "node" }
 }
 
+/// The repository's own `agent-extension/`, used by debug builds.
+///
+/// A debug binary resolves the staged `app/pi-runtime`, whose copied extension
+/// goes stale as soon as the source changes. Editing the extension then had no
+/// effect until someone re-ran `scripts/prepare-pi-runtime.mjs`. Packaged builds
+/// have no source tree, so they keep the bundled copy.
+#[cfg(debug_assertions)]
+fn source_extension() -> Option<PathBuf> {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+        .join("agent-extension");
+    ["index.js", "index.ts"]
+        .iter()
+        .map(|name| root.join(name))
+        .find(|path| path.is_file())
+}
+
+#[cfg(not(debug_assertions))]
+fn source_extension() -> Option<PathBuf> {
+    None
+}
+
 /// Populate the environment consumed by `pi_rpc`, the prompt builder and the
 /// export path. An explicit `PI_STAR_PI_CLI` wins and disables auto-detection.
 pub fn apply_env() {
@@ -114,7 +137,8 @@ pub fn apply_env() {
     set_if_absent("PI_STAR_PI_NODE", &runtime.node);
     set_if_absent("PI_STAR_PI_JS", &runtime.cli_js);
     set_if_absent("PI_PACKAGE_DIR", &runtime.package_dir);
-    if let Some(extension) = &runtime.extension {
+    let extension = source_extension().or_else(|| runtime.extension.clone());
+    if let Some(extension) = &extension {
         set_if_absent("PI_STAR_AGENT_EXTENSION", extension);
     }
     if let Some(git) = &runtime.git {
