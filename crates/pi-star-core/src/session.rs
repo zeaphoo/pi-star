@@ -507,6 +507,34 @@ pub fn entry_id(entry: &Value) -> Option<String> {
     entry.get("id").and_then(Value::as_str).map(str::to_owned)
 }
 
+/// One entry of a session file by id, without parsing the rest of it.
+///
+/// A session can be tens of megabytes and a deferred thinking block or tool
+/// image re-reads one entry of it; `read_session` there would parse every line
+/// and block the caller for the whole file. Lines whose text does not even
+/// contain the id are skipped before parsing, and a line that fails to parse
+/// is not this entry.
+pub fn read_entry(path: &Path, wanted: &str) -> Result<Option<Value>> {
+    let file = fs::File::open(path).with_context(|| format!("open {}", path.display()))?;
+    let reader = BufReader::new(file);
+    for line in reader.lines() {
+        let line = line?;
+        if line.trim().is_empty() || !line.contains(wanted) {
+            continue;
+        }
+        let Ok(value) = serde_json::from_str::<Value>(&line) else {
+            continue;
+        };
+        if value.get("type").and_then(Value::as_str) == Some("session") {
+            continue;
+        }
+        if entry_id(&value).as_deref() == Some(wanted) {
+            return Ok(Some(value));
+        }
+    }
+    Ok(None)
+}
+
 pub fn entry_parent_id(entry: &Value) -> Option<String> {
     match entry.get("parentId") {
         Some(Value::String(id)) => Some(id.clone()),
@@ -1199,6 +1227,36 @@ pub fn short_id() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reads_one_entry_without_parsing_the_whole_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("s.jsonl");
+        let header = json!({
+            "type": "session",
+            "id": "s1",
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "cwd": "/tmp/repo"
+        });
+        let big = "x".repeat(200_000);
+        let lines = vec![
+            header.to_string(),
+            json!({"type":"message","id":"e1","message":{"role":"user","content":"hi"}})
+                .to_string(),
+            // A line that only mentions another entry's id must not match it.
+            json!({"type":"message","id":"e2","message":{"role":"user","content":"e3"}})
+                .to_string(),
+            json!({"type":"message","id":"e3","message":{"role":"assistant","content":big}})
+                .to_string(),
+        ];
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+
+        let entry = read_entry(&path, "e3").unwrap().expect("entry");
+        assert_eq!(entry_id(&entry).as_deref(), Some("e3"));
+        assert!(read_entry(&path, "nope").unwrap().is_none());
+        // The session header is not an entry.
+        assert!(read_entry(&path, "s1").unwrap().is_none());
+    }
 
     #[test]
     fn encodes_cwd_like_pi() {

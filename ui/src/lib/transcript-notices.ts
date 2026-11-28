@@ -1,7 +1,8 @@
-// Client-safe: the transcript notices pi's TUI shows under `showCacheMissNotices`
-// (#1265). The server derives them from the session entries
-// (lib/transcript-notices-server.ts) and hangs them on the chat message they
-// follow; the chat renders them as one line each.
+// Client-safe: the transcript notices pi's TUI shows under its `notices.*`
+// settings (#1265; one `showCacheMissNotices` before pi 1.6.1). The server
+// derives them from the session entries (crates/pi-star-core/src/
+// transcript_notices.rs) and hangs them on the chat message they follow; the
+// chat renders them as one line each.
 
 export type TranscriptNotice =
   /** An assistant response re-billed prompt tokens a cache should have served. */
@@ -10,8 +11,28 @@ export type TranscriptNotice =
   | { kind: "cache_warm"; cost: number; note?: string }
   /** What a compaction or branch summary billed. */
   | { kind: "summary_cost"; source: "compaction" | "branch_summary"; tokens: number; cost: number }
-  /** Anthropic dropped thinking blocks from the request (pi's `thinking_dropped` input transformation). */
-  | { kind: "thinking_dropped"; count: number };
+  /**
+   * A provider dropped reasoning from the request: Anthropic thinking blocks
+   * (`thinking_dropped`) or OpenAI reasoning items (`reasoning`), with the
+   * reasons it gave.
+   */
+  | { kind: "reasoning_dropped"; provider: "anthropic" | "openai"; count: number; reasons?: string[] };
+
+/** pi's `notices` settings (1.6.1), one per kind of notice, in its /settings order. */
+export const NOTICE_SETTING_KEYS = ["cacheMisses", "cacheWarming", "compactionCosts", "reasoningDrops"] as const;
+
+export type NoticeSettingKey = typeof NOTICE_SETTING_KEYS[number];
+
+/** Which notices to show, every key filled in. */
+export type NoticeSettings = Record<NoticeSettingKey, boolean>;
+
+/** pi's `SETTINGS_DEFAULTS.notices`: all off. */
+export const DEFAULT_NOTICE_SETTINGS: Readonly<NoticeSettings> = {
+  cacheMisses: false,
+  cacheWarming: false,
+  compactionCosts: false,
+  reasoningDrops: false,
+};
 
 /** The property a chat message carries its notices in; never part of pi's message. */
 export const TRANSCRIPT_NOTICES_KEY = "transcriptNotices";

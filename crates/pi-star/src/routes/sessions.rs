@@ -15,6 +15,8 @@ use pi_star_core::session::{
     create_session_file, entry_id, entry_type, read_session, slice_active_branch, total_active_ms,
 };
 use pi_star_core::session_search;
+use pi_star_core::settings;
+use pi_star_core::transcript_notices;
 
 use pi_star_core::agent::backend::BackendKind;
 
@@ -116,6 +118,7 @@ pub async fn get_session(
     let before = query.before.clone();
     let defer_thinking = query.defer_thinking.clone();
     let defer_media = query.defer_media.clone();
+    let notices_config = state.config.clone();
     let prepared = match blocking(move || -> Result<_, String> {
         let session = read_session(&read_path).map_err(|error| error.to_string())?;
         // The v3 file is the source of truth, live wrapper or not: the harness
@@ -129,7 +132,7 @@ pub async fn get_session(
         let tail = tail_query
             .unwrap_or(session::DEFAULT_TAIL)
             .clamp(1, session::MAX_TAIL);
-        let context = build_context(
+        let mut context = build_context(
             &build_id,
             &entries,
             leaf_id.as_deref(),
@@ -137,6 +140,13 @@ pub async fn get_session(
             before.as_deref(),
             defer_thinking.as_deref().is_some_and(|value| value != "0"),
             defer_media.as_deref().is_some_and(|value| value != "0"),
+        );
+        attach_transcript_notices(
+            &mut context,
+            &entries,
+            leaf_id.as_deref(),
+            &notices_config,
+            &session.header.cwd,
         );
         let tree = build_tree(&entries);
         let stats = compute_stats(&entries);
@@ -708,12 +718,13 @@ pub async fn context(
     let before = query.before.clone();
     let defer_thinking = query.defer_thinking.clone();
     let defer_media = query.defer_media.clone();
+    let notices_config = state.config.clone();
     let prepared = match blocking(move || -> Result<_, String> {
         let session = read_session(&read_path).map_err(|error| error.to_string())?;
         let tail = tail_query
             .unwrap_or(session::DEFAULT_TAIL)
             .clamp(1, session::MAX_TAIL);
-        let context = build_context(
+        let mut context = build_context(
             &build_id,
             &session.entries,
             leaf_id.as_deref(),
@@ -721,6 +732,16 @@ pub async fn context(
             before.as_deref(),
             defer_thinking.as_deref().is_some_and(|value| value != "0"),
             defer_media.as_deref().is_some_and(|value| value != "0"),
+        );
+        let leaf = leaf_id
+            .clone()
+            .or_else(|| session.entries.last().and_then(entry_id));
+        attach_transcript_notices(
+            &mut context,
+            &session.entries,
+            leaf.as_deref(),
+            &notices_config,
+            &session.header.cwd,
         );
         Ok((context, tail))
     })
@@ -738,6 +759,25 @@ pub async fn context(
         "tail": tail,
         "before": query.before,
     }))
+}
+
+/// pi's transcript notices ride on the message they follow. A project's
+/// `.pi/settings.json` overrides the global `notices.*` switches per kind, and
+/// the branch walked is the one being read (`leaf`), so a branch's notices are
+/// the ones its own messages carry.
+fn attach_transcript_notices(
+    context: &mut session::SessionContext,
+    entries: &[Value],
+    leaf: Option<&str>,
+    config: &pi_star_core::Config,
+    cwd: &str,
+) {
+    let notices = settings::effective_notices(config, Path::new(cwd));
+    if !notices.any() {
+        return;
+    }
+    let collected = transcript_notices::collect(entries, leaf, notices);
+    transcript_notices::attach(context, &collected);
 }
 
 // ---------------------------------------------------------------------------
@@ -837,14 +877,11 @@ pub async fn entry(
         return not_found("Session not found");
     };
     let read_path = path.clone();
-    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
+    let wanted = entry_id.clone();
+    let Ok(Ok(entry)) = blocking(move || session::read_entry(&read_path, &wanted)).await else {
         return not_found("Session not found");
     };
-    match session
-        .entries
-        .iter()
-        .find(|entry| session::entry_id(entry).as_deref() == Some(entry_id.as_str()))
-    {
+    match entry {
         Some(entry) => no_store(json!({ "entry": entry })),
         None => not_found("Entry not found"),
     }
@@ -1128,17 +1165,14 @@ pub async fn thinking(
         return not_found("Session not found");
     };
     let read_path = path.clone();
-    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
+    let wanted = entry_id.clone();
+    let Ok(Ok(entry)) = blocking(move || session::read_entry(&read_path, &wanted)).await else {
         return not_found("Session not found");
     };
-    let Some(entry) = session
-        .entries
-        .iter()
-        .find(|entry| session::entry_id(entry).as_deref() == Some(entry_id.as_str()))
-    else {
+    let Some(entry) = entry else {
         return not_found("Assistant message not found");
     };
-    if entry_type(entry) != Some("message")
+    if entry_type(&entry) != Some("message")
         || entry.pointer("/message/role").and_then(Value::as_str) != Some("assistant")
     {
         return not_found("Assistant message not found");
@@ -1166,17 +1200,14 @@ pub async fn tool_result_image(
         return not_found("Session not found");
     };
     let read_path = path.clone();
-    let Ok(Ok(session)) = blocking(move || read_session(&read_path)).await else {
+    let wanted = entry_id.clone();
+    let Ok(Ok(entry)) = blocking(move || session::read_entry(&read_path, &wanted)).await else {
         return not_found("Session not found");
     };
-    let Some(entry) = session
-        .entries
-        .iter()
-        .find(|entry| session::entry_id(entry).as_deref() == Some(entry_id.as_str()))
-    else {
+    let Some(entry) = entry else {
         return not_found("Tool result not found");
     };
-    if entry_type(entry) != Some("message")
+    if entry_type(&entry) != Some("message")
         || entry.pointer("/message/role").and_then(Value::as_str) != Some("toolResult")
     {
         return not_found("Tool result not found");

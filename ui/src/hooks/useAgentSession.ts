@@ -2034,7 +2034,7 @@ export function useAgentSession(opts: UseAgentSessionOptions) {
               return next;
             });
           }
-          // pi's showCacheMissNotices (#1265): the wrapper sends them beside the message.
+          // pi's notices.* (#1265): the stream adds them beside the message.
           const notices = Array.isArray(event.transcriptNotices) ? event.transcriptNotices as TranscriptNotice[] : undefined;
           setMessages((prev) => [...prev, withTranscriptNotices(normalizeToolCalls(completed), notices)]);
           if (completed.role === "assistant") {

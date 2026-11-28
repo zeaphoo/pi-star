@@ -149,6 +149,19 @@ async fn health_and_static_spa() {
     let body = response.into_body().collect().await.unwrap().to_bytes();
     assert!(body.is_empty());
 
+    // A page names its framing policy; an asset does not (it is not a page).
+    let page = app
+        .clone()
+        .oneshot(Request::builder().uri("/").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        page.headers().get("content-security-policy").unwrap(),
+        "frame-ancestors 'self'"
+    );
+    assert_eq!(page.headers().get("x-frame-options").unwrap(), "SAMEORIGIN");
+    page.into_body().collect().await.unwrap();
+
     let (status, text) = call_text(
         app.clone(),
         Request::builder()
@@ -160,6 +173,19 @@ async fn health_and_static_spa() {
     assert_eq!(status, StatusCode::OK);
     assert!(text.contains("fixture"));
 
+    let asset = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .uri("/assets/app.js")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(asset.headers().get("content-security-policy").is_none());
+    asset.into_body().collect().await.unwrap();
+
     let (status, body) = call(
         app,
         Request::builder()
@@ -170,6 +196,132 @@ async fn health_and_static_spa() {
     .await;
     assert_eq!(status, StatusCode::NOT_FOUND);
     assert_eq!(body["error"], "Not found");
+}
+
+#[tokio::test]
+async fn transcript_notices_follow_the_switch_and_the_project_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let agent_dir = temp.path().join("agent");
+    let ui_dir = temp.path().join("ui");
+    let cwd = temp.path().join("project");
+    std::fs::create_dir_all(&ui_dir).unwrap();
+    std::fs::create_dir_all(&cwd).unwrap();
+    std::fs::write(ui_dir.join("index.html"), "<!doctype html>").unwrap();
+    let encoded = pi_star_core::config::encode_cwd(&cwd);
+    let dir = agent_dir.join("sessions").join(encoded);
+    std::fs::create_dir_all(&dir).unwrap();
+    let id = "11111111-2222-3333-4444-555555555555";
+    let message = |id: &str, parent: Option<&str>, input: f64, cache_read: f64, total: f64| {
+        serde_json::json!({
+            "type": "message",
+            "id": id,
+            "parentId": parent,
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "message": {
+                "role": "assistant",
+                "provider": "test",
+                "model": "test",
+                "content": [{"type": "text", "text": "ok"}],
+                "timestamp": 1_700_000_000_000i64,
+                "usage": {
+                    "input": input,
+                    "output": 1,
+                    "cacheRead": cache_read,
+                    "cacheWrite": 0,
+                    "cost": {"input": total, "output": 0, "cacheRead": 0, "cacheWrite": 0, "total": total}
+                }
+            }
+        })
+    };
+    let lines = [
+        serde_json::json!({
+            "type": "session",
+            "version": 3,
+            "id": id,
+            "timestamp": "2026-01-01T00:00:00.000Z",
+            "cwd": cwd.to_string_lossy()
+        }),
+        message("a1", None, 9_500.0, 500.0, 0.0),
+        message("a2", Some("a1"), 30_000.0, 0.0, 0.5),
+    ];
+    let text = lines
+        .iter()
+        .map(|line| line.to_string())
+        .collect::<Vec<_>>()
+        .join("\n");
+    std::fs::write(dir.join(format!("2026-01-01T00-00-00.000Z_{id}.jsonl")), text).unwrap();
+    let fixture = Fixture {
+        _temp: temp,
+        agent_dir: agent_dir.clone(),
+        ui_dir,
+        session_id: id.to_string(),
+        cwd: cwd.clone(),
+    };
+    let app = router(&fixture).await;
+
+    // Off by default: no notices on the messages.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let notices_of = |body: &Value| -> Vec<Value> {
+        body["context"]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|message| {
+                message["transcriptNotices"]
+                    .as_array()
+                    .cloned()
+                    .unwrap_or_default()
+            })
+            .collect()
+    };
+    assert!(notices_of(&body).is_empty());
+
+    // Switched on globally.
+    pi_star_core::settings::write_json_atomic(
+        &agent_dir.join("settings.json"),
+        &serde_json::json!({"notices": {"cacheMisses": true}}),
+        0o600,
+    )
+    .unwrap();
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri(format!("/api/sessions/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let notices = notices_of(&body);
+    assert_eq!(notices.len(), 1);
+    assert_eq!(notices[0]["kind"], "cache_miss");
+
+    // A project file turns it off again for this folder.
+    let project = cwd.join(".pi");
+    std::fs::create_dir_all(&project).unwrap();
+    std::fs::write(
+        project.join("settings.json"),
+        serde_json::json!({"notices": {"cacheMisses": false}}).to_string(),
+    )
+    .unwrap();
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri(format!("/api/sessions/{id}"))
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert!(notices_of(&body).is_empty());
 }
 
 #[tokio::test]
@@ -2194,16 +2346,56 @@ async fn models_refresh_and_tools_settings_keep_their_contract() {
         app.clone(),
         Request::builder()
             .method("PUT")
-            .uri("/api/cache-miss-notices")
+            .uri("/api/notices")
             .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from(
-                json!({"showCacheMissNotices": true}).to_string(),
+                json!({"cacheMisses": true, "reasoningDrops": true}).to_string(),
             ))
             .unwrap(),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(body["showCacheMissNotices"], true);
+    assert_eq!(body["cacheMisses"], true);
+    assert_eq!(body["reasoningDrops"], true);
+    assert_eq!(body["cacheWarming"], false);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .uri("/api/notices")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["cacheMisses"], true);
+    assert_eq!(body["compactionCosts"], false);
+
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/queue-modes")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"steeringMode": "all"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body["steeringMode"], "all");
+    assert_eq!(body["followUpMode"], "one-at-a-time");
+
+    let (status, _) = call(
+        app.clone(),
+        Request::builder()
+            .method("PUT")
+            .uri("/api/queue-modes")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(json!({"steeringMode": "sometimes"}).to_string()))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
 
     let (status, body) = call(
         app.clone(),

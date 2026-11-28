@@ -124,6 +124,24 @@ impl WebAssets {
     }
 }
 
+/// A page answer's framing policy: only Pi Star's own origin may put one of its
+/// pages in a frame. The app drives an agent that runs commands, and with no
+/// password set it needs no cookie, so a site that frames it would get a
+/// working UI it can lay its own content over and steer clicks and drops into.
+/// `frame-ancestors` is enforced by modern browsers; `X-Frame-Options` covers
+/// the ones that predate it. API answers carry no policy: a cross-site frame
+/// of `/api/*` cannot read the response anyway, and the auth middleware
+/// already refuses a foreign Host or Origin.
+const PAGE_FRAMING_HEADERS: [(&str, &str); 2] = [
+    ("content-security-policy", "frame-ancestors 'self'"),
+    ("x-frame-options", "SAMEORIGIN"),
+];
+
+/// Whether a served path is a page (an HTML document) rather than an asset.
+fn is_page(path: &str) -> bool {
+    path.ends_with(".html")
+}
+
 /// 静态资源 fallback handler。`get()` 同时响应 HEAD，Axum 会自动去掉响应体。
 pub async fn serve(State(state): State<Arc<AppState>>, uri: Uri) -> Response {
     let Some(requested) = request_path(uri.path()) else {
@@ -152,6 +170,11 @@ pub async fn serve(State(state): State<Arc<AppState>>, uri: Uri) -> Response {
         HeaderValue::from_str(&length.to_string())
             .unwrap_or_else(|_| HeaderValue::from_static("0")),
     );
+    if is_page(&served_path) {
+        for (name, value) in PAGE_FRAMING_HEADERS {
+            headers.insert(name, HeaderValue::from_static(value));
+        }
+    }
     response
 }
 
@@ -233,6 +256,22 @@ mod tests {
         assert_eq!(request_path("/assets/../../secret"), None);
         assert_eq!(request_path("/assets\\..\\secret"), None);
         assert_eq!(request_path("/assets//app.js"), None);
+    }
+
+    #[test]
+    fn only_html_documents_get_the_framing_policy() {
+        assert!(is_page("index.html"));
+        assert!(is_page("offline.html"));
+        assert!(!is_page("assets/app.js"));
+        assert!(!is_page("manifest.webmanifest"));
+        let header = |name: &str| {
+            PAGE_FRAMING_HEADERS
+                .iter()
+                .find(|(key, _)| *key == name)
+                .map(|(_, value)| *value)
+        };
+        assert_eq!(header("content-security-policy"), Some("frame-ancestors 'self'"));
+        assert_eq!(header("x-frame-options"), Some("SAMEORIGIN"));
     }
 
     #[test]

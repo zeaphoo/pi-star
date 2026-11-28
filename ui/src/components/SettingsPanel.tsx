@@ -24,7 +24,13 @@ import { TerminalSettings } from "./TerminalSettings";
 import { ICON_THEMES } from "@/lib/icon-themes";
 import { FileIcon, FolderIcon } from "./FileIcons";
 import { sendAgentCommand } from "@/lib/agent-client";
-import type { ProjectTrustStatus, ToolSettingsResponse } from "@/lib/api-types";
+import {
+  DEFAULT_NOTICE_SETTINGS,
+  NOTICE_SETTING_KEYS,
+  type NoticeSettingKey,
+  type NoticeSettings,
+} from "@/lib/transcript-notices";
+import type { ProjectTrustStatus, QueueModesSetting, QueueModeValue, ToolSettingsResponse } from "@/lib/api-types";
 import {
   setLastSettingsSection,
   settingsSectionRequiresProject,
@@ -103,6 +109,9 @@ export function SettingsSectionIcon({ section, size = 16, strokeWidth = 1.8 }: {
   return <svg {...common}><path d="M9 7V2M15 7V2M6 13V8a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5a6 6 0 0 1-12 0ZM12 19v3" /></svg>;
 }
 
+/** pi's `steeringMode` / `followUpMode` values, in its /settings order. */
+const QUEUE_MODE_CHOICES: QueueModeValue[] = ["one-at-a-time", "all"];
+
 function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, onQuoteSelectionChange }: Pick<Props, "sessionId" | "onSessionReloaded" | "quoteSelectionEnabled" | "onQuoteSelectionChange">) {
   const { locale, setLocale, supportedLocales, t } = useI18n();
   const { preference, setThemePreference, isDark } = useTheme();
@@ -118,9 +127,12 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
   const [defaultThinkingLevel, setDefaultThinkingLevel] = useState(DEFAULT_THINKING_LEVEL);
   const [thinkingLevelSaving, setThinkingLevelSaving] = useState(false);
   const [thinkingLevelError, setThinkingLevelError] = useState<string | null>(null);
-  const [cacheMissNotices, setCacheMissNotices] = useState<boolean | null>(null);
-  const [cacheMissNoticesSaving, setCacheMissNoticesSaving] = useState(false);
-  const [cacheMissNoticesError, setCacheMissNoticesError] = useState<string | null>(null);
+  const [notices, setNotices] = useState<NoticeSettings | null>(null);
+  const [noticeSaving, setNoticeSaving] = useState<NoticeSettingKey | null>(null);
+  const [noticesError, setNoticesError] = useState<string | null>(null);
+  const [queueModes, setQueueModes] = useState<QueueModesSetting | null>(null);
+  const [queueModeSaving, setQueueModeSaving] = useState<"steeringMode" | "followUpMode" | null>(null);
+  const [queueModeError, setQueueModeError] = useState<string | null>(null);
   const [webAuthEnabled, setWebAuthEnabled] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const [logoutError, setLogoutError] = useState("");
@@ -173,14 +185,23 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
 
   useEffect(() => {
     let cancelled = false;
-    void fetch("/api/cache-miss-notices")
+    void fetch("/api/notices")
       .then(async (response) => {
-        const data = await response.json() as { enabled?: boolean; error?: string };
+        const data = await response.json() as Partial<NoticeSettings> & { error?: string };
         if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
-        if (!cancelled) setCacheMissNotices(data.enabled === true);
+        if (!cancelled) setNotices({ ...DEFAULT_NOTICE_SETTINGS, ...data });
       })
       .catch((cause) => {
-        if (!cancelled) setCacheMissNoticesError(cause instanceof Error ? cause.message : String(cause));
+        if (!cancelled) setNoticesError(cause instanceof Error ? cause.message : String(cause));
+      });
+    void fetch("/api/queue-modes")
+      .then(async (response) => {
+        const data = await response.json() as Partial<QueueModesSetting> & { error?: string };
+        if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+        if (!cancelled) setQueueModes({ steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", ...data });
+      })
+      .catch((cause) => {
+        if (!cancelled) setQueueModeError(cause instanceof Error ? cause.message : String(cause));
       });
     return () => { cancelled = true; };
   }, []);
@@ -213,24 +234,47 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
     }
   };
 
-  // pi's showCacheMissNotices (#1265); the open chat is read again to show or drop them.
-  const toggleCacheMissNotices = async (enabled: boolean) => {
-    setCacheMissNoticesSaving(true);
-    setCacheMissNoticesError(null);
+  // pi's notices.* (1.6.1; one showCacheMissNotices before it). The open chat is
+  // read again so a switch shows or drops its lines at once.
+  const toggleNotice = async (key: NoticeSettingKey, enabled: boolean) => {
+    setNoticeSaving(key);
+    setNoticesError(null);
     try {
-      const response = await fetch("/api/cache-miss-notices", {
+      const response = await fetch("/api/notices", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ enabled }),
+        body: JSON.stringify({ [key]: enabled }),
       });
-      const data = await response.json() as { enabled?: boolean; error?: string };
+      const data = await response.json() as Partial<NoticeSettings> & { error?: string };
       if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
-      setCacheMissNotices(data.enabled === true);
+      setNotices({ ...DEFAULT_NOTICE_SETTINGS, ...data });
       if (sessionId) onSessionReloaded();
     } catch (cause) {
-      setCacheMissNoticesError(cause instanceof Error ? cause.message : String(cause));
+      setNoticesError(cause instanceof Error ? cause.message : String(cause));
     } finally {
-      setCacheMissNoticesSaving(false);
+      setNoticeSaving(null);
+    }
+  };
+
+  // pi's steeringMode / followUpMode: how many queued messages a drain takes.
+  // The Node engine reads the same settings file; the built-in one is updated
+  // on its next session.
+  const chooseQueueMode = async (key: "steeringMode" | "followUpMode", value: QueueModeValue) => {
+    setQueueModeSaving(key);
+    setQueueModeError(null);
+    try {
+      const response = await fetch("/api/queue-modes", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ [key]: value }),
+      });
+      const data = await response.json() as Partial<QueueModesSetting> & { error?: string };
+      if (!response.ok || data.error) throw new Error(data.error ?? `HTTP ${response.status}`);
+      setQueueModes({ steeringMode: "one-at-a-time", followUpMode: "one-at-a-time", ...data });
+    } catch (cause) {
+      setQueueModeError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setQueueModeSaving(null);
     }
   };
 
@@ -455,19 +499,68 @@ function GeneralSettings({ sessionId, onSessionReloaded, quoteSelectionEnabled, 
               </label>
             </div>
           </div>
-          <div className="settings-chat-option settings-chat-switch-option">
-            <span>{t("settings.cacheMissNotices")}</span>
-            <ConfigSwitch
-              checked={cacheMissNotices === true}
-              loading={(cacheMissNotices === null && !cacheMissNoticesError) || cacheMissNoticesSaving}
-              label={t("settings.cacheMissNotices")}
-              describedBy="settings-cache-miss-notices-description"
-              onChange={(enabled) => void toggleCacheMissNotices(enabled)}
-            />
+        </div>
+        <h3 className="settings-general-heading">{t("settings.queueModesHeading")}</h3>
+        <div className="settings-chat-options">
+          <div className="settings-chat-option settings-chat-switch-option" role="radiogroup" aria-label={t("settings.steeringMode")}>
+            <span>{t("settings.steeringMode")}</span>
+            <div className="settings-send-mode-options">
+              {QUEUE_MODE_CHOICES.map((choice) => (
+                <label className="settings-send-mode-option" key={choice}>
+                  <input
+                    type="radio"
+                    name="steering-mode"
+                    value={choice}
+                    checked={(queueModes?.steeringMode ?? "one-at-a-time") === choice}
+                    disabled={queueModeSaving === "steeringMode"}
+                    onChange={() => void chooseQueueMode("steeringMode", choice)}
+                    className="sr-only"
+                  />
+                  <span className="settings-send-mode-label">{t(`settings.queueMode.${choice}`)}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+          <div className="settings-chat-option settings-chat-switch-option" role="radiogroup" aria-label={t("settings.followUpMode")}>
+            <span>{t("settings.followUpMode")}</span>
+            <div className="settings-send-mode-options">
+              {QUEUE_MODE_CHOICES.map((choice) => (
+                <label className="settings-send-mode-option" key={choice}>
+                  <input
+                    type="radio"
+                    name="follow-up-mode"
+                    value={choice}
+                    checked={(queueModes?.followUpMode ?? "one-at-a-time") === choice}
+                    disabled={queueModeSaving === "followUpMode"}
+                    onChange={() => void chooseQueueMode("followUpMode", choice)}
+                    className="sr-only"
+                  />
+                  <span className="settings-send-mode-label">{t(`settings.queueMode.${choice}`)}</span>
+                </label>
+              ))}
+            </div>
           </div>
         </div>
-        <p id="settings-cache-miss-notices-description" className="settings-general-description">{t("settings.cacheMissNoticesDescription")}</p>
-        {cacheMissNoticesError && <p role="alert" className="settings-general-error">{cacheMissNoticesError}</p>}
+        <p id="settings-queue-modes-description" className="settings-general-description">{t("settings.queueModesDescription")}</p>
+        {queueModeError && <p role="alert" className="settings-general-error">{queueModeError}</p>}
+
+        <h3 className="settings-general-heading">{t("settings.noticesHeading")}</h3>
+        <div className="settings-chat-options">
+          {NOTICE_SETTING_KEYS.map((key) => (
+            <div className="settings-chat-option settings-chat-switch-option" key={key}>
+              <span>{t(`settings.notice${key[0].toUpperCase()}${key.slice(1)}`)}</span>
+              <ConfigSwitch
+                checked={notices?.[key] === true}
+                loading={(notices === null && !noticesError) || noticeSaving === key}
+                label={t(`settings.notice${key[0].toUpperCase()}${key.slice(1)}`)}
+                describedBy="settings-notices-description"
+                onChange={(enabled) => void toggleNotice(key, enabled)}
+              />
+            </div>
+          ))}
+        </div>
+        <p id="settings-notices-description" className="settings-general-description">{t("settings.noticesDescription")}</p>
+        {noticesError && <p role="alert" className="settings-general-error">{noticesError}</p>}
       </section>
 
       {shellSettings?.isWindows && (

@@ -76,6 +76,93 @@ struct AgentSource {
     receiver: Mutex<Option<broadcast::Receiver<Value>>>,
     snapshot: Option<Arc<str>>,
     session_path: std::path::PathBuf,
+    config: pi_star_core::Config,
+}
+
+/// pi's transcript notices ride on the `message_end` of the message they
+/// follow. Neither engine sends them over its wire, so the one funnel both
+/// engines share adds them here, from the session file and the `notices.*`
+/// switches (a project's `.pi/settings.json` overriding the global ones).
+///
+/// The entry the message was written to is the boundary: only the entries
+/// before it are the "previous request" a cache miss is measured against.
+async fn live_transcript_notices(
+    config: pi_star_core::Config,
+    path: std::path::PathBuf,
+    message: &Value,
+) -> Vec<Value> {
+    const ATTEMPTS: u32 = 8;
+    /// The switches for this session's folder, and the entries before the one
+    /// the message was written to. `None` while that entry is not in the file
+    /// yet.
+    struct Read {
+        notices: pi_star_core::settings::Notices,
+        entries: Option<Vec<Value>>,
+    }
+    let read_once = |read_path: std::path::PathBuf, expected: Value, with_entries: bool| {
+        let config = config.clone();
+        async move {
+            tokio::task::spawn_blocking(move || {
+                // The folder the switches are resolved against lives in the
+                // header, one line; the entries are read only when some switch
+                // is on, which keeps the default (all off) to one line per
+                // message.
+                let header = pi_star_core::session::read_header(&read_path).ok()?;
+                let notices = pi_star_core::settings::effective_notices(
+                    &config,
+                    std::path::Path::new(&header.cwd),
+                );
+                if !notices.any() {
+                    return Some(Read { notices, entries: None });
+                }
+                if !with_entries {
+                    return Some(Read { notices, entries: None });
+                }
+                let session = pi_star_core::session::read_session(&read_path).ok()?;
+                let entries = session
+                    .entries
+                    .iter()
+                    .rposition(|entry| entry.get("message") == Some(&expected))
+                    .map(|index| session.entries[..index].to_vec());
+                Some(Read { notices, entries })
+            })
+            .await
+            .ok()
+            .flatten()
+        }
+    };
+
+    // Gate on the switches first: pi's default is all off, and reading the
+    // whole file for nothing is the expensive part.
+    let enabled = match read_once(path.clone(), Value::Null, false).await {
+        Some(read) => read.notices,
+        None => return Vec::new(),
+    };
+    if !enabled.any() {
+        return Vec::new();
+    }
+
+    // The response is written to the file around the event; wait for it as
+    // `announce_user_message_entry` waits for a user message's entry id.
+    for attempt in 0..ATTEMPTS {
+        if attempt > 0 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        let Some(read) = read_once(path.clone(), message.clone(), true).await else {
+            return Vec::new();
+        };
+        if !read.notices.any() {
+            return Vec::new();
+        }
+        if let Some(entries) = read.entries {
+            return pi_star_core::transcript_notices::live_assistant_notices(
+                &entries,
+                message,
+                read.notices,
+            );
+        }
+    }
+    Vec::new()
 }
 
 fn connected(streaming: bool, pending: Vec<String>) -> Arc<str> {
@@ -104,6 +191,7 @@ async fn agent_source(state: &Arc<AppState>, id: &str) -> Result<Arc<dyn Source>
             receiver: Mutex::new(Some(session.subscribe())),
             snapshot: Some(connected(streaming, session.pending_extension_ui_ids())),
             session_path: session.path(),
+            config: state.config.clone(),
         }))
     } else {
         let runtime = match state.agents.get(id) {
@@ -130,6 +218,7 @@ async fn agent_source(state: &Arc<AppState>, id: &str) -> Result<Arc<dyn Source>
             receiver: Mutex::new(Some(receiver)),
             snapshot: Some(connected(streaming, runtime.pending_extension_ui_ids())),
             session_path: runtime.path.clone(),
+            config: state.config.clone(),
         }))
     }
 }
@@ -174,6 +263,30 @@ impl Source for AgentSource {
                                 )
                                 .await;
                             });
+                        }
+                        // pi's notices for an assistant response: added before
+                        // the event is filtered so the chat shows them on the
+                        // message they follow, as the TUI does.
+                        let mut event = event;
+                        let assistant_message = (event.get("type").and_then(Value::as_str)
+                            == Some("message_end"))
+                        .then(|| event.get("message").cloned())
+                        .flatten()
+                        .filter(|message| {
+                            message.get("role").and_then(Value::as_str) == Some("assistant")
+                        });
+                        if let Some(message) = assistant_message
+                            && let Some(object) = event.as_object_mut()
+                        {
+                            let notices = live_transcript_notices(
+                                self.config.clone(),
+                                self.session_path.clone(),
+                                &message,
+                            )
+                            .await;
+                            if !notices.is_empty() {
+                                object.insert("transcriptNotices".into(), Value::Array(notices));
+                            }
                         }
                         if let Some(event) = agent::filter_event(event) {
                             hub.publish(&key, event.to_string().into(), Cursor::Num(0));

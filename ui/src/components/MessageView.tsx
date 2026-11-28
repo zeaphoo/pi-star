@@ -1869,7 +1869,7 @@ function CompactionMessageView({ message }: { message: CustomMessage }) {
   const summary = getMessageText(message.content);
   const time = formatTime(message.timestamp);
   const tokensBefore = (message.details as { tokensBefore?: unknown } | undefined)?.tokensBefore;
-  // pi's showCacheMissNotices (#1265): what the compaction billed, in its card.
+  // pi's notices.* (#1265): what the compaction billed, in its card.
   const costNotice = getTranscriptNotices(message).find((notice) => notice.kind === "summary_cost" && notice.source === "compaction");
 
   return (

@@ -21,6 +21,7 @@ use pi_star_agent::error::AgentError;
 use pi_star_agent::events::{AgentEmitter, AgentEvent};
 use pi_star_agent::message::{AgentMessage, CustomMessage};
 use pi_star_agent::types::{AgentToolResult, TextContentOrImage};
+use pi_star_agent::QueueMode;
 use pi_star_ai::model::Model;
 use pi_star_ai::provider::Provider;
 use pi_star_ai::providers::anthropic::AnthropicProvider;
@@ -278,6 +279,9 @@ impl HarnessBackend {
             events: events.clone(),
         });
 
+        // pi's `steeringMode` / `followUpMode`, from the same settings file the
+        // Node engine reads: a project's `.pi/settings.json` wins over global.
+        let queue_modes = crate::settings::effective_queue_modes(config, &cwd);
         let options = AgentHarnessOptions {
             model,
             thinking_level: parse_thinking(&thinking),
@@ -288,8 +292,8 @@ impl HarnessBackend {
             stream_options: AgentHarnessStreamOptions::default(),
             retry: RetryPolicy::default(),
             compaction: CompactionSettings::default(),
-            steering_mode: Default::default(),
-            follow_up_mode: Default::default(),
+            steering_mode: queue_mode(queue_modes.steering_mode),
+            follow_up_mode: queue_mode(queue_modes.follow_up_mode),
             tool_execution: HarnessToolExecution::default(),
             drive: DrivingMode::default(),
             session,
@@ -986,6 +990,14 @@ impl HarnessBackend {
 // ---------------------------------------------------------------------------
 // Providers / models
 // ---------------------------------------------------------------------------
+
+/// pi's queue-mode setting as the harness's queue mode.
+fn queue_mode(setting: crate::settings::QueueModeSetting) -> QueueMode {
+    match setting {
+        crate::settings::QueueModeSetting::All => QueueMode::All,
+        crate::settings::QueueModeSetting::OneAtATime => QueueMode::OneAtATime,
+    }
+}
 
 fn resolve_model(config: &Config, entries: &[Value]) -> Option<ModelDef> {
     let (_, model_ref) = session_settings(entries, None);

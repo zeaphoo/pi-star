@@ -926,26 +926,39 @@ pub async fn set_tools(State(state): State<Arc<AppState>>, Json(body): Json<Valu
     }
 }
 
-pub async fn cache_miss(State(state): State<Arc<AppState>>) -> Response {
+pub async fn notices(State(state): State<Arc<AppState>>) -> Response {
     let config = state.config.clone();
-    match blocking(move || settings::cache_miss_notices(&config)).await {
-        Ok(value) => no_store(json!({"showCacheMissNotices": value})),
+    match blocking(move || settings::notices_settings(&config)).await {
+        Ok(value) => no_store(value),
         Err(response) => response,
     }
 }
 
-pub async fn set_cache_miss(
+pub async fn set_notices(State(state): State<Arc<AppState>>, Json(body): Json<Value>) -> Response {
+    let config = state.config.clone();
+    match blocking(move || settings::update_notices_settings(&config, &body)).await {
+        Ok(Ok(value)) => no_store(value),
+        Ok(Err(error)) => bad_request(error.to_string()),
+        Err(response) => response,
+    }
+}
+
+pub async fn queue_modes(State(state): State<Arc<AppState>>) -> Response {
+    let config = state.config.clone();
+    match blocking(move || settings::queue_modes(&config)).await {
+        Ok(value) => no_store(value),
+        Err(response) => response,
+    }
+}
+
+pub async fn set_queue_modes(
     State(state): State<Arc<AppState>>,
     Json(body): Json<Value>,
 ) -> Response {
-    let enabled = body
-        .get("showCacheMissNotices")
-        .and_then(Value::as_bool)
-        .unwrap_or(false);
     let config = state.config.clone();
-    match blocking(move || settings::set_cache_miss_notices(&config, enabled)).await {
-        Ok(Ok(value)) => no_store(json!({"showCacheMissNotices": value})),
-        Ok(Err(error)) => internal(error),
+    match blocking(move || settings::update_queue_modes(&config, &body)).await {
+        Ok(Ok(value)) => no_store(value),
+        Ok(Err(error)) => bad_request(error.to_string()),
         Err(response) => response,
     }
 }

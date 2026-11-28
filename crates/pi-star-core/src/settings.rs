@@ -86,6 +86,213 @@ where
     Ok(value)
 }
 
+// ---------------------------------------------------------------------------
+// pi's `notices.*` transcript notices (one `showCacheMissNotices` before pi
+// 1.6.1) and its `steeringMode` / `followUpMode` queue modes.
+// ---------------------------------------------------------------------------
+
+/// pi's `notices` settings: one switch per kind of transcript notice, in the
+/// order `/settings` lists them. All default to off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct Notices {
+    pub cache_misses: bool,
+    pub cache_warming: bool,
+    pub compaction_costs: bool,
+    pub reasoning_drops: bool,
+}
+
+impl Notices {
+    /// Whether any notice at all is shown; a cheap skip for the entry scan.
+    pub fn any(self) -> bool {
+        self.cache_misses || self.cache_warming || self.compaction_costs || self.reasoning_drops
+    }
+}
+
+/// The `notices` keys one settings object sets (absent ones are not defaulted).
+fn notices_of(settings: &Value) -> Notices {
+    let read = |key: &str| {
+        settings
+            .get("notices")
+            .and_then(|notices| notices.get(key))
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+    };
+    Notices {
+        cache_misses: read("cacheMisses"),
+        cache_warming: read("cacheWarming"),
+        compaction_costs: read("compactionCosts"),
+        reasoning_drops: read("reasoningDrops"),
+    }
+}
+
+/// The global file's notices, for Settings › General.
+pub fn notices_settings(config: &Config) -> Notices {
+    notices_of(&read_settings(config))
+}
+
+/// Global `notices`, with a project's `.pi/settings.json` overriding per switch.
+pub fn effective_notices(config: &Config, cwd: &Path) -> Notices {
+    let global = read_settings(config);
+    let project = read_json(&cwd.join(".pi").join("settings.json"));
+    effective_notices_of(&global, project.as_ref())
+}
+
+pub fn effective_notices_of(global: &Value, project: Option<&Value>) -> Notices {
+    let mut notices = notices_of(global);
+    let Some(project) = project else {
+        return notices;
+    };
+    let switches = [
+        ("cacheMisses", &mut notices.cache_misses),
+        ("cacheWarming", &mut notices.cache_warming),
+        ("compactionCosts", &mut notices.compaction_costs),
+        ("reasoningDrops", &mut notices.reasoning_drops),
+    ];
+    for (key, slot) in switches {
+        if let Some(value) = project
+            .get("notices")
+            .and_then(|notices| notices.get(key))
+            .and_then(Value::as_bool)
+        {
+            *slot = value;
+        }
+    }
+    notices
+}
+
+/// Write the switches present in `body` into the global `notices` object.
+/// pi's defaults are all off, so a `false` writes the key explicitly (a project
+/// file may set it to true and Settings › General must be able to say no).
+pub fn update_notices_settings(config: &Config, body: &Value) -> Result<Notices> {
+    let pick = |key: &str| body.get(key).and_then(Value::as_bool);
+    let given = [
+        ("cacheMisses", pick("cacheMisses")),
+        ("cacheWarming", pick("cacheWarming")),
+        ("compactionCosts", pick("compactionCosts")),
+        ("reasoningDrops", pick("reasoningDrops")),
+    ];
+    if given.iter().all(|(_, value)| value.is_none()) {
+        return Err(anyhow!(
+            "Nothing to change: give cacheMisses, cacheWarming, compactionCosts or reasoningDrops"
+        ));
+    }
+    update_settings(config, |settings| {
+        let entry = settings
+            .entry("notices".to_string())
+            .or_insert_with(|| Value::Object(Map::new()));
+        let object = entry
+            .as_object_mut()
+            .ok_or_else(|| anyhow!("settings.json's notices is not an object"))?;
+        for (key, value) in given {
+            if let Some(value) = value {
+                object.insert(key.to_string(), Value::Bool(value));
+            }
+        }
+        Ok(())
+    })?;
+    Ok(notices_settings(config))
+}
+
+/// pi's `steeringMode` / `followUpMode`: how many queued messages a drain takes.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum QueueModeSetting {
+    #[default]
+    OneAtATime,
+    All,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", default)]
+pub struct QueueModes {
+    pub steering_mode: QueueModeSetting,
+    pub follow_up_mode: QueueModeSetting,
+}
+
+/// pi reads an older file's `queueMode` as `steeringMode`.
+fn queue_mode_of(settings: &Value, key: &str) -> QueueModeSetting {
+    let value = settings
+        .get(key)
+        .or_else(|| (key == "steeringMode").then(|| settings.get("queueMode")).flatten());
+    match value.and_then(Value::as_str) {
+        Some("all") => QueueModeSetting::All,
+        _ => QueueModeSetting::OneAtATime,
+    }
+}
+
+fn queue_modes_of(settings: &Value) -> QueueModes {
+    QueueModes {
+        steering_mode: queue_mode_of(settings, "steeringMode"),
+        follow_up_mode: queue_mode_of(settings, "followUpMode"),
+    }
+}
+
+pub fn queue_modes(config: &Config) -> QueueModes {
+    queue_modes_of(&read_settings(config))
+}
+
+/// A project's `.pi/settings.json` wins, as it does in pi.
+pub fn effective_queue_modes(config: &Config, cwd: &Path) -> QueueModes {
+    let project = read_json(&cwd.join(".pi").join("settings.json"));
+    let Some(project) = project else {
+        return queue_modes(config);
+    };
+    let global = queue_modes(config);
+    let has = |key: &str| {
+        project.get(key).and_then(Value::as_str).is_some()
+            || (key == "steeringMode" && project.get("queueMode").and_then(Value::as_str).is_some())
+    };
+    QueueModes {
+        steering_mode: if has("steeringMode") { queue_mode_of(&project, "steeringMode") } else { global.steering_mode },
+        follow_up_mode: if has("followUpMode") { queue_mode_of(&project, "followUpMode") } else { global.follow_up_mode },
+    }
+}
+
+/// Write the modes present in `body` into the global settings file.
+/// `one-at-a-time` is pi's default, so choosing it removes the key.
+pub fn update_queue_modes(config: &Config, body: &Value) -> Result<QueueModes> {
+    let parse = |key: &str| -> Result<Option<QueueModeSetting>> {
+        let Some(value) = body.get(key) else {
+            return Ok(None);
+        };
+        match value.as_str() {
+            Some("one-at-a-time") => Ok(Some(QueueModeSetting::OneAtATime)),
+            Some("all") => Ok(Some(QueueModeSetting::All)),
+            _ => Err(anyhow!(
+                "{key} must be \"one-at-a-time\" or \"all\""
+            )),
+        }
+    };
+    let steering = parse("steeringMode")?;
+    let follow_up = parse("followUpMode")?;
+    if steering.is_none() && follow_up.is_none() {
+        return Err(anyhow!(
+            "Nothing to change: give steeringMode or followUpMode"
+        ));
+    }
+    update_settings(config, |settings| {
+        if let Some(mode) = steering {
+            // pi migrates the older `queueMode` into `steeringMode` and drops it.
+            settings.remove("queueMode");
+            if mode == QueueModeSetting::All {
+                settings.insert("steeringMode".into(), Value::String("all".into()));
+            } else {
+                settings.remove("steeringMode");
+            }
+        }
+        if let Some(mode) = follow_up {
+            if mode == QueueModeSetting::All {
+                settings.insert("followUpMode".into(), Value::String("all".into()));
+            } else {
+                settings.remove("followUpMode");
+            }
+        }
+        Ok(())
+    })?;
+    Ok(queue_modes(config))
+}
+
 pub fn tools_settings(config: &Config) -> ToolSettings {
     let settings = read_settings(config);
     let default_tools = settings
@@ -172,21 +379,6 @@ pub fn update_tools_settings(config: &Config, body: &Value) -> Result<ToolSettin
         Ok(())
     })?;
     Ok(tools_settings(config))
-}
-
-pub fn cache_miss_notices(config: &Config) -> bool {
-    read_settings(config)
-        .get("showCacheMissNotices")
-        .and_then(Value::as_bool)
-        .unwrap_or(false)
-}
-
-pub fn set_cache_miss_notices(config: &Config, enabled: bool) -> Result<bool> {
-    update_settings(config, |settings| {
-        settings.insert("showCacheMissNotices".into(), Value::Bool(enabled));
-        Ok(())
-    })?;
-    Ok(enabled)
 }
 
 pub fn set_enabled_models(config: &Config, patterns: Vec<String>) -> Result<()> {

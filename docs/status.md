@@ -28,7 +28,8 @@ and "Ask in new chat" are kept). The item-by-item comparison, ported scope, and 
 | Idle reclamation / leases | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`, background reclaim every 30s; lease renewal |
 | Subagents | ✅ | Built-in `general-purpose`/`explore`/`plan`, global/workspace/project file scopes, full pi-web profile fields (display_name, load_skills/extensions, codemode, mcp, max_turns, prompt_mode, color, isolation, persist_session, extension tool selection, etc.), unknown frontmatter preserved, builtin switches and `agents/settings.json`, child session/waiting/concurrency/status display |
 | Extension UI | ✅ | Pending requests, replay ids, response/input, blocking timeout; never triggered without a Node extension process |
-| Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped; project settings override global |
+| Transcript notices | ✅ | `notices.cacheMisses` / `cacheWarming` / `compactionCosts` / `reasoningDrops` (pi 1.6.1; one `showCacheMissNotices` before), derived from session entries and shown on both engines' `message_end`; a project's `.pi/settings.json` overrides each switch |
+| Queue modes | ✅ | `steeringMode` / `followUpMode` in Settings › General; the QuickPI engine reads them for its queues, the Node engine reads the same file |
 | Providers | ✅ | OpenAI-compatible / Anthropic Messages; model cache, provider usage |
 | OAuth / device-code | ✅ | Anthropic authorization code + PKCE, GitHub Copilot device-code; all other built-in providers sign in through the bundled pi/pi-ai OAuth flow (Node bridge); API key save/delete/sign-out |
 | Models and models.json | ✅ | Catalog, default/enabled, CRUD, discover/test, image-size limit validation, models.dev autocomplete, models-store remote refresh |

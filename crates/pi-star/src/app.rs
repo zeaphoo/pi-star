@@ -125,8 +125,12 @@ pub fn router(state: Arc<AppState>) -> Router {
             get(routes::settings::tools).put(routes::settings::set_tools),
         )
         .route(
-            "/cache-miss-notices",
-            get(routes::settings::cache_miss).put(routes::settings::set_cache_miss),
+            "/notices",
+            get(routes::settings::notices).put(routes::settings::set_notices),
+        )
+        .route(
+            "/queue-modes",
+            get(routes::settings::queue_modes).put(routes::settings::set_queue_modes),
         )
         .route(
             "/subagents/settings",

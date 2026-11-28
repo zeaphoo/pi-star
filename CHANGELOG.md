@@ -21,9 +21,26 @@
   （`POST /api/desktop/alive`）。主窗口可见且获得焦点时，壳轮询心跳年龄；超过 8 秒
   没有心跳就销毁并重建主窗口（新的 WebContent 进程），不再需要用户手动强退或在
   活动监视器里逐个杀进程。重建有启动宽限、冷却和连续次数上限，后台/最小化窗口不判定。
+- **内置 pi 升级到 1.7.0**：`packaging/pi-runtime.json` 的 `pi` 由 1.6.0 改为 1.7.0，Node 仍为
+  22.20.0；重新暂存 `pi-runtime` 即可（`node scripts/prepare-pi-runtime.mjs`）。1.7.0 移除了
+  遥测（`PI_TELEMETRY`、`enableInstallTelemetry`），pi-star 未使用；`find` 工具的路径模式改为
+  相对搜索目录等行为变化随 pi 生效。
+- **transcript notices 改为 pi 1.6.1 的四个开关**：`/api/cache-miss-notices` 换成
+  `GET/PUT /api/notices`（`cacheMisses`、`cacheWarming`、`compactionCosts`、`reasoningDrops`），
+  设置 › 通用中拆成四个开关。原先只写 `showCacheMissNotices`、且没有接到界面上；现在由会话
+  条目推导，历史消息加载与两个引擎的 `message_end` 都会带上，项目的 `.pi/settings.json` 逐项覆盖。
+- **推理丢弃提示覆盖两家 provider**：Anthropic 的 `thinking_dropped` 与 OpenAI 的 `reasoning`
+  条目都显示为 `reasoning_dropped`，并列出 provider 给出的原因。
+- **排队模式**：设置 › 通用新增 `steeringMode` / `followUpMode`（`GET/PUT /api/queue-modes`）。
+  QuickPI 引擎原先固定用默认值，现在按设置驱动 steering / follow-up 队列；Node 引擎读同一份设置。
+- **页面禁止被跨源嵌入**：HTML 响应加 `Content-Security-Policy: frame-ancestors 'self'` 与
+  `X-Frame-Options: SAMEORIGIN`，别的站点不能再把 pi-star 的界面放进 iframe 诱导点击。
 
 ### Fixed
 
+- **超大会话的惰性单条目读取不再解析整个文件**：`/entries/{id}`、`/thinking`、
+  `/tool-result-image` 原先每次都把整份会话文件逐行解析，几十 MB 的会话会把 blocking 线程占住；
+  新增 `session::read_entry`，先按 id 文本预筛再只解析命中的那一行。
 - **Git 子进程增加 12 秒超时**：`repository_root`、`git status`、`git diff/show`、
   `ls-files`、worktree 分支探测等读操作超过 12 秒会被杀掉，不再在 iCloud/网络卷上
   无限期占住 blocking 线程；`worktree add/remove` 这类需要 checkout 的操作用 120 秒。

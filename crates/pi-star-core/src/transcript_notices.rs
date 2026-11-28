@@ -1,12 +1,13 @@
-//! pi's `showCacheMissNotices` transcript notices, derived from session
-//! entries exactly like pi's TUI. Nothing is persisted: a reload or reconnect
-//! recomputes the same notices.
+//! pi's `notices.*` transcript notices (one `showCacheMissNotices` before pi
+//! 1.6.1), derived from session entries exactly like pi's TUI. Nothing is
+//! persisted: a reload or reconnect recomputes the same notices.
 
 use std::collections::{HashMap, HashSet};
 
 use serde_json::{Map, Value, json};
 
 use crate::session::{SessionContext, entry_id, entry_type};
+use crate::settings::Notices;
 use crate::{Config, models::read_json, settings};
 
 const CACHE_TTL_MS: i64 = 5 * 60 * 1000;
@@ -30,25 +31,10 @@ pub struct CacheMiss {
     model_changed: bool,
 }
 
-pub fn enabled(config: &Config, cwd: &std::path::Path) -> bool {
+pub fn enabled(config: &Config, cwd: &std::path::Path) -> Notices {
     let global = settings::read_settings(config);
     let project = read_json(&cwd.join(".pi").join("settings.json"));
-    read_show_cache_miss_notices(&global, project.as_ref())
-}
-
-pub fn read_show_cache_miss_notices(
-    global_settings: &Value,
-    project_settings: Option<&Value>,
-) -> bool {
-    project_settings
-        .and_then(|value| value.get("showCacheMissNotices"))
-        .and_then(Value::as_bool)
-        .or_else(|| {
-            global_settings
-                .get("showCacheMissNotices")
-                .and_then(Value::as_bool)
-        })
-        .unwrap_or(false)
+    settings::effective_notices_of(&global, project.as_ref())
 }
 
 fn usage_of(message: &Value) -> Option<&Value> {
@@ -300,26 +286,91 @@ fn cache_miss_notice(miss: &CacheMiss) -> Option<Value> {
     Some(Value::Object(notice))
 }
 
-fn count_dropped_thinking(message: &Value) -> usize {
-    let Some(diagnostics) = message.get("diagnostics").and_then(Value::as_array) else {
-        return 0;
-    };
-    diagnostics
-        .iter()
-        .filter(|diagnostic| {
-            diagnostic.get("type").and_then(Value::as_str)
-                == Some("anthropic_input_transformations")
-        })
-        .filter_map(|diagnostic| {
-            diagnostic
-                .pointer("/details/transformations")
-                .and_then(Value::as_array)
-        })
-        .flatten()
-        .filter(|transformation| {
-            transformation.get("type").and_then(Value::as_str) == Some("thinking_dropped")
-        })
-        .count()
+/// The reasoning a provider reported withholding from the request that
+/// produced `message`, as pi's TUI `getDroppedReasoning()` reads it: the first
+/// diagnostic that lists any. Anthropic drops thinking blocks
+/// (`thinking_dropped`), OpenAI drops reasoning items (`reasoning`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct DroppedReasoning {
+    provider: &'static str,
+    count: usize,
+    reasons: Vec<String>,
+}
+
+/// pi's TUI `REASONING_DROP_DIAGNOSTICS`.
+const REASONING_DROP_DIAGNOSTICS: [(&str, &str, &str); 2] = [
+    (
+        "anthropic_input_transformations",
+        "anthropic",
+        "thinking_dropped",
+    ),
+    ("openai_input_transformations", "openai", "reasoning"),
+];
+
+fn dropped_reasoning(message: &Value) -> Option<DroppedReasoning> {
+    let diagnostics = message.get("diagnostics").and_then(Value::as_array)?;
+    for diagnostic in diagnostics {
+        let Some(kind) = diagnostic.get("type").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some((_, provider, dropped_type)) = REASONING_DROP_DIAGNOSTICS
+            .iter()
+            .find(|(diagnostic_type, _, _)| *diagnostic_type == kind)
+        else {
+            continue;
+        };
+        let Some(transformations) = diagnostic
+            .pointer("/details/transformations")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        let dropped: Vec<&Value> = transformations
+            .iter()
+            .filter(|transformation| {
+                transformation.get("type").and_then(Value::as_str) == Some(*dropped_type)
+            })
+            .collect();
+        if dropped.is_empty() {
+            continue;
+        }
+        let mut reasons: Vec<String> = Vec::new();
+        for transformation in &dropped {
+            if let Some(reason) = transformation.get("reason").and_then(Value::as_str)
+                && !reasons.iter().any(|known| known == reason)
+            {
+                reasons.push(reason.to_string());
+            }
+        }
+        return Some(DroppedReasoning {
+            provider,
+            count: dropped.len(),
+            reasons,
+        });
+    }
+    None
+}
+
+fn reasoning_dropped_notice(
+    dropped: &DroppedReasoning,
+    previous: Option<&DroppedReasoning>,
+) -> Option<Value> {
+    // Providers report a withheld block again on every later request that
+    // replays it, so the TUI shows a drop only when the previous response's was
+    // another provider's or fewer.
+    if previous.is_some_and(|previous| {
+        previous.provider == dropped.provider && dropped.count <= previous.count
+    }) {
+        return None;
+    }
+    let mut notice = Map::new();
+    notice.insert("kind".into(), Value::String("reasoning_dropped".into()));
+    notice.insert("provider".into(), Value::String(dropped.provider.into()));
+    notice.insert("count".into(), json!(dropped.count));
+    if !dropped.reasons.is_empty() {
+        notice.insert("reasons".into(), json!(dropped.reasons));
+    }
+    Some(Value::Object(notice))
 }
 
 fn summary_cost(source: &str, usage: Option<&Value>) -> Option<Value> {
@@ -388,7 +439,14 @@ fn ancestor<'a>(
     None
 }
 
-pub fn collect(entries: &[Value], leaf_id: Option<&str>) -> HashMap<String, Vec<Value>> {
+pub fn collect(
+    entries: &[Value],
+    leaf_id: Option<&str>,
+    notices: Notices,
+) -> HashMap<String, Vec<Value>> {
+    if !notices.any() {
+        return HashMap::new();
+    }
     let by_id: HashMap<String, &Value> = entries
         .iter()
         .filter_map(|entry| entry_id(entry).map(|id| (id, entry)))
@@ -412,8 +470,12 @@ pub fn collect(entries: &[Value], leaf_id: Option<&str>) -> HashMap<String, Vec<
         on_branch = Some(branch);
     }
     let prices = cache_read_prices(entries);
-    let misses = scan_cache_misses(entries, &prices);
-    let mut notices: HashMap<String, Vec<Value>> = HashMap::new();
+    let misses = if notices.cache_misses {
+        scan_cache_misses(entries, &prices)
+    } else {
+        HashMap::new()
+    };
+    let mut notices_by_entry: HashMap<String, Vec<Value>> = HashMap::new();
     for entry in entries {
         let Some(id) = entry_id(entry) else { continue };
         match entry_type(entry) {
@@ -428,25 +490,27 @@ pub fn collect(entries: &[Value], leaf_id: Option<&str>) -> HashMap<String, Vec<
                     continue;
                 }
                 if let Some(miss) = misses.get(&id) {
-                    push_notice(&mut notices, &id, cache_miss_notice(miss));
+                    push_notice(&mut notices_by_entry, &id, cache_miss_notice(miss));
                 }
-                let dropped = count_dropped_thinking(message);
-                if dropped > 0 {
+                if notices.reasoning_drops
+                    && let Some(dropped) = dropped_reasoning(message)
+                {
                     let previous = ancestor(entry, &by_id, |candidate| {
                         assistant_message(candidate).is_some()
+                    })
+                    .and_then(|previous| {
+                        assistant_message(previous).and_then(dropped_reasoning)
                     });
-                    let previous_dropped = previous.map(count_dropped_thinking).unwrap_or(0);
-                    if dropped > previous_dropped {
-                        push_notice(
-                            &mut notices,
-                            &id,
-                            Some(json!({"kind":"thinking_dropped","count":dropped})),
-                        );
-                    }
+                    push_notice(
+                        &mut notices_by_entry,
+                        &id,
+                        reasoning_dropped_notice(&dropped, previous.as_ref()),
+                    );
                 }
             }
             Some("usage")
-                if entry.get("kind").and_then(Value::as_str) == Some("cache_warm")
+                if notices.cache_warming
+                    && entry.get("kind").and_then(Value::as_str) == Some("cache_warm")
                     && on_branch.as_ref().is_none_or(|branch| branch.contains(&id)) =>
             {
                 let Some(anchor) = ancestor(entry, &by_id, renders_standalone) else {
@@ -463,23 +527,24 @@ pub fn collect(entries: &[Value], leaf_id: Option<&str>) -> HashMap<String, Vec<
                 if let Some(note) = entry.get("note").and_then(Value::as_str) {
                     notice["note"] = Value::String(note.to_string());
                 }
-                push_notice(&mut notices, &anchor_id, Some(notice));
+                push_notice(&mut notices_by_entry, &anchor_id, Some(notice));
             }
-            Some("compaction") => {
+            Some("compaction") if notices.compaction_costs => {
                 push_notice(
-                    &mut notices,
+                    &mut notices_by_entry,
                     &id,
                     summary_cost("compaction", entry.get("usage")),
                 );
             }
             Some("branch_summary")
-                if entry
-                    .get("summary")
-                    .and_then(Value::as_str)
-                    .is_some_and(|summary| !summary.is_empty()) =>
+                if notices.compaction_costs
+                    && entry
+                        .get("summary")
+                        .and_then(Value::as_str)
+                        .is_some_and(|summary| !summary.is_empty()) =>
             {
                 push_notice(
-                    &mut notices,
+                    &mut notices_by_entry,
                     &id,
                     summary_cost("branch_summary", entry.get("usage")),
                 );
@@ -487,7 +552,7 @@ pub fn collect(entries: &[Value], leaf_id: Option<&str>) -> HashMap<String, Vec<
             _ => {}
         }
     }
-    notices
+    notices_by_entry
 }
 
 /// Add `transcriptNotices` to the messages that have one, keeping every other
@@ -510,7 +575,10 @@ pub fn attach(context: &mut SessionContext, notices: &HashMap<String, Vec<Value>
     }
 }
 
-pub fn live_assistant_notices(entries: &[Value], message: &Value) -> Vec<Value> {
+pub fn live_assistant_notices(entries: &[Value], message: &Value, settings: Notices) -> Vec<Value> {
+    if !settings.any() {
+        return Vec::new();
+    }
     if message.get("role").and_then(Value::as_str) != Some("assistant") {
         return Vec::new();
     }
@@ -530,22 +598,23 @@ pub fn live_assistant_notices(entries: &[Value], message: &Value) -> Vec<Value> 
         .filter_map(|entry| assistant_message(entry))
         .find_map(|candidate| as_previous(candidate, false));
     let mut notices = Vec::new();
-    if let Some(miss) = detect_miss(previous.as_ref(), message, &prices) {
-        if let Some(notice) = cache_miss_notice(&miss) {
-            notices.push(notice);
-        }
+    if settings.cache_misses
+        && let Some(miss) = detect_miss(previous.as_ref(), message, &prices)
+        && let Some(notice) = cache_miss_notice(&miss)
+    {
+        notices.push(notice);
     }
-    let dropped = count_dropped_thinking(message);
-    if dropped > 0 {
+    if settings.reasoning_drops
+        && let Some(dropped) = dropped_reasoning(message)
+    {
         let previous_dropped = entries
             .iter()
             .rev()
             .filter_map(assistant_message)
             .next()
-            .map(count_dropped_thinking)
-            .unwrap_or(0);
-        if dropped > previous_dropped {
-            notices.push(json!({"kind":"thinking_dropped","count":dropped}));
+            .and_then(dropped_reasoning);
+        if let Some(notice) = reasoning_dropped_notice(&dropped, previous_dropped.as_ref()) {
+            notices.push(notice);
         }
     }
     notices
@@ -590,22 +659,65 @@ mod tests {
             assistant("a1", None, 9_500.0, 500.0, 0.0),
             assistant("a2", Some("a1"), 30_000.0, 0.0, 0.5),
         ];
-        let notices = collect(&entries, Some("a2"));
+        let notices = collect(&entries, Some("a2"), Notices { cache_misses: true, ..Default::default() });
         let list = notices.get("a2").expect("miss notice");
         assert_eq!(list[0]["kind"], "cache_miss");
         assert!(list[0]["missedCost"].as_f64().unwrap() > 0.1);
     }
 
     #[test]
-    fn project_setting_overrides_global() {
-        assert!(!read_show_cache_miss_notices(&json!({}), None));
-        assert!(read_show_cache_miss_notices(
-            &json!({"showCacheMissNotices": true}),
-            None
-        ));
-        assert!(!read_show_cache_miss_notices(
-            &json!({"showCacheMissNotices": true}),
-            Some(&json!({"showCacheMissNotices": false}))
-        ));
+    fn every_switch_is_off_by_default() {
+        let entries = vec![
+            assistant("a1", None, 9_500.0, 500.0, 0.0),
+            assistant("a2", Some("a1"), 30_000.0, 0.0, 0.5),
+        ];
+        assert!(collect(&entries, Some("a2"), Notices::default()).is_empty());
+    }
+
+    #[test]
+    fn each_switch_shows_only_its_own_notice() {
+        let entries = vec![
+            assistant("a1", None, 9_500.0, 500.0, 0.0),
+            assistant("a2", Some("a1"), 30_000.0, 0.0, 0.5),
+        ];
+        let warming_only = collect(
+            &entries,
+            Some("a2"),
+            Notices { cache_warming: true, ..Default::default() },
+        );
+        assert!(warming_only.is_empty());
+    }
+
+    #[test]
+    fn a_project_setting_overrides_the_global_one() {
+        let global = json!({"notices": {"cacheMisses": true, "reasoningDrops": true}});
+        assert!(!settings::effective_notices_of(&json!({}), None).any());
+        let defaults = settings::effective_notices_of(&global, None);
+        assert!(defaults.cache_misses && defaults.reasoning_drops);
+        assert!(!defaults.cache_warming && !defaults.compaction_costs);
+        let project = json!({"notices": {"cacheMisses": false}});
+        let effective = settings::effective_notices_of(&global, Some(&project));
+        assert!(!effective.cache_misses);
+        assert!(effective.reasoning_drops);
+    }
+
+    #[test]
+    fn reports_a_reasoning_drop_for_both_providers() {
+        let mut message = assistant("a1", None, 10.0, 0.0, 0.0);
+        message["message"]["diagnostics"] = json!([{
+            "type": "openai_input_transformations",
+            "details": {"transformations": [
+                {"type": "reasoning", "reason": "prefix_mismatch"},
+                {"type": "reasoning", "reason": "prefix_mismatch"}
+            ]}
+        }]);
+        let dropped = dropped_reasoning(&message["message"]).expect("drop");
+        assert_eq!(dropped.provider, "openai");
+        assert_eq!(dropped.count, 2);
+        assert_eq!(dropped.reasons, vec!["prefix_mismatch".to_string()]);
+        let notice = reasoning_dropped_notice(&dropped, None).expect("notice");
+        assert_eq!(notice["kind"], "reasoning_dropped");
+        assert_eq!(notice["provider"], "openai");
+        assert_eq!(notice["count"], 2);
     }
 }

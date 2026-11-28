@@ -15,7 +15,7 @@ pi-star、哪些需要 Rust 后端配套、哪些不适用。
   `side-tab-state.ts`、`side-chat-client.ts`、`favicon-badge.ts`、`html-sandbox-polyfill.ts`、
   `panel-tab-order.ts`，删除 `SubagentViewer.tsx`、`subagent-viewer-state.ts`。
 - 0.15 同时把依赖从 pi 1.4.0 升到 **pi 1.5.0**（Next 16.3.8 → 16.4.4，与 pi-star 无关）。
-  pi-star 现在打包 **pi 1.6.0**（`packaging/pi-runtime.json`），见文末「pi 1.5.0 → 1.6.0」一节。
+  pi-star 现在打包 **pi 1.7.0**（`packaging/pi-runtime.json`），见文末「pi 1.5.0 → 1.6.0」一节。
 - 复核方式：把 sync 脚本复制到临时目录，用 `PI_WEB_DIR` 指向 `v0.13.0` / `v0.15.0` 的
   worktree 各跑一次，再 `diff -rq`。结论不依赖上游 git 历史。
 

@@ -84,7 +84,9 @@ test("General is a split view too: Appearance, Terminal, Code and Chat", () => {
   assert.match(conversation, /settings\.thinkingExpandedDefault/);
   assert.match(conversation, /settings\.quoteSelection/);
   assert.match(conversation, /settings\.enterSendMode/);
-  assert.match(conversation, /settings\.cacheMissNotices/);
+  assert.match(conversation, /settings\.noticesHeading/);
+  assert.match(conversation, /settings\.steeringMode/);
+  assert.match(conversation, /settings\.followUpMode/);
   assert.match(conversation, /settings\.usePowerShell/);
   assert.doesNotMatch(conversation, /common\.language/);
 });

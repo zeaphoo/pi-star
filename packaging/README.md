@@ -25,7 +25,7 @@ needed after installing.
 ```json
 {
   "node": "22.20.0",
-  "pi": "1.6.0",
+  "pi": "1.7.0",
   "minGit": "2.56.0.4",
   "minGitTag": "v2.56.0.windows.4"
 }

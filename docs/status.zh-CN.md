@@ -27,7 +27,8 @@ UI 已从 pi-web `v0.13.0` 同步到 `v0.15.0`（侧聊 `/side` 除外，保留 
 | 会话空闲回收 / 租约 | ✅ | `PI_WEB_IDLE_TIMEOUT_MS`，后台 30s 回收；lease 续租 |
 | Subagents | ✅ | 内置 `general-purpose`/`explore`/`plan`、global/workspace/project 三种文件 scope、pi-web 完整 profile 字段（display_name、load_skills/extensions、codemode、mcp、max_turns、prompt_mode、color、isolation、persist_session、扩展工具选择等）、未知 frontmatter 保留、builtin 开关与 `agents/settings.json`、子会话/等待/并发/状态显示 |
 | 扩展 UI | ✅ | pending 请求、重放 id、response/input、阻塞超时；无 Node 扩展进程时不会被触发 |
-| Transcript notices | ✅ | cache miss / cache warm / summary cost / thinking dropped，项目设置覆盖全局 |
+| Transcript notices | ✅ | `notices.cacheMisses` / `cacheWarming` / `compactionCosts` / `reasoningDrops`（pi 1.6.1；此前是单个 `showCacheMissNotices`），由会话条目推导，两个引擎的 `message_end` 都会带上；项目的 `.pi/settings.json` 可逐项覆盖 |
+| 排队模式 | ✅ | 设置 › 通用中的 `steeringMode` / `followUpMode`；QuickPI 引擎据此驱动队列，Node 引擎直接读同一份设置文件 |
 | Provider | ✅ | OpenAI-compatible / Anthropic Messages；模型缓存、provider usage |
 | OAuth / device-code | ✅ | Anthropic 授权码 + PKCE、GitHub Copilot device-code；其余内置 provider 通过随包的 pi/pi-ai OAuth 流程（Node bridge）登录；API Key 保存/删除/登出 |
 | 模型与 models.json | ✅ | 目录、默认/启用、CRUD、discover/test、图片大小上限校验、models.dev 自动补全、models-store 远程刷新 |

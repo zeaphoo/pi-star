@@ -16,7 +16,7 @@ can be ported directly to pi-star, which need matching Rust backend work, and wh
   `side-tab-state.ts`, `side-chat-client.ts`, `favicon-badge.ts`, `html-sandbox-polyfill.ts`,
   `panel-tab-order.ts`, and removes `SubagentViewer.tsx`, `subagent-viewer-state.ts`.
 - 0.15 also bumps the dependency from pi 1.4.0 to **pi 1.5.0** (Next 16.3.8 → 16.4.4, irrelevant to
-  pi-star). pi-star now packages **pi 1.6.0** (`packaging/pi-runtime.json`); see the
+  pi-star). pi-star now packages **pi 1.7.0** (`packaging/pi-runtime.json`); see the
   "pi 1.5.0 → 1.6.0" section at the end.
 - How this was verified: copy the sync script to a temporary directory, point `PI_WEB_DIR` at
   worktrees of `v0.13.0` / `v0.15.0`, run it against each, then `diff -rq`. The conclusion does not

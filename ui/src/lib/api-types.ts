@@ -901,3 +901,11 @@ export interface PluginToggleResult {
 export interface PluginsBulkResponse extends PluginsResponse {
   results: PluginToggleResult[];
 }
+
+/** pi's `steeringMode` / `followUpMode`: how many queued messages a drain takes. */
+export type QueueModeValue = "one-at-a-time" | "all";
+
+export interface QueueModesSetting {
+  steeringMode: QueueModeValue;
+  followUpMode: QueueModeValue;
+}
