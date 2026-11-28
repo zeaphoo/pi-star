@@ -1750,6 +1750,7 @@ export const enLocale: LocalePlugin = {
     "models.apiKeyEnable": "Enter your {provider} API key to enable {count} models.",
     "models.apiKeyEnableOne": "Enter your {provider} API key to enable 1 model.",
     "models.replaceApiKey": "Enter new key to replace…",
+    "models.storedKeyUnresolved": "Stored key did not resolve",
     "models.connectionLost": "Connection lost",
     "models.verifying": "Verifying…",
     "models.serverError": "Server error {status}",

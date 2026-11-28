@@ -75,6 +75,15 @@ function subscribe(listener: () => void): () => void {
   return () => { listeners.delete(listener); };
 }
 
+/**
+ * Calls `listener` when the chat's width or font size changes, for the pieces
+ * that measure laid-out rows themselves (`useSkipOffscreenRows`): a skipped
+ * row keeps the size the old width gave it, so it is measured again.
+ */
+export function subscribeChatAppearance(listener: () => void): () => void {
+  return subscribe(listener);
+}
+
 function setPreference(key: keyof ChatAppearance, value: number): void {
   const nextValue = key === "width" ? clampChatContentWidth(value) : clampChatContentFontSize(value);
   appearance = { ...getSnapshot(), [key]: nextValue };

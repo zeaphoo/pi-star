@@ -377,7 +377,7 @@ pub async fn refresh_models(
     State(state): State<Arc<AppState>>,
     body: Option<Json<RefreshBody>>,
 ) -> Response {
-    if std::env::var_os("PI_OFFLINE").is_some() {
+    if crate::routes::misc::offline() {
         return no_store(json!({
             "completed": false,
             "changed": false,
@@ -576,32 +576,47 @@ pub async fn discover(
                     ),
                 );
             }
-            let payload: Value = serde_json::from_str(&text).unwrap_or(Value::Null);
-            let models = payload
-                .get("data")
-                .and_then(Value::as_array)
-                .or_else(|| payload.get("models").and_then(Value::as_array))
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .filter_map(|model| {
-                    let id = model.get("id").and_then(Value::as_str)?;
-                    Some(json!({"id": id, "name": model.get("name").and_then(Value::as_str).unwrap_or(id)}))
-                })
-                .collect::<Vec<_>>();
-            if models.is_empty() {
+            let payload: Value = match serde_json::from_str(&text) {
+                Ok(payload) => payload,
+                Err(_) => {
+                    return crate::routes::json_error(
+                        axum::http::StatusCode::BAD_GATEWAY,
+                        "Upstream model list was not valid JSON",
+                    );
+                }
+            };
+            // The listing goes to the browser whole: its capabilities
+            // (context window, input modalities, effort list) are read there by
+            // `lib/model-discovery.ts`, which knows every gateway's spelling.
+            // Parsing here would either duplicate that or drop the fields (#1820).
+            if !payload_has_models(&payload) {
                 return crate::routes::json_error(
                     axum::http::StatusCode::BAD_GATEWAY,
                     "No models found in the upstream response",
                 );
             }
             let _ = name;
-            no_store(json!({"models": models, "endpoint": url}))
+            no_store(json!({"listing": payload, "endpoint": url}))
         }
         Err(error) => {
             crate::routes::json_error(axum::http::StatusCode::BAD_GATEWAY, error.to_string())
         }
     }
+}
+
+/// Whether an upstream listing carries any model at all, in the shapes the
+/// gateways use (`data` / `models` / `results` / `items`, as a list or a map).
+fn payload_has_models(payload: &Value) -> bool {
+    if payload.as_array().is_some_and(|models| !models.is_empty()) {
+        return true;
+    }
+    ["data", "models", "results", "items"].iter().any(|key| {
+        match payload.get(*key) {
+            Some(Value::Array(models)) => !models.is_empty(),
+            Some(Value::Object(models)) => !models.is_empty(),
+            _ => false,
+        }
+    })
 }
 
 #[derive(Debug, Deserialize)]
@@ -692,12 +707,26 @@ pub async fn test_model(
 
 pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
     let config = state.config.clone();
-    let (defs, auth, models_config, custom_names) = match blocking(move || {
+    let (defs, auth, models_config, custom_names, unresolved_keys) = match blocking(move || {
         let defs = model_defs(&config).unwrap_or_default();
         let auth = read_json(&config.agent_dir.join("auth.json")).unwrap_or(Value::Null);
         let models_config = read_json(&config.models_path()).unwrap_or(Value::Null);
         let custom_names = models::custom_provider_names(&config);
-        (defs, auth, models_config, custom_names)
+        // A stored key that does not resolve may run a `!command`, so it is
+        // settled here, on the blocking pool, not on a runtime thread.
+        let unresolved_keys: std::collections::HashMap<String, bool> = auth
+            .as_object()
+            .map(|entries| {
+                entries
+                    .iter()
+                    .filter(|(_, entry)| entry.get("type").and_then(Value::as_str) == Some("api_key"))
+                    .filter_map(|(provider, entry)| {
+                        Some((provider.clone(), models::stored_key_resolves(entry) == Some(false)))
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        (defs, auth, models_config, custom_names, unresolved_keys)
     })
     .await
     {
@@ -749,6 +778,10 @@ pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
             continue;
         }
         let environment = auth_entry.is_none() && models::provider_env_configured(provider.id);
+        // A stored key that does not resolve (a failing `!command`, a missing
+        // variable) leaves the provider unconfigured, as pi reports it, but the
+        // entry stays so the panel can offer Disconnect.
+        let unresolved = unresolved_keys.get(provider.id).copied().unwrap_or(false);
         let configured = auth_entry.is_some() || environment;
         let model_count = counts
             .get(provider.id)
@@ -758,10 +791,13 @@ pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
         let mut value = json!({
             "id": provider.id,
             "displayName": provider.name,
-            "configured": configured && credential_type != Some("oauth"),
+            "configured": configured && credential_type != Some("oauth") && !unresolved,
             "modelCount": model_count,
             "supportsOAuth": provider.oauth_name.is_some(),
         });
+        if unresolved {
+            value["unresolved"] = json!(true);
+        }
         if auth_entry.is_some() {
             value["source"] = json!("stored");
         } else if environment {
@@ -787,14 +823,18 @@ pub async fn providers(State(state): State<Arc<AppState>>) -> Response {
             .and_then(|entry| entry.get("type"))
             .and_then(Value::as_str);
         let environment = auth_entry.is_none() && models::provider_env_configured(id);
+        let unresolved = unresolved_keys.get(id).copied().unwrap_or(false);
         let configured = auth_entry.is_some() || environment;
         let mut value = json!({
             "id": id,
             "displayName": provider_names.get(id).cloned().unwrap_or_else(|| id.clone()),
-            "configured": configured && credential_type != Some("oauth"),
+            "configured": configured && credential_type != Some("oauth") && !unresolved,
             "modelCount": count,
             "supportsOAuth": false,
         });
+        if unresolved {
+            value["unresolved"] = json!(true);
+        }
         if auth_entry.is_some() {
             value["source"] = json!("stored");
         } else if environment {

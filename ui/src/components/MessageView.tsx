@@ -103,9 +103,11 @@ function estimateUpdatedTokens(previous: TokenEstimateCacheEntry | undefined, te
 const MAX_THINKING_CACHE_ENTRIES = 100;
 const thinkingContentCache = new Map<string, Promise<string>>();
 
-// Cap the user "sent" bubble's height so an abnormally long message does not
-// push the conversation off screen; overflow scrolls inside the bubble.
-const USER_BUBBLE_MAX_HEIGHT = 300;
+// Cap the user's text so an abnormally long message does not push the
+// conversation off screen; overflow scrolls inside that text. The cap sits on
+// each stretch of text, never on the bubble: a cap on the bubble wraps a second
+// scroll area around the oversized message's own and shows two scrollbars (#1825).
+const USER_TEXT_MAX_HEIGHT = 300;
 
 function loadThinkingContent(sessionId: string, entryId: string, blockIndex: number): Promise<string> {
   const key = `${sessionId}:${entryId}:${blockIndex}`;
@@ -421,8 +423,6 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
             lineHeight: 1.6,
             color: "var(--text)",
             wordBreak: "break-word",
-            maxHeight: USER_BUBBLE_MAX_HEIGHT,
-            overflowY: "auto",
           }}
         >
           {commandText ? (
@@ -481,13 +481,15 @@ function UserMessageView({ message, cwd, onOpenFile, entryId, forkEntryId, onFor
                 )}
               </div>
               {expanded && (
-                <MarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{skillExpansionContent(content) ?? content}</MarkdownBody>
+                <div style={{ maxHeight: USER_TEXT_MAX_HEIGHT, overflowY: "auto", minWidth: 0 }}>
+                  <MarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{skillExpansionContent(content) ?? content}</MarkdownBody>
+                </div>
               )}
             </div>
           ) : (
           <>
           {imageBlocksNode}
-          {content && <SafeMarkdownBody className="markdown-user-message" keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
+          {content && <SafeMarkdownBody className="markdown-user-message" maxHeight={USER_TEXT_MAX_HEIGHT} keepLineBreaks cwd={cwd} onOpenFile={onOpenFile}>{content}</SafeMarkdownBody>}
           </>
           )}
         </div>

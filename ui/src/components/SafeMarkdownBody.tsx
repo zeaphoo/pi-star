@@ -18,13 +18,17 @@ function formatMessageBytes(n: number): string {
 /**
  * MarkdownBody with an oversized-content guard: huge messages render as a
  * click-to-reveal plain-text <pre> instead of running the markdown pipeline.
+ * `maxHeight` caps whichever of the two renders, scrolling inside it, so a
+ * caller that caps its text never wraps a second scroll area around the
+ * revealed <pre>'s own (#1825).
  */
-export function SafeMarkdownBody({ children, className, ...props }: ComponentProps<typeof MarkdownBody>) {
+export function SafeMarkdownBody({ children, className, maxHeight, ...props }: ComponentProps<typeof MarkdownBody> & { maxHeight?: number }) {
   const { t } = useI18n();
   const [showRaw, setShowRaw] = useState(false);
 
   if (children.length <= MAX_MARKDOWN_CHARS) {
-    return <MarkdownBody className={className} {...props}>{children}</MarkdownBody>;
+    const body = <MarkdownBody className={className} {...props}>{children}</MarkdownBody>;
+    return maxHeight === undefined ? body : <div style={{ maxHeight, overflowY: "auto", minWidth: 0 }}>{body}</div>;
   }
   if (!showRaw) {
     return (
@@ -49,7 +53,7 @@ export function SafeMarkdownBody({ children, className, ...props }: ComponentPro
     );
   }
   return (
-    <div className={className} style={{ maxHeight: 420, overflow: "auto", fontSize: "calc(12px + var(--chat-font-size-offset, 0px))", lineHeight: 1.5 }}>
+    <div className={className} style={{ maxHeight: maxHeight ?? 420, overflow: "auto", fontSize: "calc(12px + var(--chat-font-size-offset, 0px))", lineHeight: 1.5 }}>
       <pre
         style={{
           margin: 0,

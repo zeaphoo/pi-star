@@ -181,13 +181,34 @@ fn strip_wrapping_quotes(value: &str) -> String {
     value.to_string()
 }
 
+/// A fenced answer's body. The word after an opening fence on its own line is
+/// the info string (```` ```markdown ````, ```` ```plaintext ````), never the
+/// title; a one-line fence has none, so its words are the title.
+fn fence_body(value: &str) -> Option<&str> {
+    let inner = value.strip_prefix("```")?.strip_suffix("```")?;
+    if let Some((_, body)) = inner.split_once('\n') {
+        return Some(body);
+    }
+    // A one-line fence can still lead with an info string: ```` ```json {…}``` ````.
+    let trimmed = inner.trim_start();
+    for info in ["json", "text"] {
+        let Some(head) = trimmed.get(..info.len()) else {
+            continue;
+        };
+        if !head.eq_ignore_ascii_case(info) {
+            continue;
+        }
+        let rest = &trimmed[info.len()..];
+        if rest.is_empty() || rest.starts_with(char::is_whitespace) {
+            return Some(rest.trim_start());
+        }
+    }
+    Some(inner)
+}
+
 pub fn parse_title(raw: &str) -> Result<String> {
     let mut value = raw.trim().to_string();
-    if let Some(fenced) = value
-        .strip_prefix("```")
-        .and_then(|rest| rest.split_once('\n'))
-        .and_then(|(_, rest)| rest.strip_suffix("```"))
-    {
+    if let Some(fenced) = fence_body(&value) {
         value = fenced.trim().to_string();
     }
     if value.starts_with('{') {
@@ -322,5 +343,33 @@ mod tests {
         );
         assert_eq!(parse_title("「修复登录」").unwrap(), "修复登录");
         assert!(parse_title("   ").is_err());
+    }
+
+    #[test]
+    fn reads_a_fenced_title_from_its_body_whatever_the_info_string() {
+        for info in ["markdown", "md", "plaintext", "txt", "Markdown"] {
+            assert_eq!(
+                parse_title(&format!("```{info}\nFix the SSE reconnect race\n```")).unwrap(),
+                "Fix the SSE reconnect race",
+                "{info}"
+            );
+        }
+        assert_eq!(
+            parse_title("```\nFix the SSE reconnect race\n```").unwrap(),
+            "Fix the SSE reconnect race"
+        );
+        assert_eq!(
+            parse_title("```text\r\nFix the SSE reconnect race\r\n```").unwrap(),
+            "Fix the SSE reconnect race"
+        );
+        // A fence on one line carries no info string: its words are the title.
+        assert_eq!(
+            parse_title("```Fix the SSE reconnect race```").unwrap(),
+            "Fix the SSE reconnect race"
+        );
+        assert_eq!(
+            parse_title("```json {\"title\":\"Fix the SSE reconnect race\"}```").unwrap(),
+            "Fix the SSE reconnect race"
+        );
     }
 }

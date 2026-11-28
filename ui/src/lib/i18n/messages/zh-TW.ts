@@ -1750,6 +1750,7 @@ export const zhTWLocale: LocalePlugin = {
     "models.apiKeyEnable": "輸入 {provider} 的 API Key，即可啟用 {count} 個模型。",
     "models.apiKeyEnableOne": "輸入 {provider} 的 API Key，即可啟用 1 個模型。",
     "models.replaceApiKey": "輸入新的 API Key 以替換…",
+    "models.storedKeyUnresolved": "已儲存的 Key 無法解析",
     "models.connectionLost": "連線已中斷",
     "models.verifying": "正在驗證…",
     "models.serverError": "伺服器錯誤 {status}",

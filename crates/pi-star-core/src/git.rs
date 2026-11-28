@@ -49,6 +49,12 @@ pub struct GitStatusResponse {
 /// How many changed files one status response may carry.
 const MAX_STATUS_FILES: usize = 2_000;
 
+/// How large a new (untracked) file may be and still be shown as a diff. A
+/// tracked file's diff comes from git and is bounded by what changed, never by
+/// the file's size; only a new file has to be read whole, so only that read is
+/// capped. pi-web caps it at its 256 KiB text preview.
+const MAX_UNTRACKED_DIFF_BYTES: u64 = 256 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GitDiffResponse {
@@ -166,6 +172,18 @@ pub fn diff_scoped_with_context(
     let (status, _) = classify(&entry.index_status, &entry.worktree_status);
     if status == "untracked" {
         if scope == "staged" {
+            return GitDiffResponse {
+                supported: false,
+                status: None,
+                patch: None,
+            };
+        }
+        // A new file's diff is its whole content, so the read is bounded: a
+        // multi-gigabyte log would otherwise be read and copied into a patch.
+        let too_large = std::fs::metadata(file_path)
+            .map(|metadata| metadata.len() > MAX_UNTRACKED_DIFF_BYTES)
+            .unwrap_or(false);
+        if too_large {
             return GitDiffResponse {
                 supported: false,
                 status: None,
@@ -1063,6 +1081,30 @@ mod tests {
             dir,
             &["config", "user.email", "pi-star-test@example.invalid"],
         );
+    }
+
+    #[test]
+    fn a_huge_untracked_file_gets_no_diff_but_a_big_tracked_one_does() {
+        let temp = tempfile::tempdir().unwrap();
+        let repo = temp.path();
+        init_repo(repo);
+        let line = "abcdefghijklmnopqrstuvwxyz0123456789\n";
+        let long = line.repeat(MAX_UNTRACKED_DIFF_BYTES as usize / line.len() + 64);
+
+        // A new file's diff is its whole body, so it is capped...
+        let untracked = repo.join("new.txt");
+        std::fs::write(&untracked, &long).unwrap();
+        assert!(!diff(repo, &untracked).supported);
+
+        // ...while a tracked file's comes from git and is bounded by the change.
+        let tracked = repo.join("tracked.ts");
+        std::fs::write(&tracked, &long).unwrap();
+        git(repo, &["add", "tracked.ts"]);
+        git(repo, &["commit", "-qm", "seed"]);
+        std::fs::write(&tracked, format!("{long}CHANGED_SENTINEL\n")).unwrap();
+        let patch = diff(repo, &tracked);
+        assert!(patch.supported);
+        assert!(patch.patch.unwrap().contains("+CHANGED_SENTINEL"));
     }
 
     #[test]

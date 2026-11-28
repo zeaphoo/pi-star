@@ -10,7 +10,7 @@
  */
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -917,11 +917,12 @@ function skillBodies(names) {
 }
 
 /**
- * `extensions:` is an explicit list. Paths and `builtin:<name>` pass through;
- * a bare package name cannot be resolved to a loadable path from here, so it is
- * refused instead of silently running without the extension.
+ * `extensions:` is an explicit list. Paths and `builtin:<name>` pass through,
+ * and a package name resolves to the extension files its installed package
+ * declares (#1802) — the same sources pi's own package manager reads, so a
+ * profile written for pi-subagents needs no edit.
  */
-function resolveExtensionArg(entry) {
+export function resolveExtensionArg(entry) {
     const value = entry.trim();
     if (value.startsWith("builtin:"))
         return value;
@@ -932,7 +933,124 @@ function resolveExtensionArg(entry) {
         if (existsSync(path))
             return path;
     }
-    return null;
+    const files = packageExtensionFiles(value);
+    // Any of a package's extension files: the child loads them all.
+    return files.length > 0 ? files : null;
+}
+
+/** One settings entry's `packages`: `[source]` or `[{source, enabled}]`. */
+function configuredPackageSources(settings) {
+    const packages = Array.isArray(settings?.packages) ? settings.packages : [];
+    return packages
+        .map((entry) => (typeof entry === "string" ? entry : entry?.source))
+        .filter((source) => typeof source === "string" && source.trim());
+}
+
+/** Every configured package, project first so a project's copy wins, as in pi. */
+function configuredPackages() {
+    const found = [];
+    const add = (base, source) => {
+        const parsed = parsePackageSource(source);
+        if (parsed)
+            found.push({ ...parsed, root: installPath(base, parsed) });
+    };
+    const project = readJsonQuiet(join(process.cwd(), ".pi", "settings.json"));
+    for (const source of configuredPackageSources(project))
+        add(process.cwd(), source);
+    for (const source of configuredPackageSources(readJsonQuiet(join(agentDir(), "settings.json"))))
+        add(agentDir(), source);
+    return found;
+}
+
+function readJsonQuiet(path) {
+    try {
+        return JSON.parse(readFileSync(path, "utf8"));
+    }
+    catch {
+        return null;
+    }
+}
+
+/**
+ * A package source as pi records it: `npm:@scope/name@1.2.3`, `npm:name`,
+ * `git:host/path`, `https://host/path`, a local path.
+ */
+function parsePackageSource(source) {
+    const value = String(source).trim();
+    const npm = /^npm:(.+)$/.exec(value);
+    if (npm) {
+        const spec = npm[1];
+        const at = spec.indexOf("@", spec.startsWith("@") ? 1 : 0);
+        return { kind: "npm", name: at > 0 ? spec.slice(0, at) : spec, match: at > 0 ? spec.slice(0, at) : spec };
+    }
+    if (value.startsWith("git:") || value.startsWith("http://") || value.startsWith("https://") || value.startsWith("git@")) {
+        const cleaned = value.replace(/^git:/, "").replace(/^git@([^:]+):/, "https://$1/").replace(/\.git$/, "");
+        let url;
+        try {
+            url = new URL(cleaned);
+        }
+        catch {
+            const [host, ...rest] = cleaned.split("/");
+            return { kind: "git", host, path: rest.join("/"), match: rest[rest.length - 1] ?? host };
+        }
+        const path = url.pathname.replace(/^\/+/, "");
+        return { kind: "git", host: url.host, path, match: path.split("/").pop() ?? url.host };
+    }
+    return { kind: "local", path: value, match: basename(value) };
+}
+
+/** pi's install layout: npm packages under `npm/node_modules`, git under `git/<host>/<path>`. */
+function installPath(base, parsed) {
+    if (parsed.kind === "npm")
+        return join(base, "npm", "node_modules", parsed.name);
+    if (parsed.kind === "git")
+        return join(base, "git", parsed.host, parsed.path);
+    return parsed.path.startsWith("/") ? parsed.path : join(base, parsed.path);
+}
+
+/**
+ * The extension files an installed package declares: `pi.extensions` in its
+ * package.json (plain relative paths only), else its `extensions/` directory
+ * by pi's convention. A name two packages claim resolves to neither.
+ */
+function packageExtensionFiles(name) {
+    const wanted = name.trim().toLowerCase();
+    // A scoped package is selectable by its own name or, unambiguously, by its
+    // last segment: `@team/adapter` answers to `adapter` too.
+    const answers = (entry) => {
+        const names = [entry.match, entry.name, entry.match?.split("/").pop()]
+            .filter(Boolean)
+            .map((candidate) => candidate.toLowerCase());
+        return names.includes(wanted);
+    };
+    const matches = configuredPackages().filter(answers);
+    if (matches.length !== 1)
+        return [];
+    const root = matches[0].root;
+    if (!existsSync(root))
+        return [];
+    const manifest = readJsonQuiet(join(root, "package.json"))?.pi?.extensions;
+    if (Array.isArray(manifest)) {
+        return manifest
+            .filter((entry) => typeof entry === "string" && !/[*?[\]{}]/.test(entry))
+            .map((entry) => join(root, entry))
+            .filter((path) => existsSync(path));
+    }
+    const dir = join(root, "extensions");
+    if (!existsSync(dir) || !statSyncSafe(dir)?.isDirectory())
+        return [];
+    return readdirSync(dir)
+        .filter((file) => /\.(m?[jt]s|cjs)$/.test(file))
+        .map((file) => join(dir, file));
+}
+
+function statSyncSafe(path) {
+    try {
+        return statSync(path);
+    }
+    catch {
+        return null;
+    }
 }
 
 /** The parent's recent conversation, capped, for `inherit_context`. */
@@ -1014,8 +1132,10 @@ function spawnChild(run, profile, params, queued = false) {
         for (const entry of profile.extensions) {
             const resolved = resolveExtensionArg(entry);
             if (!resolved)
-                throw new Error(`Extension "${entry}" cannot be resolved to a loadable path for an RPC subagent; use a path or builtin:<name>.`);
-            paths.push(resolved);
+                throw new Error(`Extension "${entry}" cannot be resolved to a loadable path for an RPC subagent; use a path, builtin:<name> or the name of an installed pi package.`);
+            // A package resolves to every extension file it declares.
+            for (const path of Array.isArray(resolved) ? resolved : [resolved])
+                paths.push(path);
         }
         args.push("--no-extensions");
         for (const path of paths)

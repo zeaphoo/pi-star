@@ -106,10 +106,27 @@ fn is_newer_stable(candidate: &str, current: &str) -> bool {
     false
 }
 
+/// Whether anything may reach the network: one rule for the model catalog and
+/// this update check alike. `PI_OFFLINE` is pi's own switch, so a user who set
+/// it for pi does not also have to know pi-star's.
+pub fn offline() -> bool {
+    std::env::var_os("PI_OFFLINE").is_some()
+}
+
+/// The checks that turn the update check off: `PI_OFFLINE` (nothing may reach
+/// the network), and pi-star's own switches, which pi-web users already know
+/// under its name.
+fn skips_version_check(offline: bool, star_skip: bool, web_skip: bool) -> bool {
+    offline || star_skip || web_skip
+}
+
 pub async fn app_update(State(state): State<Arc<AppState>>) -> Response {
     let current = env!("CARGO_PKG_VERSION");
-    let skip = std::env::var("PI_STAR_SKIP_VERSION_CHECK").ok().as_deref() == Some("1")
-        || std::env::var("PI_WEB_SKIP_VERSION_CHECK").ok().as_deref() == Some("1");
+    let skip = skips_version_check(
+        offline(),
+        std::env::var("PI_STAR_SKIP_VERSION_CHECK").ok().as_deref() == Some("1"),
+        std::env::var("PI_WEB_SKIP_VERSION_CHECK").ok().as_deref() == Some("1"),
+    );
     if skip {
         return no_store(json!({
             "currentVersion": current,
@@ -514,4 +531,18 @@ pub async fn manifest() -> Response {
         body.to_string(),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::skips_version_check;
+
+    #[test]
+    fn any_offline_switch_skips_the_version_check() {
+        assert!(!skips_version_check(false, false, false));
+        // PI_OFFLINE is pi's switch: setting it for pi must silence this too.
+        assert!(skips_version_check(true, false, false));
+        assert!(skips_version_check(false, true, false));
+        assert!(skips_version_check(false, false, true));
+    }
 }

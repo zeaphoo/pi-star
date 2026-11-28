@@ -440,6 +440,20 @@ test("`pi mcp add` keeps `${VAR}` and `!command` as written, and labels the comm
   assert.equal(importOne("npx @earendil-works/pi-coding-agent mcp add fs -- npx -y pkg").source, "pi-mcp-add");
 });
 
+test("reads a CLI's own command line behind environment assignments", () => {
+  // The prefix runs in the CLI's process, so it is not part of the server.
+  const added = importOne("TOKEN=x claude mcp add docs https://docs.example.com/mcp");
+  assert.deepEqual(added.config, { url: "https://docs.example.com/mcp" });
+  assert.equal(added.source, "claude-mcp-add");
+  assert.equal(importOne("A=1 env B=2 claude mcp add docs https://docs.example.com/mcp").config.url, "https://docs.example.com/mcp");
+  assert.equal(importOne("env pi mcp add fs -- npx -y pkg").source, "pi-mcp-add");
+  assert.deepEqual(refused("env pi mcp remove foo"), [{ code: "cli-not-a-server", params: { cli: "pi", command: "mcp remove" } }]);
+  assert.deepEqual(refused("A=1 env pi mcp remove foo"), [{ code: "cli-not-a-server", params: { cli: "pi", command: "mcp remove" } }]);
+  // A server's own prefix stays its env, as before.
+  assert.deepEqual(importOne("env A=1 npx foo").config, { command: "npx", args: ["foo"], env: { A: "1" } });
+  assert.deepEqual(refused("env -i A=1 npx foo"), [{ code: "cli-unknown-option", params: { cli: "env", option: "-i" } }]);
+});
+
 test("`pi mcp add` with variables the shell would have expanded", () => {
   const server = importOne('pi mcp add gh --env "TOKEN=$GITHUB_TOKEN" -- npx -y server --org $ORG');
   assert.deepEqual(server.config.env, { TOKEN: "${GITHUB_TOKEN}" });

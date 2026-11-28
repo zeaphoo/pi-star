@@ -43,6 +43,27 @@ describe("normalizeDisplayMath", () => {
     });
   });
 
+  describe("raw HTML code tags", () => {
+    it("leaves content inside a raw <pre> untouched until it closes", () => {
+      assert.equal(normalizeDisplayMath("<pre>\n\\(x\\)\n</pre>\n\\(y\\)"), "<pre>\n\\(x\\)\n</pre>\n$y$");
+    });
+
+    it("does not take a tag named in inline code for an open raw tag (#1782)", () => {
+      for (const tag of ["<pre>", "<code>", "<script>", "<style>"]) {
+        assert.equal(
+          normalizeDisplayMath(`Wrap it in \`${tag}\` tags.\n\n\\[\nx^2\n\\]\n\nand \\(y\\) here`),
+          `Wrap it in \`${tag}\` tags.\n\n$$\nx^2\n$$\n\nand $y$ here`,
+          tag,
+        );
+      }
+      assert.equal(normalizeDisplayMath("``<pre>`` then <pre>\n\\(x\\)\n</pre>"), "``<pre>`` then <pre>\n\\(x\\)\n</pre>");
+    });
+
+    it("closes a raw tag on its own line even where backticks surround the closing tag", () => {
+      assert.equal(normalizeDisplayMath("<pre>x `</pre>`\n\\(y\\)"), "<pre>x `</pre>`\n$y$");
+    });
+  });
+
   describe("blocks nested in GFM list items", () => {
     it("re-indents lazy content lines of an indented bare-fence block", () => {
       const input = "- item:\n  $$\nx = y\n  $$\n- next";

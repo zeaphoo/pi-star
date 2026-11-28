@@ -2888,6 +2888,125 @@ fn catalog_fixture() -> Value {
 }
 
 #[tokio::test]
+async fn a_stored_api_key_that_does_not_resolve_is_reported_unresolved() {
+    let fixture = write_fixture();
+    // A key command that fails leaves pi's requests unauthenticated (#12164).
+    std::fs::write(
+        fixture.agent_dir.join("auth.json"),
+        json!({
+            "openai": {"type": "api_key", "key": "!exit 1"},
+            "anthropic": {"type": "api_key", "key": "sk-literal"},
+        })
+        .to_string(),
+    )
+    .unwrap();
+    let app = router(&fixture).await;
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .uri("/api/auth/providers")
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let find = |id: &str| -> Value {
+        body["apiKeyProviders"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|provider| provider["id"] == id)
+            .cloned()
+            .unwrap_or(Value::Null)
+    };
+    let openai = find("openai");
+    assert_eq!(openai["configured"], false);
+    assert_eq!(openai["unresolved"], true);
+    assert_eq!(openai["source"], "stored");
+    let anthropic = find("anthropic");
+    assert_eq!(anthropic["configured"], true);
+    assert!(anthropic.get("unresolved").is_none());
+}
+
+#[tokio::test]
+async fn model_discovery_hands_the_upstream_listing_over_whole() {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let server = axum::Router::new()
+        .route(
+            "/v1/models",
+            axum::routing::get(|| async {
+                axum::Json(json!({
+                    "object": "list",
+                    "data": [{
+                        "id": "deepseek-v4.1-flash-1017",
+                        "context_length": 1_000_000,
+                        "max_output_tokens": 384_000,
+                        "supports_reasoning": true,
+                        "effort": {"default_level": "high", "supported_levels": ["low", "high", "max"]},
+                        "input_modalities": ["text", "image"]
+                    }]
+                }))
+            }),
+        )
+        .route(
+            "/empty/v1/models",
+            axum::routing::get(|| async { axum::Json(json!({"data": []})) }),
+        );
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, server).await.unwrap();
+    });
+    let fixture = write_fixture();
+    let app = router(&fixture).await;
+
+    // The capabilities travel to the browser, which reads every gateway's
+    // spelling of them (lib/model-discovery.ts); this route must not drop them.
+    let (status, body) = call(
+        app.clone(),
+        Request::builder()
+            .method("POST")
+            .uri("/api/models-config/discover")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "providerName": "gateway",
+                    "provider": {"baseUrl": format!("http://{addr}"), "api": "openai-completions"}
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let model = &body["listing"]["data"][0];
+    assert_eq!(model["input_modalities"][1], "image");
+    assert_eq!(model["effort"]["supported_levels"][2], "max");
+    assert_eq!(body["endpoint"], format!("http://{addr}/v1/models"));
+
+    // An upstream listing with no models is refused rather than shown as empty.
+    let (status, body) = call(
+        app,
+        Request::builder()
+            .method("POST")
+            .uri("/api/models-config/discover")
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "providerName": "empty",
+                    "provider": {"baseUrl": format!("http://{addr}/empty"), "api": "openai-completions"}
+                })
+                .to_string(),
+            ))
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::BAD_GATEWAY);
+    assert_eq!(body["error"], "No models found in the upstream response");
+
+    handle.abort();
+}
+
+#[tokio::test]
 async fn model_catalog_refresh_and_app_update_use_the_remote_feed() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();

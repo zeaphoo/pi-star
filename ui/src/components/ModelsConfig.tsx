@@ -5,7 +5,7 @@ import { subscribe } from "@/lib/stream-bus";
 import { useI18n } from "@/hooks/useI18n";
 import { isImeComposing } from "@/lib/ime";
 import type { ModelCatalogPreset, ModelCatalogRecommendation } from "@/lib/model-catalog";
-import type { DiscoveredModel } from "@/lib/model-discovery";
+import { parseDiscoveredModels, type DiscoveredModel } from "@/lib/model-discovery";
 import { ContextWindowError, normalizeContextWindowOverrides, withContextWindowOverride } from "@/lib/model-context";
 import { checkProviderEntries, ProviderEntryError, type ProviderEntryProblem } from "@/lib/model-provider-check";
 import { checkImageMaxBytes, DEFAULT_IMAGE_MAX_BYTES, formatImageBytes, ImageMaxBytesError, imageMaxBytes, parseImageMaxBytes, withImageMaxBytes } from "@/lib/model-image-limits";
@@ -87,6 +87,8 @@ interface ApiKeyProvider {
   displayName: string;
   configured: boolean;
   source?: string;
+  /** auth.json holds a key for it that does not resolve (a failing `!command`). */
+  unresolved?: true;
   modelCount: number;
   /** Provider also supports OAuth, so it appears in both picker sections. */
   supportsOAuth?: boolean;
@@ -373,13 +375,20 @@ function ProviderDetail({ name, editingName, provider, onChange, onEditingNameCh
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ providerName: name, provider: { ...provider, models: undefined } }),
       });
-      const data = await res.json() as { models?: DiscoveredModel[]; endpoint?: string; error?: string };
+      const data = await res.json() as { listing?: unknown; endpoint?: string; error?: string };
       if (requestId !== discoveryRequestIdRef.current) return;
-      if (!res.ok || data.error || !data.models) {
+      if (!res.ok || data.error || data.listing === undefined) {
         setDiscoveryState({ phase: "error", message: data.error ?? `HTTP ${res.status}` });
         return;
       }
-      setDiscoveryState({ phase: "success", models: data.models, endpoint: data.endpoint ?? provider.baseUrl ?? "" });
+      // The upstream listing arrives whole; every gateway's spelling of a
+      // capability is read here, where the models.json fields are written.
+      const models = parseDiscoveredModels(data.listing);
+      if (models.length === 0) {
+        setDiscoveryState({ phase: "error", message: t("i18n.noResults") });
+        return;
+      }
+      setDiscoveryState({ phase: "success", models, endpoint: data.endpoint ?? provider.baseUrl ?? "" });
     } catch (error) {
       if (requestId !== discoveryRequestIdRef.current) return;
       setDiscoveryState({ phase: "error", message: error instanceof Error ? error.message : String(error) });
@@ -1688,6 +1697,10 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
     }
   }, [provider.id, onRefresh]);
 
+  // A stored key that does not resolve is still stored: the panel says so in
+  // the error colour and offers Disconnect, as pi's `/login` does (#1826).
+  const hasStoredKey = provider.configured || Boolean(provider.unresolved);
+
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <ConfigDetailHeader>
@@ -1696,12 +1709,12 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
         </ConfigDetailHeaderInfo>
         <ConfigDetailActions>
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : "var(--border)", display: "inline-block" }} />
-            <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : "var(--text-dim)" }}>
-               {provider.configured ? t("i18n.configured") : t("i18n.notConfigured")}
+            <span style={{ width: 7, height: 7, borderRadius: "50%", background: provider.configured ? "#4ade80" : provider.unresolved ? "#f87171" : "var(--border)", display: "inline-block" }} />
+            <span style={{ fontSize: 11, color: provider.configured ? "#4ade80" : provider.unresolved ? "#f87171" : "var(--text-dim)" }}>
+               {provider.configured ? t("i18n.configured") : provider.unresolved ? t("models.storedKeyUnresolved") : t("i18n.notConfigured")}
             </span>
           </div>
-          {provider.configured && (
+          {hasStoredKey && (
             <ConfigButton
               variant="danger"
               size="small"
@@ -1714,7 +1727,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
         </ConfigDetailActions>
       </ConfigDetailHeader>
 
-      {!provider.configured && (
+      {!hasStoredKey && (
         <p style={{ margin: 0, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
           {provider.modelCount === 1
             ? t("models.apiKeyEnableOne", { provider: provider.displayName })
@@ -1729,7 +1742,7 @@ function ApiKeyDetail({ provider, onRefresh, enabledModels, contextSettings }: {
           onKeyDown={(e) => {
             if (e.key === "Enter" && !isImeComposing(e) && apiKey.trim()) handleSave();
           }}
-          placeholder={provider.configured ? t("models.replaceApiKey") : "sk-…"}
+          placeholder={hasStoredKey ? t("models.replaceApiKey") : "sk-…"}
           style={{ flex: 1 }}
           autoComplete="off"
           spellCheck={false}
@@ -2302,7 +2315,7 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
     return label ? <span className="models-sidebar-badge">{label}</span> : null;
   };
   const activeOAuth = oauthProviders.filter((p) => p.loggedIn);
-  const activeApiKey = apiKeyProviders.filter((p) => p.configured);
+  const activeApiKey = apiKeyProviders.filter((p) => p.configured || p.unresolved);
 
   // Resolve current detail
   const detailContent = (() => {
@@ -2387,6 +2400,12 @@ export function ModelsConfig({ onClose, embedded = false, cwd = null }: {
                   >
                     <ProviderIcon id={p.id} size={16} />
                     <ConfigSidebarText className="is-grow">{p.displayName}</ConfigSidebarText>
+                    {p.unresolved && (
+                      <span
+                        title={t("models.storedKeyUnresolved")}
+                        style={{ width: 7, height: 7, borderRadius: "50%", background: "#f87171", flexShrink: 0 }}
+                      />
+                    )}
                     {scopeBadge(p.id)}
                   </ConfigSidebarItem>
                 );

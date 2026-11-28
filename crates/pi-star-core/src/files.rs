@@ -590,9 +590,14 @@ fn list_with_git(cwd: &Path) -> Option<Vec<String>> {
         return None;
     }
     let text = String::from_utf8_lossy(&output.stdout);
+    // `--cached` prints a path once per index stage, so a file in a merge
+    // conflict arrives two or three times. Drop the repeats before the cap, or
+    // they eat its room and the menu lists one file several times.
+    let mut seen = std::collections::HashSet::new();
     Some(
         text.split('\0')
             .filter(|s| !s.is_empty())
+            .filter(|s| seen.insert(*s))
             .take(MAX_INDEX_WALK)
             .map(str::to_owned)
             .collect(),

@@ -50,8 +50,11 @@ impl ProjectInfo {
                 if path.file_name().and_then(|n| n.to_str()) == Some(".git") {
                     path.parent().map(Path::to_path_buf)
                 } else {
-                    // A bare repository has no working tree parent.
-                    Some(path)
+                    // A submodule's git dir (`<super>/.git/modules/<name>`)
+                    // names its checkout; otherwise a bare repository has no
+                    // working tree parent and is its own root.
+                    let checkout = configured_checkout(&path);
+                    Some(checkout.unwrap_or(path))
                 }
             })
             .unwrap_or_else(|| toplevel.clone());
@@ -91,6 +94,46 @@ pub fn same_path(a: &Path, b: &Path) -> bool {
     }
 }
 
+/// The checkout a git dir names as `core.worktree`, when the checkout points
+/// back at that git dir.
+///
+/// A submodule's common dir is `<super>/.git/modules/<name>`, so its own name
+/// says nothing about where the checkout is. Reading `core.worktree` alone
+/// would move the project root (and with it a file root) wherever a config
+/// says, so it counts only when the candidate's `.git` file names this git
+/// dir.
+fn configured_checkout(common_dir: &Path) -> Option<PathBuf> {
+    let config = common_dir.join("config");
+    if !config.is_file() {
+        return None;
+    }
+    let mut command = Command::new("git");
+    command
+        .arg("config")
+        .arg("--file")
+        .arg(&config)
+        .args(["--get", "core.worktree"])
+        .env("LC_ALL", "C");
+    pi_star_tools::sanitize_std_command(&mut command);
+    let output = output_with_timeout(&mut command, GIT_TIMEOUT).ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let configured = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if configured.is_empty() {
+        return None;
+    }
+    let candidate = canonical(&common_dir.join(configured));
+    let pointer = std::fs::read_to_string(candidate.join(".git")).ok()?;
+    let target = pointer
+        .trim()
+        .strip_prefix("gitdir:")
+        .map(str::trim)
+        .filter(|value| !value.is_empty())?;
+    let target = canonical(&candidate.join(target));
+    same_path(&target, common_dir).then_some(candidate)
+}
+
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
     let mut command = Command::new("git");
     command.arg("-C").arg(cwd).args(args).env("LC_ALL", "C");
@@ -111,5 +154,41 @@ mod tests {
     fn non_git_directory_is_its_own_project() {
         let info = ProjectInfo::for_cwd(Path::new("/tmp"));
         assert!(!info.is_worktree);
+    }
+
+    #[test]
+    fn a_submodules_git_dir_names_its_checkout_only_when_the_checkout_points_back() {
+        let temp = tempfile::tempdir().unwrap();
+        let superproject = temp.path();
+        let git_dir = superproject.join(".git").join("modules").join("sub");
+        let checkout = superproject.join("sub");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::create_dir_all(&checkout).unwrap();
+        std::fs::write(
+            git_dir.join("config"),
+            format!(
+                "[core]\n\tworktree = {}\n",
+                checkout.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        std::fs::write(checkout.join(".git"), "gitdir: ../.git/modules/sub\n").unwrap();
+
+        assert_eq!(
+            configured_checkout(&canonical(&git_dir)),
+            Some(canonical(&checkout))
+        );
+
+        // A different folder named as core.worktree is refused: a bare clone's
+        // config alone must never move the project root.
+        let elsewhere = superproject.join("elsewhere");
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::fs::write(elsewhere.join(".git"), "gitdir: ../.git/modules/other\n").unwrap();
+        std::fs::write(
+            git_dir.join("config"),
+            format!("[core]\n\tworktree = {}\n", elsewhere.to_string_lossy()),
+        )
+        .unwrap();
+        assert_eq!(configured_checkout(&canonical(&git_dir)), None);
     }
 }

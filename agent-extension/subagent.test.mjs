@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
 
-import { resolvePiInvocation } from "./subagent.js";
+import { resolveExtensionArg, resolvePiInvocation } from "./subagent.js";
 import piStarSubagentChild from "./subagent-child.js";
 
 const args = ["--mode", "rpc", "--session-id", "child"];
@@ -216,4 +216,40 @@ test("a queued child flips to running on its first agent_start", () => {
         handlers.get("agent_start")();
         assert.equal(entries.length, 3);
     });
+});
+
+test("a profile's extensions list resolves an installed package by name", () => {
+    const root = mkdtempSync(join(tmpdir(), "pi-star-subagent-pkg-"));
+    const previous = process.env.PI_CODING_AGENT_DIR;
+    try {
+        // pi's install layout: npm packages under <agent>/npm/node_modules/<name>.
+        const agent = join(root, "agent");
+        const pkg = join(agent, "npm", "node_modules", "@team", "adapter");
+        mkdirSync(join(pkg, "extensions"), { recursive: true });
+        writeFileSync(join(pkg, "package.json"), JSON.stringify({ name: "@team/adapter" }));
+        writeFileSync(join(pkg, "extensions", "index.ts"), "export default () => {};");
+        // A git package declares its entry in the pi manifest.
+        const gitPkg = join(agent, "git", "github.com", "owner", "codegraph");
+        mkdirSync(join(gitPkg, "src"), { recursive: true });
+        writeFileSync(join(gitPkg, "package.json"), JSON.stringify({ pi: { extensions: ["./src/extension.ts", "./glob/*.ts"] } }));
+        writeFileSync(join(gitPkg, "src", "extension.ts"), "export default () => {};");
+        mkdirSync(agent, { recursive: true });
+        writeFileSync(join(agent, "settings.json"), JSON.stringify({
+            packages: ["npm:@team/adapter@1.2.3", "git:github.com/owner/codegraph"],
+        }));
+        process.env.PI_CODING_AGENT_DIR = agent;
+
+        // A bare package name resolves to every extension file it declares...
+        assert.deepEqual(resolveExtensionArg("@team/adapter"), [join(pkg, "extensions", "index.ts")]);
+        assert.deepEqual(resolveExtensionArg("codegraph"), [join(gitPkg, "src", "extension.ts")]);
+        // ...and the scoped package is also reachable by its unscoped name.
+        assert.deepEqual(resolveExtensionArg("adapter"), [join(pkg, "extensions", "index.ts")]);
+        // Files that only pass through stay untouched; an unknown name resolves to nothing.
+        assert.equal(resolveExtensionArg("builtin:mcp"), "builtin:mcp");
+        assert.equal(resolveExtensionArg("not-installed"), null);
+    } finally {
+        if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+        else process.env.PI_CODING_AGENT_DIR = previous;
+        rmSync(root, { recursive: true, force: true });
+    }
 });

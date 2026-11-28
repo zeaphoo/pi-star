@@ -35,9 +35,36 @@
   QuickPI 引擎原先固定用默认值，现在按设置驱动 steering / follow-up 队列；Node 引擎读同一份设置。
 - **页面禁止被跨源嵌入**：HTML 响应加 `Content-Security-Policy: frame-ancestors 'self'` 与
   `X-Frame-Options: SAMEORIGIN`，别的站点不能再把 pi-star 的界面放进 iframe 诱导点击。
+- **Fetch models 保留上游发布的能力**：`/api/models-config/discover` 现在把上游列表整份交给
+  `lib/model-discovery.ts` 解析，`input_modalities`、OpenRouter 的
+  `architecture.input_modalities`、`reasoning_levels` 与嵌套的 `effort.supported_levels`
+  都会被读成 `input` / `thinkingLevelMap`，不再只剩 id 和名字。
+- **已保存但解析不了的 API Key 标红**：`!command` 形式的 key 执行失败、或 `$VAR` 引用了不存在的
+  环境变量时，该 provider 显示为「已保存的 Key 无法解析」并提供 Disconnect，而不是当作未配置
+  （与 pi 的 `/login` 一致）。命令结果按进程缓存，和 pi 的 `resolve-config-value` 一样。
+- **子 Agent profile 的 `extensions:` 支持已安装包名**：按 pi 的安装布局
+  （`npm/node_modules`、`git/<host>/<path>`）解析包根，再读其 `pi.extensions` 清单或
+  `extensions/` 目录，把包名展开成要加载的扩展文件，不再只接受路径与 `builtin:`。
+- **终端行跳过布局的重写**（pi-web #1808/#1817）：远近两档 margin 的滞回让行不再在
+  「跳过 / 展开」之间抖动；内容变化、字号与字体变化后用 `ResizeObserver` 重新量一次再跳过；
+  行容器带 `transcript-rows`，让每一行都是自己的 BFC，边距不会因跳过而改变行高。
 
 ### Fixed
 
+- **长对话里行在跳过与恢复之间抖动**、**引用块/用户气泡出现嵌套滚动条**、
+  **扩展通知盖住输入框**、**inline code 里提到 `<pre>` 后数学公式不再渲染**：分别按
+  pi-web #1817、#1825、#1788、#1782 的做法修掉（用户气泡的高度上限移到每段正文上；
+  通知架改成浮在对话区内并在放不下时自己滚动；原始 HTML 标签先屏蔽行内代码再判断）。
+- **`@` 文件索引里合并冲突的文件只出现一次**：`git ls-files --cached` 会按 index stage
+  重复输出同一路径，现在先去重再截断，不再占掉索引名额。
+- **未跟踪文件的 diff 限制为 256 KiB**：新文件的 diff 就是它的全部内容，超大文件不再整份读出
+  并拼成 patch；已跟踪文件仍由 git 计算 diff，与文件大小无关。
+- **会话标题读取代码块正文而不是 info string**：```` ```markdown ```` / ```` ```plaintext ````
+  这类围栏不再把语言名当成标题，单行围栏仍取其中的文字。
+- **MCP 导入识别带环境变量前缀的命令行**：`TOKEN=x claude mcp add …` 按该 CLI 读取，
+  `env pi mcp remove foo` 仍被拒绝为「不是服务器」，服务器自身的 `NAME=value` 前缀照旧进入 env。
+- **`PI_OFFLINE` 也跳过 pi-star 的更新检查**：与模型目录刷新共用同一个判断。
+- **「回车发送」选择在多个标签页之间同步**，浏览器拒绝保存时仍在该标签页生效。
 - **超大会话的惰性单条目读取不再解析整个文件**：`/entries/{id}`、`/thinking`、
   `/tool-result-image` 原先每次都把整份会话文件逐行解析，几十 MB 的会话会把 blocking 线程占住；
   新增 `session::read_entry`，先按 id 文本预筛再只解析命中的那一行。

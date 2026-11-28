@@ -1750,6 +1750,7 @@ export const zhCNLocale: LocalePlugin = {
     "models.apiKeyEnable": "输入 {provider} 的 API Key，即可启用 {count} 个模型。",
     "models.apiKeyEnableOne": "输入 {provider} 的 API Key，即可启用 1 个模型。",
     "models.replaceApiKey": "输入新的 API Key 以替换…",
+    "models.storedKeyUnresolved": "已保存的 Key 无法解析",
     "models.connectionLost": "连接已断开",
     "models.verifying": "正在验证…",
     "models.serverError": "服务器错误 {status}",

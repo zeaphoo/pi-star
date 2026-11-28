@@ -3,6 +3,7 @@ use std::path::Path;
 
 use anyhow::Result;
 use globset::Glob;
+use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -303,6 +304,127 @@ pub fn provider_env_configured(id: &str) -> bool {
         ]
         .iter()
         .any(|name| std::env::var_os(name).is_some())
+}
+
+/// Whether an `auth.json` entry's key resolves to a value a request could send.
+///
+/// pi reads `key` as pi's own config value: a `!command` runs through the
+/// shell and uses its first line of stdout, `$VAR` / `${VAR}` references read
+/// the environment, and anything else is a literal. A `!command` that fails,
+/// prints nothing, or a reference to an unset variable leaves the provider
+/// unconfigured — requests fail with its own "No API key found" (pi #12164) —
+/// but the stored credential is still there to be found and disconnected.
+///
+/// Command results are cached for this process's lifetime, as pi's
+/// `resolve-config-value` does: the panel asks on every open, and a key
+/// command that reads a password manager is not free.
+pub fn stored_key_resolves(entry: &Value) -> Option<bool> {
+    if entry.get("type").and_then(Value::as_str) != Some("api_key") {
+        // An OAuth credential resolves through its token fields, not a key.
+        return Some(true);
+    }
+    let key = entry.get("key").and_then(Value::as_str)?;
+    if let Some(command) = key.strip_prefix('!') {
+        return Some(resolve_key_command_cached(command));
+    }
+    Some(!missing_env_names(key).into_iter().next().is_some())
+}
+
+static KEY_COMMAND_CACHE: Lazy<parking_lot::Mutex<HashMap<String, bool>>> =
+    Lazy::new(|| parking_lot::Mutex::new(HashMap::new()));
+
+fn resolve_key_command_cached(command: &str) -> bool {
+    if let Some(cached) = KEY_COMMAND_CACHE.lock().get(command) {
+        return *cached;
+    }
+    let resolved = resolve_key_command(command);
+    KEY_COMMAND_CACHE
+        .lock()
+        .insert(command.to_string(), resolved);
+    resolved
+}
+
+/// `sh -c command`, or `cmd /C` on Windows, with pi's 10 second deadline.
+fn resolve_key_command(command: &str) -> bool {
+    let mut process = if cfg!(windows) {
+        let mut process = std::process::Command::new("cmd");
+        process.arg("/C").arg(command);
+        process
+    } else {
+        let mut process = std::process::Command::new("sh");
+        process.arg("-c").arg(command);
+        process
+    };
+    process.env("LC_ALL", "C");
+    crate::sanitize_std_command(&mut process);
+    let Ok(output) = pi_star_tools::utils::process::output_with_timeout(
+        &mut process,
+        std::time::Duration::from_secs(10),
+    ) else {
+        return false;
+    };
+    output.status.success() && !String::from_utf8_lossy(&output.stdout).trim().is_empty()
+}
+
+/// The `$VAR` / `${VAR}` names a literal key reads, as pi's template parser
+/// finds them (`$$` and `$!` are escapes, not references).
+fn missing_env_names(value: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut chars = value.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        if ch != '$' {
+            continue;
+        }
+        let Some(&(next_index, next)) = chars.peek() else {
+            break;
+        };
+        match next {
+            '$' | '!' => {
+                chars.next();
+            }
+            '{' => {
+                let rest = &value[next_index + 1..];
+                let Some(end) = rest.find('}') else { continue };
+                let name = &rest[..end];
+                if is_env_name(name) {
+                    names.push(name.to_string());
+                }
+                while let Some((at, _)) = chars.peek() {
+                    if *at <= next_index + 1 + end {
+                        chars.next();
+                    } else {
+                        break;
+                    }
+                }
+            }
+            _ => {
+                let rest = &value[next_index..];
+                let len = rest
+                    .chars()
+                    .take_while(|ch| ch.is_ascii_alphanumeric() || *ch == '_')
+                    .map(char::len_utf8)
+                    .sum::<usize>();
+                let name = &rest[..len];
+                if is_env_name(name) {
+                    names.push(name.to_string());
+                }
+                let _ = index;
+            }
+        }
+    }
+    names
+        .into_iter()
+        .filter(|name| std::env::var_os(name).is_none())
+        .collect()
+}
+
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    match chars.next() {
+        Some(first) if first.is_ascii_alphabetic() || first == '_' => {}
+        _ => return false,
+    }
+    chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 /// `name` of each models.json provider: what the panel and selector show instead
@@ -989,6 +1111,69 @@ mod tests {
             pins.get("anthropic/claude").map(String::as_str),
             Some("high")
         );
+    }
+
+    #[test]
+    fn a_stored_key_must_resolve_to_count_as_configured() {
+        // A literal key resolves.
+        assert_eq!(
+            stored_key_resolves(&json!({"type": "api_key", "key": "sk-live"})),
+            Some(true)
+        );
+        // A `!command` that prints something resolves...
+        let prints = if cfg!(windows) { "!echo sk-from-vault" } else { "!printf 'sk-from-vault\\n'" };
+        assert_eq!(
+            stored_key_resolves(&json!({"type": "api_key", "key": prints})),
+            Some(true)
+        );
+        // ...and one that fails or prints nothing does not (#12164). Requests
+        // fail with it, so the provider must not read as configured.
+        let empty = if cfg!(windows) { "!exit 1" } else { "!exit 1" };
+        assert_eq!(
+            stored_key_resolves(&json!({"type": "api_key", "key": empty})),
+            Some(false)
+        );
+        let silence = if cfg!(windows) { "!echo off" } else { "!true" };
+        assert_eq!(
+            stored_key_resolves(&json!({"type": "api_key", "key": silence})),
+            Some(false)
+        );
+        // An OAuth credential is not a key.
+        assert_eq!(
+            stored_key_resolves(&json!({"type": "oauth", "refresh": "x"})),
+            Some(true)
+        );
+        assert_eq!(stored_key_resolves(&json!({"type": "api_key"})), None);
+    }
+
+    #[test]
+    fn a_key_template_needs_its_environment_variables() {
+        assert!(missing_env_names("sk-literal").is_empty());
+        assert!(missing_env_names("$$escaped $!also").is_empty());
+        assert_eq!(
+            missing_env_names("${PI_STAR_TEST_UNSET_VAR}"),
+            vec!["PI_STAR_TEST_UNSET_VAR".to_string()]
+        );
+        assert_eq!(
+            missing_env_names("prefix-$PI_STAR_TEST_UNSET_VAR-suffix"),
+            vec!["PI_STAR_TEST_UNSET_VAR".to_string()]
+        );
+        // Several references, and one set next to one unset.
+        assert_eq!(
+            missing_env_names("${PI_STAR_TEST_UNSET_VAR}-$PI_STAR_TEST_UNSET_VAR"),
+            vec![
+                "PI_STAR_TEST_UNSET_VAR".to_string(),
+                "PI_STAR_TEST_UNSET_VAR".to_string()
+            ]
+        );
+        // SAFETY: the test owns this variable's name while it runs.
+        unsafe { std::env::set_var("PI_STAR_TEST_SET_VAR", "value") };
+        assert!(missing_env_names("${PI_STAR_TEST_SET_VAR}").is_empty());
+        assert_eq!(
+            missing_env_names("${PI_STAR_TEST_SET_VAR}$PI_STAR_TEST_UNSET_VAR"),
+            vec!["PI_STAR_TEST_UNSET_VAR".to_string()]
+        );
+        unsafe { std::env::remove_var("PI_STAR_TEST_SET_VAR") };
     }
 
     #[test]

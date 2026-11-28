@@ -961,24 +961,26 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
         </div>
       )}
 
-      <div
-        style={{
-          position: "absolute",
-          top: 12,
-          left: 0,
-          right: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
-          zIndex: 40,
-          display: "flex",
-          // Toasts live in the top-right corner
-          justifyContent: "flex-end",
-          padding: `0 ${CHAT_COLUMN_PADDING}px`,
-          pointerEvents: "none",
-        }}
-      >
-        <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
-      </div>
-
       <div className="relative flex min-h-0 min-w-0 flex-1 overflow-hidden">
+        {/* Inside the transcript's box, not the whole column: the shelf ends
+            above the composer and scrolls there instead of covering it (#1780). */}
+        <div
+          style={{
+            position: "absolute",
+            top: 12,
+            bottom: 12,
+            left: 0,
+            right: isMobile ? 0 : CHAT_MINIMAP_WIDTH,
+            zIndex: 40,
+            display: "flex",
+            // Toasts live in the top-right corner
+            justifyContent: "flex-end",
+            padding: `0 ${CHAT_COLUMN_PADDING}px`,
+            pointerEvents: "none",
+          }}
+        >
+          <NoticeShelf notices={notices} floating onPauseChange={setNoticePaused} />
+        </div>
         {extensionDialog && (
           <ExtensionDialog key={extensionDialog.id} request={extensionDialog} waitingCount={waitingExtensionDialogCount} onRespond={respondToExtensionUi} />
         )}
@@ -996,7 +998,9 @@ export function ChatWindow({ session, searchTarget, onSearchTargetHandled, initi
           style={{ visibility: pendingScrollRestore ? "hidden" : undefined }}
         >
           <div style={{ minWidth: 0, padding: `0 ${CHAT_COLUMN_PADDING}px` }}>
-            <div ref={skipOffscreenRows} style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
+            {/* `transcript-rows` makes each row its own block formatting context,
+                which is the shape skipping gives it; see the hook. */}
+            <div ref={skipOffscreenRows} className="transcript-rows" style={{ width: "100%", minWidth: 0, maxWidth: "var(--chat-content-max-width, 820px)", margin: "0 auto" }}>
             {(() => {
               let lastUserIdx = -1;
               for (let i = messages.length - 1; i >= 0; i--) {
@@ -1432,6 +1436,19 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
         // Right-anchored: every toast's right edge aligns here, widths extend leftward
         alignItems: "flex-end",
         marginBottom: floating ? 0 : 10,
+        // Never taller than the box it floats in, the transcript's above the
+        // composer: a stack that does not fit scrolls there (#1780). The scroll
+        // box clips, so its padding keeps the cards' shadows inside it.
+        ...(floating ? {
+          maxHeight: "100%",
+          overflowY: "auto",
+          overscrollBehavior: "contain",
+          scrollbarWidth: "thin",
+          padding: "4px 12px 24px",
+          marginTop: -4,
+          marginLeft: -12,
+          marginRight: -12,
+        } as const : {}),
       }}
     >
       {notices.map((notice, index) => {
@@ -1468,6 +1485,8 @@ function NoticeShelf({ notices, floating = false, onPauseChange }: { notices: No
               // so the toast itself must opt back into interactivity or hover events never reach it
               pointerEvents: "auto",
               marginBottom: index === notices.length - 1 ? 0 : 6,
+              // Each card keeps its height; the shelf scrolls instead of squeezing them
+              flexShrink: 0,
               overflow: "hidden",
               borderRadius: 14,
               border: "1px solid color-mix(in srgb, var(--border) 70%, transparent)",

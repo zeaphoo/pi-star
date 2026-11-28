@@ -37,6 +37,23 @@ function renderMessage(message, props = {}) {
   );
 }
 
+test("caps the user's text, not the bubble, so only one scrollbar shows (#1825)", () => {
+  const source = readFileSync(new URL("./MessageView.tsx", import.meta.url), "utf8");
+  // The cap sits on each stretch of the user's text...
+  assert.match(source, /const USER_TEXT_MAX_HEIGHT = \d+;/);
+  assert.match(source, /<SafeMarkdownBody[^>]*maxHeight=\{USER_TEXT_MAX_HEIGHT\}/);
+  // ...and never on the bubble that holds them.
+  const bubble = source.slice(source.indexOf("background: isEditing"));
+  const bubbleEnd = bubble.indexOf("</div>");
+  assert.ok(!/maxHeight/.test(bubble.slice(0, bubbleEnd)), "the bubble must not cap itself");
+
+  // An oversized message reveals its <pre> at the same cap rather than inside a
+  // second scroll area.
+  const safe = readFileSync(new URL("./SafeMarkdownBody.tsx", import.meta.url), "utf8");
+  assert.match(safe, /maxHeight\?: number/);
+  assert.match(safe, /maxHeight \?\? 420/);
+});
+
 test("updates a reused message when its written files change", () => {
   const props = { message: { role: "assistant", content: [] } };
   assert.equal(MessageView.compare(props, props), true);
